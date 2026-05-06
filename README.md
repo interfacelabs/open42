@@ -86,6 +86,14 @@ Supabase is not configured.
 | `npm run db:migrate` | Run pending migrations (prod) |
 | `npm run db:studio` | Open Drizzle Studio (DB browser) |
 
+## Manual Spike Scripts
+
+These scripts are manual validation probes, not automatic CI or `npm test` steps:
+
+- `./scripts/spike-gbrain-import-semantics.sh` checks gbrain `import` upsert behavior.
+- `tsx scripts/spike-composio-tenant-isolation.ts` probes real Composio workspace isolation.
+- `tsx scripts/spike-composio-ratelimit.ts` probes Composio rate-limit error shape.
+
 ## License
 
 TBD.
