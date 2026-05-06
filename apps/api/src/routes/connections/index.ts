@@ -29,7 +29,7 @@ export function buildConnectionsRouter(deps: { composio?: ComposioClient | null 
             sql`${schema.connections.deletedAt} IS NULL`,
           ),
         );
-      res.json({ connections: rows });
+      res.json({ workspaceId, connections: rows });
     } catch (err) {
       next(err);
     }
