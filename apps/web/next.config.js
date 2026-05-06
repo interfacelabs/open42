@@ -1,4 +1,13 @@
 const path = require('path');
+const { existsSync } = require('fs');
+const { config } = require('dotenv');
+
+for (const file of ['.env.local', '.env']) {
+  const envPath = path.join(__dirname, '../..', file);
+  if (existsSync(envPath)) {
+    config({ path: envPath, override: false });
+  }
+}
 
 /** @type {import('next').NextConfig} */
 const nextConfig = {

@@ -7,7 +7,7 @@ import { Button } from '@/components/ui/button';
 type SignupState =
   | { status: 'idle' }
   | { status: 'submitting' }
-  | { status: 'sent'; magicLinkUrl: string; expiresAt: string }
+  | { status: 'sent'; expiresAt: string }
   | { status: 'error'; message: string };
 
 export default function SignupPage() {
@@ -29,7 +29,6 @@ export default function SignupPage() {
     }
     setState({
       status: 'sent',
-      magicLinkUrl: payload.magicLinkUrl,
       expiresAt: payload.expiresAt,
     });
   }
@@ -74,17 +73,14 @@ export default function SignupPage() {
 
             {state.status === 'sent' ? (
               <div className="mt-8 max-w-xl rounded-2xl border border-border bg-white p-5 text-sm leading-body text-text-body">
-                <p className="font-medium text-text-primary">Magic link issued.</p>
+                <p className="font-medium text-text-primary">Check your email.</p>
                 <p className="mt-2">
-                  Email delivery is not wired in this local build, so the verification
-                  link is exposed here for development.
+                  Supabase sent a magic link. Open it in this browser to finish
+                  signing in and provision your brain.
                 </p>
-                <Link
-                  href={state.magicLinkUrl}
-                  className="mt-4 inline-block break-all font-mono text-xs text-accent hover:text-accent/80"
-                >
-                  {state.magicLinkUrl}
-                </Link>
+                <p className="mt-3 font-mono text-xs text-text-subtle">
+                  Expires {new Date(state.expiresAt).toLocaleTimeString()}
+                </p>
               </div>
             ) : null}
 

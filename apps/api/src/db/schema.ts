@@ -54,6 +54,7 @@ export const connectorEnum = pgEnum('connector_kind', ['notion-zip']);
 
 export const users = pgTable('users', {
   id: uuid('id').primaryKey().defaultRandom(),
+  supabaseUserId: text('supabase_user_id').unique(),
   email: text('email').notNull().unique(),
   currentWorkspaceId: uuid('current_workspace_id'),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
@@ -70,6 +71,7 @@ export const workspaces = pgTable('workspaces', {
     .references(() => users.id, { onDelete: 'cascade' }),
   flyMachineId: text('fly_machine_id'),
   flyPrivateIp: text('fly_private_ip'),
+  gbrainBaseUrl: text('gbrain_base_url'),
   gbrainOauthClientId: text('gbrain_oauth_client_id'),
   // AES-GCM(client_secret, OPEN42_KEK). Plaintext NEVER stored.
   gbrainOauthClientSecretCiphertext: bytea('gbrain_oauth_client_secret_ciphertext'),
@@ -121,25 +123,6 @@ export const sessions = pgTable(
   (t) => ({
     userIdx: index('sessions_user_idx').on(t.userId),
     expiresIdx: index('sessions_expires_idx').on(t.expiresAt),
-  }),
-);
-
-// =====================================================================
-// magic_links (single-use tokens for passwordless auth)
-// =====================================================================
-
-export const magicLinks = pgTable(
-  'magic_links',
-  {
-    token: text('token').primaryKey(), // 256-bit random hex
-    email: text('email').notNull(),
-    expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
-    usedAt: timestamp('used_at', { withTimezone: true }),
-    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
-  },
-  (t) => ({
-    emailIdx: index('magic_links_email_idx').on(t.email),
-    expiresIdx: index('magic_links_expires_idx').on(t.expiresAt),
   }),
 );
 
@@ -208,6 +191,5 @@ export type Workspace = typeof workspaces.$inferSelect;
 export type NewWorkspace = typeof workspaces.$inferInsert;
 export type Membership = typeof memberships.$inferSelect;
 export type Session = typeof sessions.$inferSelect;
-export type MagicLink = typeof magicLinks.$inferSelect;
 export type SkillExport = typeof skillExports.$inferSelect;
 export type IngestJob = typeof ingestJobs.$inferSelect;

@@ -9,13 +9,17 @@ export default function VerifyPage() {
   const [state, setState] = useState<VerifyState>('checking');
 
   useEffect(() => {
-    const token = typeof router.query.token === 'string' ? router.query.token : '';
-    if (!router.isReady || !token) return;
+    if (!router.isReady) return;
+    const payload = verificationPayload(router.query, window.location.hash);
+    if (!payload) {
+      setState('failed');
+      return;
+    }
 
     void fetch('/api/auth/verify', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ token }),
+      body: JSON.stringify(payload),
     }).then(async (response) => {
       if (!response.ok) {
         setState('failed');
@@ -40,10 +44,33 @@ export default function VerifyPage() {
           <p className="mt-4 text-sm leading-body text-text-body">
             {state === 'checking'
               ? 'If the link is valid, your session will open the brain home.'
-              : 'Magic links expire after 15 minutes and can only be used once.'}
+              : 'Magic links expire and can only be used once.'}
           </p>
         </div>
       </main>
     </>
   );
+}
+
+function verificationPayload(
+  query: Record<string, string | string[] | undefined>,
+  hash: string,
+): Record<string, string> | null {
+  const hashParams = new URLSearchParams(hash.replace(/^#/, ''));
+  const accessToken = hashParams.get('access_token');
+  if (accessToken) return { accessToken };
+
+  const tokenHash = single(query.token_hash) ?? single(query.tokenHash);
+  const type = single(query.type);
+  if (tokenHash && type) return { tokenHash, type };
+
+  const email = single(query.email);
+  const token = single(query.token);
+  if (email && token) return { email, token, type: type ?? 'email' };
+
+  return null;
+}
+
+function single(value: string | string[] | undefined): string | undefined {
+  return Array.isArray(value) ? value[0] : value;
 }

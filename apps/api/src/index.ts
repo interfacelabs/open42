@@ -21,7 +21,7 @@ const logger = pino({
 });
 
 const app = express();
-const port = Number(process.env.API_PORT ?? 3001);
+const port = Number(process.env.API_PORT ?? portFromUrl(process.env.API_PUBLIC_URL) ?? 3001);
 
 // Trust proxy in prod (Cloudflare → Fly).
 app.set('trust proxy', 1);
@@ -76,3 +76,14 @@ app.use(
 app.listen(port, () => {
   logger.info(`open42-api listening on :${port}`);
 });
+
+function portFromUrl(value?: string): string | null {
+  if (!value) return null;
+  try {
+    const url = new URL(value);
+    if (url.port) return url.port;
+    return url.protocol === 'https:' ? '443' : '80';
+  } catch {
+    return null;
+  }
+}

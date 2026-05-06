@@ -44,17 +44,17 @@ notionZipRouter.post('/', upload.single('file'), async (req, res, next) => {
       await writeFile(join(stagingDir, `${doc.slug}.md`), doc.content_md, 'utf8');
     }
 
-    const flyPrivateIp = workspace.flyPrivateIp;
+    const gbrainBaseUrl = workspace.gbrainBaseUrl ?? formatGbrainBaseUrl(workspace.flyPrivateIp ?? '');
     const oauthClientId = workspace.gbrainOauthClientId;
     const oauthClientSecretCiphertext = workspace.gbrainOauthClientSecretCiphertext;
-    if (!flyPrivateIp || !oauthClientId || !oauthClientSecretCiphertext) {
+    if (!gbrainBaseUrl || !oauthClientId || !oauthClientSecretCiphertext) {
       res.status(409).json({ error: 'workspace_not_ready' });
       return;
     }
 
     const gbrain = new GbrainClient({
       workspaceId: workspace.id,
-      baseUrl: formatGbrainBaseUrl(flyPrivateIp),
+      baseUrl: gbrainBaseUrl,
       oauthClientId,
       oauthClientSecretCiphertext,
     });
@@ -135,7 +135,7 @@ async function workspaceForUser(userId: string) {
     .limit(1);
 
   if (
-    !workspace?.flyPrivateIp ||
+    !(workspace?.gbrainBaseUrl || workspace?.flyPrivateIp) ||
     !workspace.gbrainOauthClientId ||
     !workspace.gbrainOauthClientSecretCiphertext
   ) {

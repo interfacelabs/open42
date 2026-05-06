@@ -23,7 +23,7 @@ refundPolicySkillRouter.post('/', async (req, res, next) => {
 
     const gbrain = new GbrainClient({
       workspaceId: workspace.id,
-      baseUrl: formatGbrainBaseUrl(workspace.flyPrivateIp),
+      baseUrl: workspace.gbrainBaseUrl,
       oauthClientId: workspace.gbrainOauthClientId,
       oauthClientSecretCiphertext: workspace.gbrainOauthClientSecretCiphertext,
     });
@@ -72,7 +72,7 @@ async function workspaceForUser(userId: string) {
     .where(eq(schema.workspaces.id, user.currentWorkspaceId))
     .limit(1);
   if (
-    !workspace?.flyPrivateIp ||
+    !(workspace?.gbrainBaseUrl || workspace?.flyPrivateIp) ||
     !workspace.gbrainOauthClientId ||
     !workspace.gbrainOauthClientSecretCiphertext
   ) {
@@ -80,7 +80,7 @@ async function workspaceForUser(userId: string) {
   }
   return {
     id: workspace.id,
-    flyPrivateIp: workspace.flyPrivateIp,
+    gbrainBaseUrl: workspace.gbrainBaseUrl ?? formatGbrainBaseUrl(workspace.flyPrivateIp ?? ''),
     gbrainOauthClientId: workspace.gbrainOauthClientId,
     gbrainOauthClientSecretCiphertext: workspace.gbrainOauthClientSecretCiphertext,
     gbrainVersion: workspace.gbrainVersion,

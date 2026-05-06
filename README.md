@@ -37,24 +37,46 @@ cp .env.example .env.local
 # edit .env.local: set DATABASE_URL, ANTHROPIC_API_KEY, OPEN42_KEK, etc.
 
 # 4. Start Postgres via Docker Compose (pgvector image, non-default host port)
-docker compose up -d postgres
+npm run db:up
 # Default host port: 54338. To use a different port, set POSTGRES_HOST_PORT in .env.local
 #   (also update DATABASE_URL to match).
 
 # 5. Push the Drizzle schema to Postgres
 npm run db:push
 
-# 6. Start dev servers (web on :3000, api on :3001)
+# 6. Start dev servers
 npm run dev
 ```
+
+`npm run dev:web` reads `WEB_PUBLIC_URL` from the repo-root `.env.local` and binds
+Next to that port. `npm run dev:api` reads `API_PORT`, or derives the port from
+`API_PUBLIC_URL` when `API_PORT` is not set. If the API port changes, set both
+`API_PUBLIC_URL` and `NEXT_PUBLIC_API_PUBLIC_URL`: server-side Next handlers use
+`API_PUBLIC_URL`, while browser code can only see `NEXT_PUBLIC_*` variables.
+Docker Compose does not read `.env.local` by default, so use `npm run db:up` or
+pass `--env-file .env.local` manually.
+
+Signup uses Supabase magic links. `SUPABASE_URL` and `SUPABASE_ANON_KEY` must be
+real values for auth to send email. After Supabase verifies the link, Open42
+creates the workspace brain:
+
+- `TENANT_PROVISIONER=local-docker` builds `infra/Dockerfile.gbrain-tenant` and
+  starts one local gbrain container per first-time user.
+- `TENANT_PROVISIONER=fly` calls the Fly Machines API and creates one machine in
+  `FLY_TENANTS_APP_NAME`.
+
+The old debug-link path is intentionally not present; auth should fail loudly if
+Supabase is not configured.
 
 ## Commands
 
 | Command | What it does |
 |---------|-------------|
 | `npm run dev` | Run web + api in parallel |
-| `npm run dev:web` | Web only (`http://localhost:3000`) |
-| `npm run dev:api` | API only (`http://localhost:3001`) |
+| `npm run dev:web` | Web only, using `WEB_PUBLIC_URL` |
+| `npm run dev:api` | API only, using `API_PORT` / `API_PUBLIC_URL` |
+| `npm run db:up` | Start Postgres using `.env.local` |
+| `npm run tenant:build` | Build the local/Fly gbrain tenant image |
 | `npm run build` | Build both apps |
 | `npm run typecheck` | TypeScript check both apps |
 | `npm run lint` | Lint both apps |

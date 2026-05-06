@@ -9,7 +9,7 @@ test('notion zip import submits a gbrain sync job and shows progress', async ({ 
       path: '/',
     },
   ]);
-  await page.route('http://localhost:3001/connectors/notion-zip', async (route) => {
+  await page.route('**/connectors/notion-zip', async (route) => {
     expect(route.request().method()).toBe('POST');
     expect(route.request().headers()['x-csrf-token']).toBe('csrf-e2e');
     await route.fulfill({
