@@ -7,7 +7,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     return;
   }
 
-  const backend = await fetch(`${apiUrl()}/auth/signup`, {
+  const backend = await fetch(`${apiUrl()}/auth/signin`, {
     method: 'POST',
     headers: proxyHeaders(req),
     body: JSON.stringify(req.body),

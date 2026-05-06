@@ -1,24 +1,24 @@
 import { Router } from 'express';
 
-import { createSession } from '../auth/sessions.js';
+import { createSession, invalidateSession } from '../auth/sessions.js';
 import {
   sendSupabaseMagicLink,
   verifySupabaseIdentity,
   type SupabaseIdentity,
 } from '../auth/supabase.js';
 import { db, schema } from '../db/client.js';
-import { setSessionCookies } from '../middleware/csrf.js';
+import { clearSessionCookies, setSessionCookies } from '../middleware/csrf.js';
 import { provisionTenant } from '../tenants/provision.js';
 
 export const authRouter = Router();
 
-authRouter.post('/signup', async (req, res, next) => {
+authRouter.post('/signin', async (req, res, next) => {
   try {
     const email = String(req.body?.email ?? '');
     const webUrl = process.env.WEB_PUBLIC_URL ?? 'http://localhost:3000';
     const link = await sendSupabaseMagicLink({
       email,
-      redirectTo: `${webUrl.replace(/\/+$/, '')}/auth/verify`,
+      redirectTo: `${webUrl.replace(/\/+$/, '')}/sign_in`,
     });
     res.json({
       ok: true,
@@ -63,12 +63,27 @@ authRouter.post('/verify', async (req, res, next) => {
       ip: req.ip,
     });
     setSessionCookies(res, session);
-    res.json({ ok: true, redirectTo: '/home' });
+    res.json({ ok: true, redirectTo: '/auth/home' });
   } catch (err) {
     if (err instanceof Error && err.message.startsWith('supabase_')) {
       res.status(400).json({ error: err.message });
       return;
     }
+    next(err);
+  }
+});
+
+authRouter.post('/signout', async (req, res, next) => {
+  try {
+    const sessionId = optionalString(
+      req.cookies?.[process.env.SESSION_COOKIE_NAME ?? 'open42_session'],
+    );
+    if (sessionId) {
+      await invalidateSession(sessionId);
+    }
+    clearSessionCookies(res);
+    res.json({ ok: true, redirectTo: '/sign_in' });
+  } catch (err) {
     next(err);
   }
 });

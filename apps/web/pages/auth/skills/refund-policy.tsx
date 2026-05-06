@@ -51,7 +51,7 @@ export default function RefundPolicySkillPage() {
                 Download zip
               </Button>
               <Button asChild variant="secondary" className="ml-3">
-                <Link href="/chat">Ask first</Link>
+                <Link href="/auth/chat">Ask first</Link>
               </Button>
             </div>
 

@@ -1,18 +1,18 @@
 import Link from 'next/link';
-import { Brain, FileArchive, MessageSquare, Settings, WandSparkles } from 'lucide-react';
+import { Brain, FileArchive, LogOut, MessageSquare, WandSparkles } from 'lucide-react';
 
 const nav = [
-  { href: '/home', label: 'Brain status', icon: Brain },
-  { href: '/onboard', label: 'Connectors', icon: FileArchive },
-  { href: '/chat', label: 'Chat', icon: MessageSquare },
-  { href: '/skills/refund-policy', label: 'Skills', icon: WandSparkles },
-  { href: '/settings', label: 'Settings', icon: Settings },
+  { href: '/auth/home', label: 'Brain status', icon: Brain },
+  { href: '/auth/onboard', label: 'Connectors', icon: FileArchive },
+  { href: '/auth/chat', label: 'Chat', icon: MessageSquare },
+  { href: '/auth/skills/refund-policy', label: 'Skills', icon: WandSparkles },
+  { href: '/sign_out', label: 'Sign out', icon: LogOut },
 ];
 
 export function Sidebar() {
   return (
     <aside className="h-screen w-60 shrink-0 border-r border-border bg-white px-4 py-5">
-      <Link href="/home" className="font-mono text-sm text-text-subtle">
+      <Link href="/auth/home" className="font-mono text-sm text-text-subtle">
         open42
       </Link>
       <nav className="mt-8 space-y-1">

@@ -66,3 +66,25 @@ export function setSessionCookies(
     path: '/',
   });
 }
+
+export function clearSessionCookies(
+  res: Response,
+  options: { sessionCookieName?: string; csrfCookieName?: string } = {},
+): void {
+  const sessionCookieName = options.sessionCookieName ?? 'open42_session';
+  const csrfCookieName = options.csrfCookieName ?? 'open42_csrf';
+  const secure = process.env.NODE_ENV === 'production';
+  const cookieOptions = {
+    httpOnly: true,
+    secure,
+    sameSite: 'lax' as const,
+    expires: new Date(0),
+    path: '/',
+  };
+
+  res.cookie(sessionCookieName, '', cookieOptions);
+  res.cookie(csrfCookieName, '', {
+    ...cookieOptions,
+    httpOnly: false,
+  });
+}

@@ -8,7 +8,7 @@ describe('supabase auth helpers', () => {
     const signInWithOtp = vi.fn(async () => ({ error: null }));
     const result = await sendSupabaseMagicLink({
       email: ' User@Example.COM ',
-      redirectTo: 'http://localhost:3000/auth/verify',
+      redirectTo: 'http://localhost:3000/sign_in',
       env: { MAGIC_LINK_TTL_MINUTES: '10' },
       now: new Date('2026-05-06T10:00:00Z'),
       client: client({ signInWithOtp }),
@@ -17,7 +17,7 @@ describe('supabase auth helpers', () => {
     expect(signInWithOtp).toHaveBeenCalledWith({
       email: 'user@example.com',
       options: {
-        emailRedirectTo: 'http://localhost:3000/auth/verify',
+        emailRedirectTo: 'http://localhost:3000/sign_in',
         shouldCreateUser: true,
       },
     });
@@ -32,7 +32,7 @@ describe('supabase auth helpers', () => {
     delete process.env.MAGIC_LINK_TTL_MINUTES;
     const result = await sendSupabaseMagicLink({
       email: 'user@example.com',
-      redirectTo: 'http://localhost:3000/auth/verify',
+      redirectTo: 'http://localhost:3000/sign_in',
       now: new Date('2026-05-06T10:00:00Z'),
       client: client({ signInWithOtp: vi.fn(async () => ({ error: null })) }),
     });
@@ -51,7 +51,7 @@ describe('supabase auth helpers', () => {
     await expect(
       sendSupabaseMagicLink({
         email: 'bad',
-        redirectTo: 'http://localhost:3000/auth/verify',
+        redirectTo: 'http://localhost:3000/sign_in',
         client: client({ signInWithOtp }),
       }),
     ).rejects.toThrow('email_invalid');
@@ -142,7 +142,7 @@ describe('supabase auth helpers', () => {
     await expect(
       sendSupabaseMagicLink({
         email: 'user@example.com',
-        redirectTo: 'http://localhost:3000/auth/verify',
+        redirectTo: 'http://localhost:3000/sign_in',
         client: client({
           signInWithOtp: vi.fn(async () => ({ error: { message: 'smtp disabled' } })),
         }),

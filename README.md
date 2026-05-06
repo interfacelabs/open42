@@ -17,6 +17,7 @@ Self-hostable Company Brain on top of [gbrain](https://github.com/garrytan/gbrai
 ```
 open42/
 ├── apps/
+│   ├── landing/      Next.js Pages Router marketing site
 │   ├── web/          Next.js Pages Router frontend
 │   └── api/          Express + Drizzle backend
 ├── packages/         Shared TypeBox schemas, eval harness (TBD)
@@ -48,15 +49,19 @@ npm run db:push
 npm run dev
 ```
 
-`npm run dev:web` reads `WEB_PUBLIC_URL` from the repo-root `.env.local` and binds
-Next to that port. `npm run dev:api` reads `API_PORT`, or derives the port from
-`API_PUBLIC_URL` when `API_PORT` is not set. If the API port changes, set both
-`API_PUBLIC_URL` and `NEXT_PUBLIC_API_PUBLIC_URL`: server-side Next handlers use
-`API_PUBLIC_URL`, while browser code can only see `NEXT_PUBLIC_*` variables.
-Docker Compose does not read `.env.local` by default, so use `npm run db:up` or
-pass `--env-file .env.local` manually.
+`npm run dev:landing` runs the public landing app and reads `LANDING_PUBLIC_URL`
+from the repo-root `.env.local`; the default port is 3002. `npm run dev:web`
+runs the product app and reads `WEB_PUBLIC_URL` from the repo-root
+`.env.local`. The product app should expose only `/sign_in` and `/sign_out` as
+public pages; workspace screens live under `/auth/*`. `npm run dev:api` reads
+`API_PORT`, or derives the port from `API_PUBLIC_URL` when `API_PORT` is not set.
+If the API port changes, set both `API_PUBLIC_URL` and
+`NEXT_PUBLIC_API_PUBLIC_URL`: server-side Next handlers use `API_PUBLIC_URL`,
+while browser code can only see `NEXT_PUBLIC_*` variables. Docker Compose does
+not read `.env.local` by default, so use `npm run db:up` or pass `--env-file
+.env.local` manually.
 
-Signup uses Supabase magic links. `SUPABASE_URL` and `SUPABASE_ANON_KEY` must be
+Sign-in uses Supabase magic links. `SUPABASE_URL` and `SUPABASE_ANON_KEY` must be
 real values for auth to send email. After Supabase verifies the link, Open42
 creates the workspace brain:
 
@@ -75,6 +80,7 @@ Supabase is not configured.
 | Command | What it does |
 |---------|-------------|
 | `npm run dev` | Run web + api in parallel |
+| `npm run dev:landing` | Landing app only, using `LANDING_PUBLIC_URL` |
 | `npm run docs:install` | Create `.venv-docs` and install MkDocs Material |
 | `npm run docs:serve` | Serve the docs site locally |
 | `npm run docs:build` | Build the docs site in strict mode |
@@ -83,9 +89,9 @@ Supabase is not configured.
 | `npm run db:up` | Start Postgres using `.env.local` |
 | `npm run tenant:build` | Build the gbrain tenant image; defaults to `GBRAIN_TENANT_PLATFORM=linux/amd64` for Fly |
 | `npm run tenant:create:fly -- --owner-user-id <id>` | Create one Fly tenant Machine from env |
-| `npm run build` | Build both apps |
-| `npm run typecheck` | TypeScript check both apps |
-| `npm run lint` | Lint both apps |
+| `npm run build` | Build landing, web, and api |
+| `npm run typecheck` | TypeScript check landing, web, and api |
+| `npm run lint` | Lint landing, web, and api |
 | `npm run test` | Run Vitest suite |
 | `npm run db:generate` | Generate Drizzle migrations from schema changes |
 | `npm run db:push` | Push schema directly to DB (dev only) |

@@ -54,7 +54,7 @@ export default function OnboardPage() {
       </Head>
       <main className="min-h-screen bg-background px-6 py-8">
         <div className="mx-auto max-w-landing">
-          <Link href="/home" className="font-mono text-sm text-text-subtle">
+          <Link href="/auth/home" className="font-mono text-sm text-text-subtle">
             open42
           </Link>
           <section className="pt-20">
