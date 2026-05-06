@@ -16,6 +16,7 @@
     "dev:api": "npm run dev -w @open42/api",
     "db:up": "docker compose --env-file .env.local up -d postgres",
     "tenant:build": "node scripts/build-tenant.mjs",
+    "tenant:create:fly": "node scripts/create-fly-tenant.mjs",
     "build": "npm run build -w @open42/web && npm run build -w @open42/api",
     "lint": "npm run lint -w @open42/web && npm run lint -w @open42/api",
     "typecheck": "npm run typecheck -w @open42/web && npm run typecheck -w @open42/api",

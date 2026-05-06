@@ -235,6 +235,7 @@ export async function registerGbrainOAuthClient(
     body: JSON.stringify({
       client_name: 'open42',
       grant_types: ['client_credentials'],
+      redirect_uris: [],
       scope: 'read write admin',
       token_endpoint_auth_method: 'client_secret_post',
     }),

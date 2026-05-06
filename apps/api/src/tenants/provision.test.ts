@@ -14,9 +14,19 @@ describe('provisionTenant', () => {
         return { id: 'workspace-1' };
       },
     };
-    const fetchMock = vi.fn(async (url: string | URL | Request) => {
+    const flyRequests: Array<{ href: string; body?: any }> = [];
+    const fetchMock = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
       const href = String(url);
       if (href.includes('api.machines.dev')) {
+        flyRequests.push({
+          href,
+          body: init?.body ? JSON.parse(String(init.body)) : undefined,
+        });
+      }
+      if (href.endsWith('/volumes')) {
+        return json({ id: 'volume-1' });
+      }
+      if (href.endsWith('/machines')) {
         return json({ id: 'machine-1', private_ip: 'fdaa::1' });
       }
       if (href === 'http://[fdaa::1]:8080/register') {
@@ -59,6 +69,11 @@ describe('provisionTenant', () => {
       gbrainVersion: '0.27.1',
     });
     expect(decryptSecret(stored[0].gbrainOauthClientSecretCiphertext)).toBe('secret-1');
+    const volumeRequest = flyRequests.find((request) => request.href.endsWith('/volumes'));
+    expect(volumeRequest?.body.name).toBe('open42_gbrain_user_12345678');
+    const machineRequest = flyRequests.find((request) => request.href.endsWith('/machines'));
+    expect(machineRequest?.body.config.mounts).toEqual([{ path: '/data', volume: 'volume-1' }]);
+    expect(machineRequest?.body.config.env).not.toHaveProperty('GBRAIN_DATABASE_URL');
   });
 
   it('creates a local Docker gbrain tenant when Fly is not configured', async () => {
@@ -101,6 +116,7 @@ describe('provisionTenant', () => {
         },
         env: {
           TENANT_PROVISIONER: 'local-docker',
+          GBRAIN_POSTGRES_PASSWORD: 'local-password',
           GBRAIN_VERSION: '0.27.1',
         },
       }),
@@ -114,7 +130,16 @@ describe('provisionTenant', () => {
     expect(commands.some((command) => command.args.includes('infra/Dockerfile.gbrain-tenant'))).toBe(
       true,
     );
-    expect(commands.some((command) => command.args.includes('run'))).toBe(true);
+    expect(
+      commands.some((command) =>
+        command.args.includes('GBRAIN_POSTGRES_PASSWORD=local-password'),
+      ),
+    ).toBe(true);
+    expect(
+      commands.some((command) =>
+        command.args.some((arg) => arg.startsWith('GBRAIN_DATABASE_URL=')),
+      ),
+    ).toBe(false);
     expect(stored[0]).toMatchObject({
       flyMachineId: 'open42-gbrain-user-loc',
       flyPrivateIp: '127.0.0.1:19001',

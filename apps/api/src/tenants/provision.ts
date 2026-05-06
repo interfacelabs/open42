@@ -18,6 +18,12 @@ export interface TenantProvisionEnv {
   TENANT_PROVISIONER?: string;
   FLY_API_TOKEN?: string;
   FLY_TENANTS_APP_NAME?: string;
+  GBRAIN_GIT_REF?: string;
+  GBRAIN_POSTGRES_DB?: string;
+  GBRAIN_POSTGRES_PASSWORD?: string;
+  GBRAIN_POSTGRES_USER?: string;
+  GBRAIN_TENANT_REGION?: string;
+  GBRAIN_TENANT_VOLUME_SIZE_GB?: string;
   GBRAIN_VERSION?: string;
   GBRAIN_TENANT_IMAGE?: string;
   GBRAIN_LOCAL_PORT_START?: string;
@@ -125,13 +131,27 @@ async function createFlyTenant(options: {
 }): Promise<{ machineId: string; privateIp: string; gbrainBaseUrl: string }> {
   const token = required(options.env.FLY_API_TOKEN, 'FLY_API_TOKEN');
   const appName = required(options.env.FLY_TENANTS_APP_NAME, 'FLY_TENANTS_APP_NAME');
+  const region = options.env.GBRAIN_TENANT_REGION;
+  const volume = await createFlyVolume({
+    appName,
+    fetch: options.fetch,
+    ownerUserId: options.ownerUserId,
+    region,
+    sizeGb: Number(options.env.GBRAIN_TENANT_VOLUME_SIZE_GB ?? 3),
+    token,
+  });
   const machine = await createFlyMachine({
     appName,
     token,
     image: tenantImage(options.env, options.gbrainVersion),
     gbrainVersion: options.gbrainVersion,
     ownerUserId: options.ownerUserId,
+    postgresDb: options.env.GBRAIN_POSTGRES_DB ?? 'gbrain',
+    postgresPassword: options.env.GBRAIN_POSTGRES_PASSWORD,
+    postgresUser: options.env.GBRAIN_POSTGRES_USER ?? 'gbrain',
+    region,
     fetch: options.fetch,
+    volumeId: volume.id,
   });
   return {
     machineId: machine.id,
@@ -140,13 +160,52 @@ async function createFlyTenant(options: {
   };
 }
 
+async function createFlyVolume(options: {
+  appName: string;
+  token: string;
+  ownerUserId: string;
+  region?: string;
+  sizeGb: number;
+  fetch: Fetch;
+}): Promise<{ id: string }> {
+  const response = await options.fetch(
+    `https://api.machines.dev/v1/apps/${options.appName}/volumes`,
+    {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${options.token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        name: tenantVolumeName(options.ownerUserId),
+        region: options.region,
+        size_gb: options.sizeGb,
+      }),
+    },
+  );
+  const payload = (await response.json()) as Partial<{ id: string }>;
+  if (!response.ok) {
+    throw new Error(`Fly volume create failed: ${JSON.stringify(payload)}`);
+  }
+  const id = String(payload.id ?? '');
+  if (!id) {
+    throw new Error('Fly volume response missing id');
+  }
+  return { id };
+}
+
 async function createFlyMachine(options: {
   appName: string;
   token: string;
   image: string;
   gbrainVersion: string;
   ownerUserId: string;
+  postgresDb: string;
+  postgresPassword?: string;
+  postgresUser: string;
+  region?: string;
   fetch: Fetch;
+  volumeId: string;
 }): Promise<{ id: string; privateIp: string }> {
   const response = await options.fetch(
     `https://api.machines.dev/v1/apps/${options.appName}/machines`,
@@ -158,16 +217,30 @@ async function createFlyMachine(options: {
       },
       body: JSON.stringify({
         name: `open42-${options.ownerUserId.slice(0, 8)}`,
+        region: options.region,
+        skip_launch: false,
         config: {
           image: options.image,
           env: {
+            GBRAIN_HOME: '/data/gbrain',
+            GBRAIN_POSTGRES_DB: options.postgresDb,
+            ...(options.postgresPassword
+              ? { GBRAIN_POSTGRES_PASSWORD: options.postgresPassword }
+              : {}),
+            GBRAIN_POSTGRES_USER: options.postgresUser,
             GBRAIN_VERSION: options.gbrainVersion,
           },
           guest: {
             cpu_kind: 'shared',
             cpus: 1,
-            memory_mb: 512,
+            memory_mb: 1024,
           },
+          mounts: [
+            {
+              path: '/data',
+              volume: options.volumeId,
+            },
+          ],
           services: [],
         },
       }),
@@ -198,17 +271,17 @@ async function createLocalDockerTenant(options: {
   allocatePort: (startAt: number) => Promise<number>;
 }): Promise<{ machineId: string; privateIp: string; gbrainBaseUrl: string }> {
   const image = tenantImage(options.env, options.gbrainVersion);
+  const gitRef = gbrainGitRef(options.env);
   const containerName = `open42-gbrain-${options.ownerUserId.slice(0, 8)}`;
   const port = await options.allocatePort(Number(options.env.GBRAIN_LOCAL_PORT_START ?? 18080));
   const baseUrl = `http://127.0.0.1:${port}`;
-  const volume = `${containerName}-data`;
+  const dataVolume = `${containerName}-data`;
+  const postgresUser = options.env.GBRAIN_POSTGRES_USER ?? 'gbrain';
+  const postgresDb = options.env.GBRAIN_POSTGRES_DB ?? 'gbrain';
 
-  await ensureLocalTenantImage(image, options.runCommand);
-  await options.runCommand('docker', ['volume', 'create', volume]);
-  await options.runCommand('docker', ['rm', '-f', containerName]).catch(() => ({
-    stdout: '',
-    stderr: '',
-  }));
+  await ensureLocalTenantImage(image, options.gbrainVersion, gitRef, options.runCommand);
+  await options.runCommand('docker', ['volume', 'create', dataVolume]);
+  await removeDockerContainer(containerName, options.runCommand);
   await options.runCommand('docker', [
     'run',
     '-d',
@@ -219,9 +292,18 @@ async function createLocalDockerTenant(options: {
     '-e',
     `GBRAIN_PUBLIC_URL=${baseUrl}`,
     '-e',
+    `GBRAIN_POSTGRES_DB=${postgresDb}`,
+    '-e',
+    `GBRAIN_POSTGRES_USER=${postgresUser}`,
+    ...(options.env.GBRAIN_POSTGRES_PASSWORD
+      ? ['-e', `GBRAIN_POSTGRES_PASSWORD=${options.env.GBRAIN_POSTGRES_PASSWORD}`]
+      : []),
+    '-e',
     `GBRAIN_VERSION=${options.gbrainVersion}`,
+    '-e',
+    'GBRAIN_HOME=/data/gbrain',
     '-v',
-    `${volume}:/data`,
+    `${dataVolume}:/data`,
     image,
   ]);
 
@@ -232,12 +314,35 @@ async function createLocalDockerTenant(options: {
   };
 }
 
-async function ensureLocalTenantImage(image: string, runCommand: CommandRunner): Promise<void> {
+async function ensureLocalTenantImage(
+  image: string,
+  gbrainVersion: string,
+  gitRef: string,
+  runCommand: CommandRunner,
+): Promise<void> {
   try {
     await runCommand('docker', ['image', 'inspect', image]);
   } catch {
-    await runCommand('docker', ['build', '-f', 'infra/Dockerfile.gbrain-tenant', '-t', image, '.']);
+    await runCommand('docker', [
+      'build',
+      '-f',
+      'infra/Dockerfile.gbrain-tenant',
+      '--build-arg',
+      `GBRAIN_VERSION=${gbrainVersion}`,
+      '--build-arg',
+      `GBRAIN_GIT_REF=${gitRef}`,
+      '-t',
+      image,
+      '.',
+    ]);
   }
+}
+
+async function removeDockerContainer(name: string, runCommand: CommandRunner): Promise<void> {
+  await runCommand('docker', ['rm', '-f', name]).catch(() => ({
+    stdout: '',
+    stderr: '',
+  }));
 }
 
 async function waitForGbrainHealth(
@@ -245,7 +350,7 @@ async function waitForGbrainHealth(
   fetchImpl: Fetch,
   sleepImpl: (ms: number) => Promise<void>,
 ): Promise<void> {
-  const deadline = Date.now() + 30_000;
+  const deadline = Date.now() + 90_000;
   let lastError: unknown;
   while (Date.now() < deadline) {
     try {
@@ -319,6 +424,20 @@ function selectProvisioner(env: TenantProvisionEnv): 'fly' | 'local-docker' {
 
 function tenantImage(env: TenantProvisionEnv, gbrainVersion: string): string {
   return env.GBRAIN_TENANT_IMAGE ?? `open42/gbrain-tenant:v${gbrainVersion}`;
+}
+
+function gbrainGitRef(env: TenantProvisionEnv): string {
+  return env.GBRAIN_GIT_REF ?? 'garrytan/v0.27.1-multimodal';
+}
+
+function tenantVolumeName(ownerUserId: string): string {
+  const suffix =
+    ownerUserId
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '_')
+      .replace(/^_+|_+$/g, '')
+      .slice(0, 16) || 'tenant';
+  return `open42_gbrain_${suffix}`.slice(0, 30);
 }
 
 async function allocatePort(startAt: number): Promise<number> {

@@ -8,7 +8,7 @@ Self-hostable Company Brain on top of [gbrain](https://github.com/garrytan/gbrai
 
 - **Frontend:** Next.js (Pages Router) + Tailwind CSS + shadcn/ui + Zustand
 - **Backend:** Node + Express + TypeScript + Drizzle + Postgres + pgvector
-- **gbrain integration:** `gbrain serve --http` per tenant on Fly, MCP over private IPv6
+- **gbrain integration:** `gbrain serve --http` per tenant on Fly/local Docker, backed by Postgres + pgvector
 - **LLM:** Anthropic Claude with prompt caching
 - **Tests:** Vitest + Playwright + custom LLM eval harness
 
@@ -60,10 +60,12 @@ Signup uses Supabase magic links. `SUPABASE_URL` and `SUPABASE_ANON_KEY` must be
 real values for auth to send email. After Supabase verifies the link, Open42
 creates the workspace brain:
 
-- `TENANT_PROVISIONER=local-docker` builds `infra/Dockerfile.gbrain-tenant` and
-  starts one local gbrain container per first-time user.
+- `TENANT_PROVISIONER=local-docker` builds `infra/Dockerfile.gbrain-tenant`, then
+  starts one container per first-time user. That container runs Postgres +
+  pgvector and gbrain together, backed by a Docker volume mounted at `/data`.
 - `TENANT_PROVISIONER=fly` calls the Fly Machines API and creates one machine in
-  `FLY_TENANTS_APP_NAME`.
+  `FLY_TENANTS_APP_NAME`. Each tenant Machine gets its own Fly volume mounted at
+  `/data`; Postgres + pgvector run inside the same tenant Machine as gbrain.
 
 The old debug-link path is intentionally not present; auth should fail loudly if
 Supabase is not configured.
@@ -76,7 +78,8 @@ Supabase is not configured.
 | `npm run dev:web` | Web only, using `WEB_PUBLIC_URL` |
 | `npm run dev:api` | API only, using `API_PORT` / `API_PUBLIC_URL` |
 | `npm run db:up` | Start Postgres using `.env.local` |
-| `npm run tenant:build` | Build the local/Fly gbrain tenant image |
+| `npm run tenant:build` | Build the gbrain tenant image; defaults to `GBRAIN_TENANT_PLATFORM=linux/amd64` for Fly |
+| `npm run tenant:create:fly -- --owner-user-id <id>` | Create one Fly tenant Machine from env |
 | `npm run build` | Build both apps |
 | `npm run typecheck` | TypeScript check both apps |
 | `npm run lint` | Lint both apps |

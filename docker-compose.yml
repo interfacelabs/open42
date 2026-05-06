@@ -1,6 +1,6 @@
 # =====================================================================
 # Open42 dev infra — Postgres with pgvector for the metadata DB.
-# (gbrain has its own pgvector inside each tenant's Fly machine.)
+# (gbrain tenants run their own embedded Postgres + pgvector inside each tenant.)
 #
 # Default host port is 54338 (deliberately NOT 5432) so it doesn't
 # collide with a local system Postgres. Override with POSTGRES_HOST_PORT
