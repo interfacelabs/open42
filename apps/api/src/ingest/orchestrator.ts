@@ -294,7 +294,7 @@ export async function runWorkspaceCycle(
 
     for (const id of oneShotCompletedIds) {
       const connection = connections.find((item) => item.id === id);
-      const zipPath = cursorRecord(connection?.cursor).zipPath;
+      const zipPath = (cursorsToCommit.get(id) ?? cursorRecord(connection?.cursor)).zipPath;
       if (typeof zipPath === 'string') {
         await rm(zipPath, { force: true }).catch(() => undefined);
       }
