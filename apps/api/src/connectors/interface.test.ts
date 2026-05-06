@@ -12,7 +12,7 @@ describe('Connector interface contract', () => {
       name: 'fake',
       version: '0.0.1',
       mode: 'pollable',
-      extract(ctx: ConnectorContext): ExtractResult {
+      extract(_ctx: ConnectorContext): ExtractResult {
         const docs = (async function* (): AsyncIterable<NormalizedDoc> {
           yield {
             slug: 'doc-1',

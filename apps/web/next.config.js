@@ -14,6 +14,7 @@ const nextConfig = {
   reactStrictMode: true,
   poweredByHeader: false,
   outputFileTracingRoot: path.join(__dirname, '../..'),
+  transpilePackages: ['geist'],
   // Pages Router (default in Next 15 if no app/ dir present).
   // Proxy /api requests to the Express backend in dev.
   async rewrites() {

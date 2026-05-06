@@ -117,8 +117,8 @@ describe('NotionZipConnector', () => {
       source: { kind: 'notion-zip', zipPath },
       workspaceId: 'test-workspace',
     });
-    for await (const _doc of result.docs) {
-      // drain
+    for await (const doc of result.docs) {
+      expect(doc.slug).toBe('hello');
     }
     expect(result.finalize()).toEqual({
       zipPath,
