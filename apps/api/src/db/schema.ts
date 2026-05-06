@@ -47,6 +47,19 @@ export const ingestStatusEnum = pgEnum('ingest_status', [
   'failed',
 ]);
 export const connectorEnum = pgEnum('connector_kind', ['notion-zip']);
+export const connectionKindEnum = pgEnum('connection_kind', [
+  'notion-composio',
+  'notion-zip',
+]);
+export const connectionStatusEnum = pgEnum('connection_status', [
+  'pending_import',
+  'active',
+  'paused',
+  'completed',
+  'errored',
+  'disconnected',
+]);
+export const ingestModeEnum = pgEnum('ingest_mode', ['import_once', 'periodic_pull']);
 
 // =====================================================================
 // users
