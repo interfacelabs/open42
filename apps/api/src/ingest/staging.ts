@@ -1,4 +1,4 @@
-import { copyFile, mkdir, readdir, rm, stat } from 'node:fs/promises';
+import { access, copyFile, mkdir, readdir, rm, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -38,7 +38,11 @@ export async function mergeIntoFinal(
       continue;
     }
     for (const entry of entries) {
-      await copyFile(join(src, entry), join(final, entry));
+      const dest = join(final, entry);
+      if (await pathExists(dest)) {
+        console.warn('ingest_staging_overwrite', { cycleDir, connectionId: id, file: entry });
+      }
+      await copyFile(join(src, entry), dest);
     }
   }
 }
@@ -71,4 +75,13 @@ export async function sweepStaleCycles(maxAgeMs = 60 * 60 * 1000): Promise<numbe
     }
   }
   return removed;
+}
+
+async function pathExists(path: string): Promise<boolean> {
+  try {
+    await access(path);
+    return true;
+  } catch {
+    return false;
+  }
 }
