@@ -1,0 +1,99 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/*
+ * Open42 design tokens — mirrors DESIGN.md.
+ * shadcn semantic tokens map to these via tailwind.config.ts.
+ *
+ * Light mode only in P1.
+ */
+@layer base {
+  :root {
+    /* shadcn semantic tokens (HSL channels, no `hsl()` wrapper) */
+    --background: 0 0% 100%; /* #ffffff */
+    --foreground: 0 0% 9%; /* #171717 */
+
+    --card: 0 0% 100%;
+    --card-foreground: 0 0% 9%;
+
+    --popover: 0 0% 100%;
+    --popover-foreground: 0 0% 9%;
+
+    --primary: 0 0% 9%;
+    --primary-foreground: 0 0% 100%;
+
+    --secondary: 0 0% 96%;
+    --secondary-foreground: 0 0% 9%;
+
+    --muted: 0 0% 96%;
+    --muted-foreground: 0 0% 45%;
+
+    --accent: 230 100% 56%; /* #1d4dff — single blue accent, used rarely */
+    --accent-foreground: 0 0% 100%;
+
+    --destructive: 0 73% 41%; /* #b91c1c */
+    --destructive-foreground: 0 0% 100%;
+
+    --border: 0 0% 93%; /* #eeeeee */
+    --input: 0 0% 90%; /* #e5e5e5 */
+    --ring: 230 100% 56%; /* same as accent */
+
+    --radius: 16px; /* default card / button radius (rounded-2xl) */
+
+    /* Open42 typography tokens (per DESIGN.md) */
+    --text-primary: 0 0% 9%; /* #171717 — headings */
+    --text-body: 0 0% 25%; /* #404040 — body */
+    --text-subtle: 0 0% 45%; /* #737373 — secondary copy */
+    --text-faint: 0 0% 64%; /* #a3a3a3 — captions */
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  html,
+  body {
+    @apply bg-background text-foreground;
+    font-feature-settings: 'cv11', 'ss01', 'ss03';
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+  body {
+    @apply font-sans;
+  }
+}
+
+/* Reduced motion: collapse animations to a hair (per DESIGN.md). */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* Open42 button presets — tactile glossy, per DESIGN.md.
+ * Use shadcn's <Button variant="primary"> via class composition, OR these
+ * raw classes if you need a one-off without the shadcn primitive.
+ */
+@layer components {
+  .btn-primary {
+    @apply inline-flex h-11 items-center justify-center rounded-2xl bg-gradient-to-b from-neutral-800 to-neutral-950 px-6 text-[15px] font-medium tracking-[-0.01em] text-white transition-all duration-200 hover:brightness-110 active:translate-y-px;
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, 0.18),
+      0 1px 2px rgba(0, 0, 0, 0.18),
+      0 8px 20px rgba(0, 0, 0, 0.12);
+  }
+
+  .btn-secondary {
+    @apply inline-flex h-11 items-center justify-center rounded-2xl border border-black/10 bg-gradient-to-b from-white to-neutral-100 px-6 text-[15px] font-medium tracking-[-0.005em] text-neutral-800 transition-all duration-200 hover:bg-white active:translate-y-px;
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, 0.9),
+      0 1px 2px rgba(0, 0, 0, 0.08);
+  }
+}

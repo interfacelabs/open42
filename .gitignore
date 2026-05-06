@@ -1,0 +1,177 @@
+# =====================================================================
+# Foundational design/engineering docs — kept local, not committed.
+# These reference internal product strategy and aesthetic comparisons.
+# The repo's public surface is README.md + code.
+# =====================================================================
+PHILOSOPHY.md
+DESIGN.md
+ENGINEERING.md
+CLAUDE.md
+AGENTS.md
+
+# =====================================================================
+# AI agent session artifacts — NEVER commit.
+# These contain conversation context, plans, internal reasoning,
+# and may include strategy/secrets. Keep entirely local.
+# =====================================================================
+
+# --- Claude Code ---
+.claude/
+.claude.local.json
+.claude-*.local
+**/CLAUDE.local.md
+**/CLAUDE-*.md
+
+# --- Codex CLI ---
+.codex/
+.codex-session-id
+codex-session-*.txt
+codex-session-*.log
+codex-*.tmp
+agents/openai.yaml.local
+
+# --- gstack skills + state ---
+.gstack/
+.gstack-*
+gstack-*.local
+
+# --- Generic agent / context state ---
+.memory/
+memory/
+.context/
+context/
+.context-save/
+.cache/agents/
+
+# =====================================================================
+# Plans, brainstorms, sessions, transcripts — local-only working docs.
+# =====================================================================
+plans/
+PLANS.md
+PLAN.md
+*.plan.md
+brainstorms/
+BRAINSTORM.md
+*.brainstorm.md
+thoughts/
+sessions/
+transcripts/
+*.session.md
+*.transcript.md
+office-hours/
+OFFICE-HOURS*.md
+OFFICE_HOURS*.md
+demand-evidence.md
+builder-journey.md
+*-design-doc-*.md
+*-eng-review-*.md
+*-ceo-review-*.md
+*-design-review-*.md
+
+# =====================================================================
+# Node / package managers
+# =====================================================================
+node_modules/
+.pnpm-store/
+.yarn/cache/
+.yarn/install-state.gz
+
+# =====================================================================
+# Next.js (Pages Router)
+# =====================================================================
+.next/
+out/
+next-env.d.ts
+.swc/
+
+# =====================================================================
+# Build / dist
+# =====================================================================
+dist/
+build/
+*.tsbuildinfo
+
+# =====================================================================
+# Env / secrets — NEVER commit
+# =====================================================================
+.env
+.env.local
+.env.*.local
+.env.development
+.env.production
+.env.test
+*.pem
+*.key
+secrets/
+.secrets/
+
+# =====================================================================
+# Drizzle ORM
+# =====================================================================
+# Commit migrations/, ignore the meta cache only
+drizzle/meta/_journal.json.bak
+
+# =====================================================================
+# Testing
+# =====================================================================
+coverage/
+.vitest-cache/
+playwright-report/
+test-results/
+playwright/.cache/
+
+# =====================================================================
+# LLM eval artifacts
+# =====================================================================
+eval/results/
+eval/cache/
+eval/*.local.json
+
+# =====================================================================
+# Editor / OS
+# =====================================================================
+.DS_Store
+.idea/
+.vscode/*
+!.vscode/settings.example.json
+!.vscode/extensions.json
+*.swp
+*.swo
+*.swn
+*~
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# =====================================================================
+# Logs
+# =====================================================================
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+.npm/
+
+# =====================================================================
+# Deploy / infra
+# =====================================================================
+.vercel
+.fly/
+fly.toml.local
+docker-compose.override.yml
+*.dump
+*.sql.gz
+
+# =====================================================================
+# Temporary / scratch
+# =====================================================================
+tmp/
+temp/
+.tmp/
+*.tmp
+scratch/
+SCRATCH.md
+NOTES.md
+TODO.local.md
