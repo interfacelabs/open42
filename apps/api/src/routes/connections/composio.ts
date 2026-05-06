@@ -59,6 +59,8 @@ export function buildComposioRouter(depsIn: ComposioRouterDeps = {}) {
         res.status(403).json({ error: 'no_workspace' });
         return;
       }
+      // TODO(P1.5): this pre-check is best-effort UX only; the partial unique index
+      // remains the source of truth because initiateConnection is outside this txn.
       if (await hasActiveNotionConnection(workspaceId)) {
         res.status(409).json({ error: 'notion_connection_exists' });
         return;
@@ -129,7 +131,8 @@ export function buildComposioRouter(depsIn: ComposioRouterDeps = {}) {
           .select()
           .from(schema.connectionInitStates)
           .where(eq(schema.connectionInitStates.state, state))
-          .limit(1);
+          .limit(1)
+          .for('update');
         if (!row) return null;
         await tx
           .delete(schema.connectionInitStates)
