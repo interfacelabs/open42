@@ -6,6 +6,7 @@ import AdmZip from 'adm-zip';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { NotionZipConnector, csvToMarkdown, slugify, stripFilenameUuid } from './index.js';
+import type { NormalizedDoc } from '../interface.js';
 
 const tempDirs: string[] = [];
 
@@ -32,10 +33,13 @@ describe('NotionZipConnector', () => {
     zip.addFile('Policies/image.png', Buffer.from('not real'));
     await writeFile(zipPath, zip.toBuffer());
 
-    const docs = [];
-    for await (const doc of new NotionZipConnector().extract({ zipPath })) {
-      docs.push(doc);
-    }
+    const result = new NotionZipConnector().extract({
+      cursor: {},
+      source: { kind: 'notion-zip', zipPath },
+      workspaceId: 'test-workspace',
+    });
+    const docs: NormalizedDoc[] = [];
+    for await (const doc of result.docs) docs.push(doc);
 
     expect(docs.map((doc) => doc.slug).sort()).toEqual([
       'enterprise-sla',
@@ -48,8 +52,14 @@ describe('NotionZipConnector', () => {
     expect(refund?.content_md).toContain('Refunds 😀');
     expect(refund?.content_md).toContain('[Enterprise](enterprise-sla)');
     expect(refund?.content_md).not.toContain('image.png');
+    expect(refund?.metadata.source_ref).toBe(
+      'notion-zip:Policies/Refund Policy 1234567890abcdef1234567890abcdef.md',
+    );
     expect(matrix?.content_md).toContain('| Plan | Days |');
     expect(matrix?.content_md).toContain('| Enterprise | 90 |');
+    expect(result.finalize()).toEqual(
+      expect.objectContaining({ zipPath, importedAt: expect.any(String) }),
+    );
   });
 
   it('exposes filename and CSV helpers', () => {
@@ -76,10 +86,13 @@ describe('NotionZipConnector', () => {
     zip.addFile('Files/Archive.pdf', Buffer.from('%PDF'));
     await writeFile(zipPath, zip.toBuffer());
 
-    const docs = [];
-    for await (const doc of new NotionZipConnector().extract({ zipPath })) {
-      docs.push(doc);
-    }
+    const result = new NotionZipConnector().extract({
+      cursor: {},
+      source: { kind: 'notion-zip', zipPath },
+      workspaceId: 'test-workspace',
+    });
+    const docs: NormalizedDoc[] = [];
+    for await (const doc of result.docs) docs.push(doc);
 
     expect(docs.map((doc) => doc.slug).sort()).toEqual(['bad-e0-a4-a', 'empty', 'external-links']);
     expect(docs.find((doc) => doc.slug === 'empty')?.content_md).toBe('');
@@ -87,5 +100,29 @@ describe('NotionZipConnector', () => {
     expect(external?.content_md).toContain('[Site](https://example.com/policy)');
     expect(external?.content_md).toContain('[Broken](%E0%A4%A.md)');
     expect(docs.some((doc) => doc.metadata.source_ref === 'Files/Archive.pdf')).toBe(false);
+  });
+
+  it('declares one-shot mode and returns an importedAt cursor', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'open42-notion-mode-test-'));
+    tempDirs.push(dir);
+    const zipPath = join(dir, 'notion-mode.zip');
+    const zip = new AdmZip();
+    zip.addFile('Notes/Hello.md', Buffer.from('hello'));
+    await writeFile(zipPath, zip.toBuffer());
+
+    const connector = new NotionZipConnector();
+    expect(connector.mode).toBe('one_shot');
+    const result = connector.extract({
+      cursor: {},
+      source: { kind: 'notion-zip', zipPath },
+      workspaceId: 'test-workspace',
+    });
+    for await (const _doc of result.docs) {
+      // drain
+    }
+    expect(result.finalize()).toEqual({
+      zipPath,
+      importedAt: expect.any(String),
+    });
   });
 });

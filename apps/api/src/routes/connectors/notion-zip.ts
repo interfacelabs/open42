@@ -38,8 +38,13 @@ notionZipRouter.post('/', upload.single('file'), async (req, res, next) => {
 
     const stagingDir = await mkdtemp(join(tmpdir(), 'open42-notion-'));
     const connector = new NotionZipConnector();
+    const result = connector.extract({
+      cursor: {},
+      source: { kind: 'notion-zip', zipPath: req.file.path },
+      workspaceId: workspace.id,
+    });
     let pagesTotal = 0;
-    for await (const doc of connector.extract({ zipPath: req.file.path })) {
+    for await (const doc of result.docs) {
       pagesTotal += 1;
       await writeFile(join(stagingDir, `${doc.slug}.md`), doc.content_md, 'utf8');
     }
