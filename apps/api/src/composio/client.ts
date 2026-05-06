@@ -48,16 +48,25 @@ interface ComposioSdk {
 }
 
 type ComposioConstructor = new (opts: Record<string, unknown>) => ComposioSdk;
+type ComposioModule = {
+  Composio?: ComposioConstructor;
+  default?: { Composio?: ComposioConstructor };
+};
 
 export async function createComposioClient(deps: ComposioClientDeps): Promise<ComposioClient> {
   if (!deps.apiKey) {
     throw new Error('createComposioClient: apiKey required');
   }
   const packageName = '@composio/core';
-  const mod = (await import(packageName)) as {
-    Composio?: ComposioConstructor;
-    default?: { Composio?: ComposioConstructor };
-  };
+  // TODO(P1): restore @composio/core in apps/api/package.json and package-lock.json
+  // once installation is available. Until then, keep the dynamic import non-fatal so
+  // the API can boot and non-Composio ingestion paths continue to work.
+  const mod = await loadComposioSdk(packageName);
+  if (!mod) {
+    return noopComposioStub(
+      'composio_sdk_unavailable: install @composio/core and restore the package-lock entry',
+    );
+  }
   const Composio = mod.Composio ?? mod.default?.Composio;
   if (!Composio) {
     throw new Error('@composio/core: Composio export not found - SDK shape may have changed');
@@ -102,6 +111,8 @@ export async function createComposioClient(deps: ComposioClientDeps): Promise<Co
           });
           return res as T;
         } catch (err) {
+          // TODO(P1): Spike 3 has not manually validated Composio's rate-limit error
+          // shape; this retry handles plausible HTTP 429 shapes only.
           if (!isRateLimitError(err) || attempt === max - 1) throw err;
           await sleep(delay + Math.random() * 250);
           delay *= 2;
@@ -112,9 +123,9 @@ export async function createComposioClient(deps: ComposioClientDeps): Promise<Co
   };
 }
 
-export function noopComposioStub(): ComposioClient {
+export function noopComposioStub(reason = 'composio_not_configured'): ComposioClient {
   const fail = async (): Promise<never> => {
-    throw new Error('composio_not_configured');
+    throw new Error(reason);
   };
   return {
     initiateConnection: fail,
@@ -124,6 +135,17 @@ export function noopComposioStub(): ComposioClient {
   };
 }
 
+async function loadComposioSdk(packageName: string): Promise<ComposioModule | null> {
+  try {
+    return (await import(packageName)) as ComposioModule;
+  } catch (err) {
+    if (isMissingPackage(err, packageName)) return null;
+    throw err;
+  }
+}
+
+// TODO(P1): replace response shape probing with @composio/core SDK types after the
+// SDK dependency is restored to the lockfile.
 function stringField(value: unknown, key: string): string | undefined {
   if (!value || typeof value !== 'object') return undefined;
   const raw = (value as Record<string, unknown>)[key];
@@ -139,6 +161,12 @@ function isRateLimitError(err: unknown): boolean {
       ? (response as Record<string, unknown>).status
       : undefined;
   return record.status === 429 || record.statusCode === 429 || responseStatus === 429;
+}
+
+function isMissingPackage(err: unknown, packageName: string): boolean {
+  if (!err || typeof err !== 'object') return false;
+  const record = err as { code?: unknown; message?: unknown };
+  return record.code === 'ERR_MODULE_NOT_FOUND' && String(record.message ?? '').includes(packageName);
 }
 
 async function sleep(ms: number): Promise<void> {
