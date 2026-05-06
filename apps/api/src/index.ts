@@ -23,7 +23,7 @@ import { startScheduler, type SchedulerHandle } from './ingest/orchestrator.js';
 import { sweepStaleCycles } from './ingest/staging.js';
 import { authRouter } from './routes/auth.js';
 import { chatRouter } from './routes/chat.js';
-import { notionZipRouter } from './routes/connectors/notion-zip.js';
+import { buildNotionZipRouter } from './routes/connections/notion-zip.js';
 import { healthzRouter } from './routes/healthz.js';
 import { refundPolicySkillRouter } from './routes/skills/refund-policy.js';
 
@@ -40,6 +40,10 @@ const port = Number(process.env.API_PORT ?? portFromUrl(process.env.API_PUBLIC_U
 
 export let composio: ComposioClient | null = null;
 export let scheduler: SchedulerHandle | null = null;
+
+export async function kickWorkspaceIngest(workspaceId: string): Promise<void> {
+  await scheduler?.kick(workspaceId);
+}
 
 void (async () => {
   try {
@@ -92,7 +96,7 @@ app.use(
 // Routes
 app.use('/healthz', healthzRouter);
 app.use('/auth', authRouter);
-app.use('/connectors/notion-zip', notionZipRouter);
+app.use('/connections/notion-zip', buildNotionZipRouter({ kick: kickWorkspaceIngest }));
 app.use('/chat', chatRouter);
 app.use('/skills/refund-policy', refundPolicySkillRouter);
 
