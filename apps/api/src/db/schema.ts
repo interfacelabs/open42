@@ -18,6 +18,7 @@ import {
   index,
   uniqueIndex,
   jsonb,
+  check,
 } from 'drizzle-orm/pg-core';
 import { sql } from 'drizzle-orm';
 
@@ -49,7 +50,6 @@ export const ingestStatusEnum = pgEnum('ingest_status', [
   'completed',
   'failed',
 ]);
-export const connectorEnum = pgEnum('connector_kind', ['notion-zip']);
 export const connectionKindEnum = pgEnum('connection_kind', [
   'notion-composio',
   'notion-zip',
@@ -80,22 +80,35 @@ export const users = pgTable('users', {
 // workspaces
 // =====================================================================
 
-export const workspaces = pgTable('workspaces', {
-  id: uuid('id').primaryKey().defaultRandom(),
-  ownerUserId: uuid('owner_user_id')
-    .notNull()
-    .references(() => users.id, { onDelete: 'cascade' }),
-  flyMachineId: text('fly_machine_id'),
-  flyPrivateIp: text('fly_private_ip'),
-  gbrainBaseUrl: text('gbrain_base_url'),
-  gbrainOauthClientId: text('gbrain_oauth_client_id'),
-  // AES-GCM(client_secret, OPEN42_KEK). Plaintext NEVER stored.
-  gbrainOauthClientSecretCiphertext: bytea('gbrain_oauth_client_secret_ciphertext'),
-  gbrainVersion: text('gbrain_version').notNull(),
-  status: workspaceStatusEnum('status').notNull().default('provisioning'),
-  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
-  deletedAt: timestamp('deleted_at', { withTimezone: true }),
-});
+export const workspaces = pgTable(
+  'workspaces',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    ownerUserId: uuid('owner_user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    flyMachineId: text('fly_machine_id'),
+    flyPrivateIp: text('fly_private_ip'),
+    gbrainBaseUrl: text('gbrain_base_url'),
+    gbrainOauthClientId: text('gbrain_oauth_client_id'),
+    // AES-GCM(client_secret, OPEN42_KEK). Plaintext NEVER stored.
+    gbrainOauthClientSecretCiphertext: bytea('gbrain_oauth_client_secret_ciphertext'),
+    gbrainVersion: text('gbrain_version').notNull(),
+    status: workspaceStatusEnum('status').notNull().default('provisioning'),
+    ingestMode: ingestModeEnum('ingest_mode').notNull().default('periodic_pull'),
+    ingestIntervalHours: integer('ingest_interval_hours').notNull().default(1),
+    ingestLastCycleAt: timestamp('ingest_last_cycle_at', { withTimezone: true }),
+    ingestLockUntil: timestamp('ingest_lock_until', { withTimezone: true }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    deletedAt: timestamp('deleted_at', { withTimezone: true }),
+  },
+  (t) => ({
+    ingestIntervalCheck: check(
+      'workspaces_ingest_interval_hours_range',
+      sql`${t.ingestIntervalHours} BETWEEN 1 AND 168`,
+    ),
+  }),
+);
 
 // =====================================================================
 // memberships (N:N — P1 only has owner rows; P2 multiplayer adds members)
@@ -182,10 +195,9 @@ export const ingestJobs = pgTable(
       .notNull()
       .references(() => workspaces.id, { onDelete: 'cascade' }),
     gbrainJobId: text('gbrain_job_id'),
-    connector: connectorEnum('connector').notNull(),
     status: ingestStatusEnum('status').notNull().default('pending'),
     pagesTotal: integer('pages_total').notNull().default(0),
-    pagesProcessed: integer('pages_processed').notNull().default(0),
+    connectorsSummary: jsonb('connectors_summary').notNull().default([]),
     startedAt: timestamp('started_at', { withTimezone: true }),
     completedAt: timestamp('completed_at', { withTimezone: true }),
     error: text('error'),

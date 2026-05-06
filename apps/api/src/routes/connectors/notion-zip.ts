@@ -69,10 +69,10 @@ notionZipRouter.post('/', upload.single('file'), async (req, res, next) => {
       .values({
         workspaceId: workspace.id,
         gbrainJobId,
-        connector: 'notion-zip',
         status: 'running',
         pagesTotal,
-        pagesProcessed: 0,
+        // TODO(Chunk-4): route is replaced by /connections/notion-zip and the orchestrator.
+        connectorsSummary: [{ connection_id: 'legacy-notion-zip', kind: 'notion-zip', pages: pagesTotal }],
         startedAt: new Date(),
       })
       .returning();
@@ -105,7 +105,8 @@ notionZipRouter.get('/jobs/:id', async (req, res, next) => {
       id: job.id,
       status: job.status,
       pagesTotal: job.pagesTotal,
-      pagesProcessed: job.pagesProcessed,
+      // TODO(Chunk-4): progress is reported via connectorsSummary after the route refactor.
+      pagesProcessed: job.pagesTotal,
       error: job.error,
       completedAt: job.completedAt?.toISOString() ?? null,
     });
