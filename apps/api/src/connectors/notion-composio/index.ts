@@ -66,14 +66,15 @@ export class NotionComposioConnector implements Connector {
             args: { page_id: item.id },
           });
           const title = item.title ?? '';
+          const lastModifiedAt = validDate(item.last_edited_time);
           yield {
             slug: notionPageSlug(item.id),
             title,
             content_md: blocksToMarkdown(content.blocks ?? []),
             metadata: {
-              source_ref: `notion:${item.id}`,
+              source_ref: `notion-composio:${item.id}`,
               source_url: item.url,
-              last_modified_at: new Date(item.last_edited_time),
+              last_modified_at: lastModifiedAt,
               author: item.created_by?.name,
               title,
             },
@@ -92,4 +93,9 @@ export class NotionComposioConnector implements Connector {
       finalize: () => (maxSeen ? { since_iso: maxSeen } : {}),
     };
   }
+}
+
+function validDate(value: string): Date | undefined {
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? undefined : date;
 }

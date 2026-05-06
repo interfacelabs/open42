@@ -63,6 +63,7 @@ describe('NotionComposioConnector', () => {
     for await (const d of result.docs) docs.push(d);
     expect(docs.map((d) => d.slug)).toEqual(['notion-composio-id1', 'notion-composio-id2']);
     expect(docs[0]?.title).toBe('Page One');
+    expect(docs[0]?.metadata.source_ref).toBe('notion-composio:id-1');
     expect(docs[0]?.metadata.source_url).toBe('https://notion.so/id-1');
     expect(result.finalize()).toEqual({ since_iso: '2026-04-02T00:00:00.000Z' });
   });
