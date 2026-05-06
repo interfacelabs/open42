@@ -11,7 +11,6 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     {
       method: 'POST',
       headers: mutationHeaders(req),
-      body: JSON.stringify(req.body ?? {}),
     },
   );
   await sendBackend(res, backend);

@@ -58,7 +58,10 @@ export default function ConnectionsPage({ initialData }: { initialData: Connecti
       method: 'DELETE',
       headers: csrfHeaders(),
     });
-    if (!response.ok) await mutate();
+    if (!response.ok) {
+      // TODO(P1.5): show an error toast once the web shell has toast primitives.
+      await mutate();
+    }
   }
 
   async function syncNow() {
@@ -132,7 +135,12 @@ export default function ConnectionsPage({ initialData }: { initialData: Connecti
                         </td>
                         <td className="py-4">
                           <div className="flex justify-end gap-2">
-                            <Button variant="ghost" size="sm" onClick={syncNow}>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={syncNow}
+                              title="Runs a workspace sync for all active connections"
+                            >
                               <RefreshCw className="h-4 w-4" strokeWidth={1.5} />
                             </Button>
                             <Button variant="ghost" size="sm" onClick={() => disconnect(connection)}>

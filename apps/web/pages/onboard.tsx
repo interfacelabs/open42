@@ -40,7 +40,7 @@ export default function OnboardPage() {
     if (router.query.connected === 'notion') {
       void router.replace('/onboard?step=ingesting');
     }
-  }, [router]);
+  }, [router.query.connected, router]);
 
   useEffect(() => {
     if (step === 'ingesting' && ingest?.lastJob?.status === 'completed') {
