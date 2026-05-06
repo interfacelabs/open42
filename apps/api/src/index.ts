@@ -24,8 +24,12 @@ import { sweepStaleCycles } from './ingest/staging.js';
 import { authRouter } from './routes/auth.js';
 import { chatRouter } from './routes/chat.js';
 import { buildNotionZipRouter } from './routes/connections/notion-zip.js';
+import { buildComposioRouter } from './routes/connections/composio.js';
+import { buildConnectionsRouter } from './routes/connections/index.js';
+import { buildIngestRouter } from './routes/workspaces/ingest.js';
 import { healthzRouter } from './routes/healthz.js';
 import { refundPolicySkillRouter } from './routes/skills/refund-policy.js';
+import { runWorkspaceCycle, type OrchestratorDeps, type RunCycleOptions } from './ingest/orchestrator.js';
 
 const logger = pino({
   level: process.env.LOG_LEVEL ?? 'info',
@@ -40,6 +44,8 @@ const port = Number(process.env.API_PORT ?? portFromUrl(process.env.API_PUBLIC_U
 
 export let composio: ComposioClient | null = null;
 export let scheduler: SchedulerHandle | null = null;
+let orchestratorDeps: OrchestratorDeps | null = null;
+const connectionRouteDeps: { composio: ComposioClient | null } = { composio: null };
 
 export async function kickWorkspaceIngest(workspaceId: string): Promise<void> {
   await scheduler?.kick(workspaceId);
@@ -58,11 +64,13 @@ void (async () => {
       );
     }
     const registry = makeConnectorRegistry(composio);
-    scheduler = startScheduler({
+    orchestratorDeps = {
       composio: composio ?? noopComposioStub(),
       gbrain: buildGbrainForWorkspace,
       resolveConnector: registry.resolveConnectorByKind,
-    });
+    };
+    connectionRouteDeps.composio = composio;
+    scheduler = startScheduler(orchestratorDeps);
   } catch (err) {
     logger.error({ err }, 'ingest_scheduler_boot_failed');
   }
@@ -96,7 +104,18 @@ app.use(
 // Routes
 app.use('/healthz', healthzRouter);
 app.use('/auth', authRouter);
+app.use('/connections', buildConnectionsRouter(connectionRouteDeps));
+app.use('/connections', buildComposioRouter({ kick: kickWorkspaceIngest }));
 app.use('/connections/notion-zip', buildNotionZipRouter({ kick: kickWorkspaceIngest }));
+app.use(
+  '/workspaces',
+  buildIngestRouter({
+    runCycle: async (workspaceId: string, opts?: RunCycleOptions) => {
+      if (!orchestratorDeps) throw new Error('ingest_scheduler_not_ready');
+      return runWorkspaceCycle(orchestratorDeps, workspaceId, opts);
+    },
+  }),
+);
 app.use('/chat', chatRouter);
 app.use('/skills/refund-policy', refundPolicySkillRouter);
 
