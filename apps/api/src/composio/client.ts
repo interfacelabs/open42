@@ -92,11 +92,22 @@ export async function createComposioClient(deps: ComposioClientDeps): Promise<Co
       await sdk.connectedAccounts.delete(id);
     },
     async executeTool<T>(p: ExecuteToolParams): Promise<T> {
-      const res = await sdk.tools.execute(p.tool, {
-        connectedAccountId: p.account,
-        arguments: p.args,
-      });
-      return res as T;
+      const max = 5;
+      let delay = 500;
+      for (let attempt = 0; attempt < max; attempt += 1) {
+        try {
+          const res = await sdk.tools.execute(p.tool, {
+            connectedAccountId: p.account,
+            arguments: p.args,
+          });
+          return res as T;
+        } catch (err) {
+          if (!isRateLimitError(err) || attempt === max - 1) throw err;
+          await sleep(delay + Math.random() * 250);
+          delay *= 2;
+        }
+      }
+      throw new Error('unreachable');
     },
   };
 }
@@ -117,4 +128,19 @@ function stringField(value: unknown, key: string): string | undefined {
   if (!value || typeof value !== 'object') return undefined;
   const raw = (value as Record<string, unknown>)[key];
   return typeof raw === 'string' ? raw : undefined;
+}
+
+function isRateLimitError(err: unknown): boolean {
+  if (!err || typeof err !== 'object') return false;
+  const record = err as Record<string, unknown>;
+  const response = record.response;
+  const responseStatus =
+    response && typeof response === 'object'
+      ? (response as Record<string, unknown>).status
+      : undefined;
+  return record.status === 429 || record.statusCode === 429 || responseStatus === 429;
+}
+
+async function sleep(ms: number): Promise<void> {
+  await new Promise((resolve) => setTimeout(resolve, ms));
 }
