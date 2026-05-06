@@ -18,15 +18,19 @@
     "lint": "npm run lint -w @open42/web && npm run lint -w @open42/api",
     "typecheck": "npm run typecheck -w @open42/web && npm run typecheck -w @open42/api",
     "test": "npm run test -w @open42/api",
+    "test:e2e": "playwright test",
+    "eval:refund-policy": "tsx eval/runners/refund-policy.ts",
     "db:generate": "npm run db:generate -w @open42/api",
     "db:push": "npm run db:push -w @open42/api",
     "db:migrate": "npm run db:migrate -w @open42/api",
     "db:studio": "npm run db:studio -w @open42/api"
   },
   "devDependencies": {
+    "@playwright/test": "^1.59.1",
     "@types/node": "^22.10.1",
     "npm-run-all": "^4.1.5",
     "prettier": "^3.4.1",
+    "tsx": "^4.19.2",
     "typescript": "^5.7.2"
   },
   "prettier": {

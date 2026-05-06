@@ -1,0 +1,87 @@
+[
+  {
+    "id": "standard-saas",
+    "chunks": [
+      {
+        "slug": "refund-policy-2024",
+        "version_id": 7,
+        "last_updated": "2026-04-01T00:00:00.000Z",
+        "excerpt": "Customers may request a refund within 30 days of first payment when the product does not meet their needs."
+      },
+      {
+        "slug": "pricing-faq",
+        "version_id": 2,
+        "last_updated": "2026-03-15T00:00:00.000Z",
+        "excerpt": "Plan changes take effect at the next billing period."
+      }
+    ]
+  },
+  {
+    "id": "enterprise-contracts",
+    "chunks": [
+      {
+        "slug": "enterprise-sla-2024",
+        "version_id": 4,
+        "last_updated": "2026-04-12T00:00:00.000Z",
+        "excerpt": "Enterprise customers with an SLA miss may request a service-credit refund within 90 days."
+      },
+      {
+        "slug": "msa-template",
+        "version_id": 11,
+        "last_updated": "2026-02-20T00:00:00.000Z",
+        "excerpt": "Enterprise agreements require finance approval before issuing account credits."
+      }
+    ]
+  },
+  {
+    "id": "operations-playbook",
+    "chunks": [
+      {
+        "slug": "refund-operations",
+        "version_id": 9,
+        "last_updated": "2026-04-20T00:00:00.000Z",
+        "excerpt": "Approved refunds are processed through Stripe back to the original payment method within five business days."
+      },
+      {
+        "slug": "support-macros",
+        "version_id": 3,
+        "last_updated": "2026-01-10T00:00:00.000Z",
+        "excerpt": "Support should confirm the customer account ID before changing billing state."
+      }
+    ]
+  },
+  {
+    "id": "processor-edge-cases",
+    "chunks": [
+      {
+        "slug": "edge-cases-refunds",
+        "version_id": 5,
+        "last_updated": "2026-04-25T00:00:00.000Z",
+        "excerpt": "If the payment processor rejects the refund, escalate to finance and do not promise manual reimbursement until finance approves."
+      },
+      {
+        "slug": "chargeback-runbook",
+        "version_id": 6,
+        "last_updated": "2026-03-30T00:00:00.000Z",
+        "excerpt": "Chargebacks are handled by finance with evidence from support transcripts."
+      }
+    ]
+  },
+  {
+    "id": "tax-and-ledger",
+    "chunks": [
+      {
+        "slug": "refund-tax-handling",
+        "version_id": 2,
+        "last_updated": "2026-04-18T00:00:00.000Z",
+        "excerpt": "Support should tell customers that taxes are reversed only when the underlying refund is processed."
+      },
+      {
+        "slug": "ledger-close",
+        "version_id": 8,
+        "last_updated": "2026-02-01T00:00:00.000Z",
+        "excerpt": "Month-end ledger close happens on the third business day."
+      }
+    ]
+  }
+]

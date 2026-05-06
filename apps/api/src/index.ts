@@ -1,11 +1,16 @@
-import 'dotenv/config';
+import './env.js';
 import express from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
 import cookieParser from 'cookie-parser';
 import pino from 'pino';
 
+import { csrfMiddleware } from './middleware/csrf.js';
+import { authRouter } from './routes/auth.js';
+import { chatRouter } from './routes/chat.js';
+import { notionZipRouter } from './routes/connectors/notion-zip.js';
 import { healthzRouter } from './routes/healthz.js';
+import { refundPolicySkillRouter } from './routes/skills/refund-policy.js';
 
 const logger = pino({
   level: process.env.LOG_LEVEL ?? 'info',
@@ -34,9 +39,21 @@ app.use(
 );
 app.use(express.json({ limit: '1mb' }));
 app.use(cookieParser());
+app.use(
+  csrfMiddleware({
+    allowedOrigins: [
+      process.env.WEB_PUBLIC_URL ?? 'http://localhost:3000',
+      process.env.API_PUBLIC_URL ?? `http://localhost:${port}`,
+    ],
+  }),
+);
 
 // Routes
 app.use('/healthz', healthzRouter);
+app.use('/auth', authRouter);
+app.use('/connectors/notion-zip', notionZipRouter);
+app.use('/chat', chatRouter);
+app.use('/skills/refund-policy', refundPolicySkillRouter);
 
 // Fallback 404
 app.use((_req, res) => {

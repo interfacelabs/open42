@@ -1,0 +1,10 @@
+{"id":"tier1-standard-window","fixture_id":"standard-saas","question":"Can a customer get a normal refund?","expected_citations":["refund-policy-2024"],"tier":1}
+{"id":"tier1-enterprise-window","fixture_id":"enterprise-contracts","question":"What is the enterprise SLA refund window?","expected_citations":["enterprise-sla-2024"],"tier":1}
+{"id":"tier2-processing-path","fixture_id":"operations-playbook","question":"How are approved refunds processed?","expected_citations":["refund-operations"],"tier":2}
+{"id":"tier2-edge-case","fixture_id":"processor-edge-cases","question":"What happens if the payment processor rejects the refund?","expected_citations":["edge-cases-refunds"],"tier":2}
+{"id":"tier2-tax-handling","fixture_id":"tax-and-ledger","question":"What refund tax note should support include?","expected_citations":["refund-tax-handling"],"tier":2}
+{"id":"tier3-custom-services","fixture_id":"standard-saas","question":"Can we refund a customer for a custom services retainer?","expected_citations":[],"tier":3}
+{"id":"tier3-crypto","fixture_id":"enterprise-contracts","question":"Can a customer get a crypto reimbursement?","expected_citations":[],"tier":3}
+{"id":"tier3-hardware","fixture_id":"operations-playbook","question":"Do we refund damaged laptop shipments?","expected_citations":[],"tier":3}
+{"id":"tier3-chargeback-lawsuit","fixture_id":"processor-edge-cases","question":"Should support threaten legal action after a chargeback?","expected_citations":[],"tier":3}
+{"id":"tier3-vat-only","fixture_id":"tax-and-ledger","question":"Can VAT-only invoices be refunded without the customer refund?","expected_citations":[],"tier":3}

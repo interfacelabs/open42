@@ -113,6 +113,7 @@ export const sessions = pgTable(
       .notNull()
       .references(() => users.id, { onDelete: 'cascade' }),
     expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+    csrfToken: text('csrf_token').notNull(),
     userAgent: text('user_agent'),
     ipFirstOctet: text('ip_first_octet'),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
