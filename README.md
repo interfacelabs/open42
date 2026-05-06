@@ -75,6 +75,9 @@ Supabase is not configured.
 | Command | What it does |
 |---------|-------------|
 | `npm run dev` | Run web + api in parallel |
+| `npm run docs:install` | Create `.venv-docs` and install MkDocs Material |
+| `npm run docs:serve` | Serve the docs site locally |
+| `npm run docs:build` | Build the docs site in strict mode |
 | `npm run dev:web` | Web only, using `WEB_PUBLIC_URL` |
 | `npm run dev:api` | API only, using `API_PORT` / `API_PUBLIC_URL` |
 | `npm run db:up` | Start Postgres using `.env.local` |
