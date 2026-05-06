@@ -39,7 +39,11 @@ export interface RunCycleOptions {
   preAcquiredJobId?: string;
 }
 
-export type RunCycleStatus = 'completed' | 'failed' | 'aborted_lock_lost';
+export type RunCycleStatus =
+  | 'completed'
+  | 'failed'
+  | 'aborted_lock_lost'
+  | 'skipped_lock_held';
 
 export interface ConnectorSummaryEntry {
   connection_id: string;
@@ -73,7 +77,8 @@ export async function runWorkspaceCycle(
   if (!expectedLease) {
     expectedLease = await acquireWorkspaceLock(db, workspaceId);
     if (!expectedLease) {
-      return { jobId: '', status: 'failed', pagesTotal: 0, connectorsSummary: [] };
+      console.debug('ingest_cycle_skipped_lock_held', { workspaceId });
+      return { jobId: '', status: 'skipped_lock_held', pagesTotal: 0, connectorsSummary: [] };
     }
     const [job] = await db
       .insert(schema.ingestJobs)
@@ -104,6 +109,7 @@ export async function runWorkspaceCycle(
 
   const scheduleHeartbeat = (): void => {
     if (aborted) return;
+    // Spec D8 allows the first heartbeat after heartbeatMs; the initial lease TTL is 30 minutes.
     hbHandle = setTimeout(async () => {
       if (aborted) return;
       hbInFlight = true;
@@ -136,9 +142,10 @@ export async function runWorkspaceCycle(
     if (aborted) return false;
     const rows = await db.execute(sql`
       SELECT 1 FROM workspaces
-      WHERE id = ${workspaceId} AND ingest_lock_until = ${expectedLease}
+      WHERE id = ${workspaceId}
+        AND ingest_lock_until = date_trunc('milliseconds', ${expectedLease}::timestamptz)
     `);
-    const owned = (rows as unknown as { rows: unknown[] }).rows.length > 0;
+    const owned = rowsOf<unknown>(rows).length > 0;
     if (!owned) {
       aborted = true;
       abortReason = 'lock_lost';
@@ -166,6 +173,7 @@ export async function runWorkspaceCycle(
   };
 
   const abortLockLost = async (): Promise<RunCycleResult> => {
+    // TODO(P1.5): keep aborted/failed cycles out of the settings "Last cycle" panel.
     await db
       .update(schema.ingestJobs)
       .set({
@@ -242,6 +250,8 @@ export async function runWorkspaceCycle(
       }
     }
 
+    // If the lock is lost between per-connection commits, partial cursor advancement is safe:
+    // gbrain import is idempotent and unadvanced connectors will be retried into the same slugs.
     for (const id of successfulIds) {
       const connection = connections.find((item) => item.id === id);
       if (!connection) continue;
@@ -294,6 +304,7 @@ export async function runWorkspaceCycle(
   } finally {
     aborted = true;
     if (hbHandle) clearTimeout(hbHandle);
+    // TODO(P1.5): replace hbInFlight polling with an explicit Promise<void> for heartbeat drain.
     while (hbInFlight) {
       await new Promise((resolve) => setTimeout(resolve, 10));
     }
@@ -421,6 +432,7 @@ export function startScheduler(deps: OrchestratorDeps): SchedulerHandle {
   const concurrencyCap = deps.cycleConcurrency ?? 5;
   const inFlight = new Set<string>();
   let stopped = false;
+  let timer: NodeJS.Timeout | null = null;
 
   const tick = async (): Promise<void> => {
     if (stopped) return;
@@ -435,6 +447,7 @@ export function startScheduler(deps: OrchestratorDeps): SchedulerHandle {
       SELECT w.id
       FROM workspaces w
       WHERE w.deleted_at IS NULL
+        AND (w.ingest_lock_until IS NULL OR w.ingest_lock_until < now())
         AND (
           EXISTS (
             SELECT 1 FROM connections c
@@ -458,7 +471,7 @@ export function startScheduler(deps: OrchestratorDeps): SchedulerHandle {
           )
         )
     `);
-    const ids = (dueRows as unknown as { rows: Array<{ id: string }> }).rows.map((row) => row.id);
+    const ids = rowsOf<{ id: string }>(dueRows).map((row) => row.id);
 
     for (const id of ids) {
       if (stopped) break;
@@ -473,15 +486,24 @@ export function startScheduler(deps: OrchestratorDeps): SchedulerHandle {
     }
   };
 
-  const timer = setInterval(() => {
-    void tick();
-  }, tickMs);
-  void tick();
+  const runTick = async (): Promise<void> => {
+    if (stopped) return;
+    try {
+      await tick();
+    } finally {
+      if (!stopped) {
+        timer = setTimeout(() => {
+          void runTick();
+        }, tickMs);
+      }
+    }
+  };
+  void runTick();
 
   return {
     async stop() {
       stopped = true;
-      clearInterval(timer);
+      if (timer) clearTimeout(timer);
       while (inFlight.size > 0) {
         await new Promise((resolve) => setTimeout(resolve, 100));
       }
@@ -502,6 +524,10 @@ function cursorRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === 'object' && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : {};
+}
+
+function rowsOf<T>(result: unknown): T[] {
+  return (result as { rows: T[] }).rows;
 }
 
 function errorMessage(err: unknown): string {
