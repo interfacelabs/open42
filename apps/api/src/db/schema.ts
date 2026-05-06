@@ -232,6 +232,30 @@ export const connections = pgTable(
 );
 
 // =====================================================================
+// connection_init_states (OAuth CSRF / state binding scratchpad)
+// =====================================================================
+
+export const connectionInitStates = pgTable(
+  'connection_init_states',
+  {
+    state: text('state').primaryKey(),
+    workspaceId: uuid('workspace_id')
+      .notNull()
+      .references(() => workspaces.id, { onDelete: 'cascade' }),
+    userId: uuid('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    kind: connectionKindEnum('kind').notNull(),
+    composioPendingId: text('composio_pending_id'),
+    expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    expiresIdx: index('connection_init_states_expires_idx').on(t.expiresAt),
+  }),
+);
+
+// =====================================================================
 // Inferred types — re-export for use elsewhere in the API.
 // =====================================================================
 
@@ -245,3 +269,5 @@ export type SkillExport = typeof skillExports.$inferSelect;
 export type IngestJob = typeof ingestJobs.$inferSelect;
 export type Connection = typeof connections.$inferSelect;
 export type NewConnection = typeof connections.$inferInsert;
+export type ConnectionInitState = typeof connectionInitStates.$inferSelect;
+export type NewConnectionInitState = typeof connectionInitStates.$inferInsert;
