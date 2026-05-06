@@ -6,6 +6,21 @@ import cookieParser from 'cookie-parser';
 import pino from 'pino';
 
 import { csrfMiddleware } from './middleware/csrf.js';
+import {
+  COMPOSIO_API_KEY,
+  COMPOSIO_BASE_URL,
+  API_PUBLIC_URL,
+  WEB_PUBLIC_URL,
+} from './env.js';
+import {
+  createComposioClient,
+  noopComposioStub,
+  type ComposioClient,
+} from './composio/client.js';
+import { makeConnectorRegistry } from './connectors/registry.js';
+import { buildGbrainForWorkspace } from './gbrain/factory.js';
+import { startScheduler, type SchedulerHandle } from './ingest/orchestrator.js';
+import { sweepStaleCycles } from './ingest/staging.js';
 import { authRouter } from './routes/auth.js';
 import { chatRouter } from './routes/chat.js';
 import { notionZipRouter } from './routes/connectors/notion-zip.js';
@@ -23,6 +38,32 @@ const logger = pino({
 const app = express();
 const port = Number(process.env.API_PORT ?? portFromUrl(process.env.API_PUBLIC_URL) ?? 3001);
 
+export let composio: ComposioClient | null = null;
+export let scheduler: SchedulerHandle | null = null;
+
+void (async () => {
+  try {
+    if (COMPOSIO_API_KEY) {
+      composio = await createComposioClient({
+        apiKey: COMPOSIO_API_KEY,
+        baseUrl: COMPOSIO_BASE_URL,
+      });
+    } else {
+      logger.warn(
+        'COMPOSIO_API_KEY not set - Composio-backed connectors unavailable; zip ingestion still works',
+      );
+    }
+    const registry = makeConnectorRegistry(composio);
+    scheduler = startScheduler({
+      composio: composio ?? noopComposioStub(),
+      gbrain: buildGbrainForWorkspace,
+      resolveConnector: registry.resolveConnectorByKind,
+    });
+  } catch (err) {
+    logger.error({ err }, 'ingest_scheduler_boot_failed');
+  }
+})();
+
 // Trust proxy in prod (Cloudflare → Fly).
 app.set('trust proxy', 1);
 
@@ -33,7 +74,7 @@ app.use(
 );
 app.use(
   cors({
-    origin: process.env.WEB_PUBLIC_URL ?? 'http://localhost:3000',
+    origin: WEB_PUBLIC_URL,
     credentials: true,
   }),
 );
@@ -42,8 +83,8 @@ app.use(cookieParser());
 app.use(
   csrfMiddleware({
     allowedOrigins: [
-      process.env.WEB_PUBLIC_URL ?? 'http://localhost:3000',
-      process.env.API_PUBLIC_URL ?? `http://localhost:${port}`,
+      WEB_PUBLIC_URL,
+      API_PUBLIC_URL,
     ],
   }),
 );
@@ -75,6 +116,7 @@ app.use(
 
 app.listen(port, () => {
   logger.info(`open42-api listening on :${port}`);
+  void sweepStaleCycles(60 * 60 * 1000);
 });
 
 function portFromUrl(value?: string): string | null {
