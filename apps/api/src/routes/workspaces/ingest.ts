@@ -12,6 +12,7 @@ import type { RunCycleOptions, RunCycleResult } from '../../ingest/orchestrator.
 
 const patchSchema = Type.Object({
   ingestMode: Type.Union([Type.Literal('import_once'), Type.Literal('periodic_pull')]),
+  // intervalHours is a legacy alias; interval is optional because mode-only PATCHes are valid.
   ingestIntervalHours: Type.Optional(Type.Integer({ minimum: 1, maximum: 168 })),
   intervalHours: Type.Optional(Type.Integer({ minimum: 1, maximum: 168 })),
 });
@@ -130,10 +131,11 @@ export function buildIngestRouter(deps: {
         .select()
         .from(schema.ingestJobs)
         .where(
-          and(
-            eq(schema.ingestJobs.workspaceId, auth.workspace.id),
-            cursor
-              ? sql`${schema.ingestJobs.createdAt} < (
+            and(
+              eq(schema.ingestJobs.workspaceId, auth.workspace.id),
+              // TODO(P1.5): switch to seek pagination by passing created_at as &cursor= directly.
+              cursor
+                ? sql`${schema.ingestJobs.createdAt} < (
                   SELECT created_at FROM ingest_jobs WHERE id = ${cursor}
                 )`
               : sql`true`,
