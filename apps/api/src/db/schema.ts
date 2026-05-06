@@ -16,7 +16,10 @@ import {
   customType,
   primaryKey,
   index,
+  uniqueIndex,
+  jsonb,
 } from 'drizzle-orm/pg-core';
+import { sql } from 'drizzle-orm';
 
 /**
  * Drizzle ships no built-in bytea — define one for the encrypted
@@ -195,6 +198,40 @@ export const ingestJobs = pgTable(
 );
 
 // =====================================================================
+// connections (per-workspace third-party data sources)
+// =====================================================================
+
+export const connections = pgTable(
+  'connections',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    workspaceId: uuid('workspace_id')
+      .notNull()
+      .references(() => workspaces.id, { onDelete: 'cascade' }),
+    kind: connectionKindEnum('kind').notNull(),
+    status: connectionStatusEnum('status').notNull().default('pending_import'),
+    displayName: text('display_name').notNull(),
+    composioConnectedAccountId: text('composio_connected_account_id'),
+    cursor: jsonb('cursor').notNull().default({}),
+    lastPulledAt: timestamp('last_pulled_at', { withTimezone: true }),
+    lastError: text('last_error'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    deletedAt: timestamp('deleted_at', { withTimezone: true }),
+  },
+  (t) => ({
+    workspaceStatusIdx: index('connections_workspace_status_idx').on(t.workspaceId, t.status),
+    // Source of truth for one-Notion-per-workspace rule. Partial unique index;
+    // disconnected rows do not count.
+    oneNotionPerWorkspace: uniqueIndex('connections_one_notion_per_workspace')
+      .on(t.workspaceId)
+      .where(sql`${t.kind}::text LIKE 'notion-%' AND ${t.status} <> 'disconnected'`),
+    composioAccountUniq: uniqueIndex('connections_composio_account_uniq')
+      .on(t.composioConnectedAccountId)
+      .where(sql`${t.composioConnectedAccountId} IS NOT NULL AND ${t.status} <> 'disconnected'`),
+  }),
+);
+
+// =====================================================================
 // Inferred types — re-export for use elsewhere in the API.
 // =====================================================================
 
@@ -206,3 +243,5 @@ export type Membership = typeof memberships.$inferSelect;
 export type Session = typeof sessions.$inferSelect;
 export type SkillExport = typeof skillExports.$inferSelect;
 export type IngestJob = typeof ingestJobs.$inferSelect;
+export type Connection = typeof connections.$inferSelect;
+export type NewConnection = typeof connections.$inferInsert;
