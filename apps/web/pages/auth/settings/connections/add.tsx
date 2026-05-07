@@ -60,7 +60,7 @@ export default function AddConnectionPage() {
       <main className="min-h-screen bg-background px-6 py-8">
         <div className="mx-auto max-w-5xl">
           <header className="border-b border-border pb-5">
-            <Link href="/settings/connections" className="font-mono text-sm text-text-subtle">
+            <Link href="/auth/settings/connections" className="font-mono text-sm text-text-subtle">
               Connections
             </Link>
             <h1 className="mt-4 text-2xl font-medium text-text-primary">Add connection</h1>

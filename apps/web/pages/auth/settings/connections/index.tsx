@@ -89,7 +89,7 @@ export default function ConnectionsPage({ initialData }: { initialData: Connecti
               <h1 className="mt-4 text-2xl font-medium text-text-primary">Connections</h1>
             </div>
             <Button asChild variant="secondary" size="sm">
-              <Link href="/settings/connections/add">
+              <Link href="/auth/settings/connections/add">
                 <Plus className="mr-2 h-4 w-4" strokeWidth={1.5} />
                 Add
               </Link>

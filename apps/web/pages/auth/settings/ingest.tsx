@@ -69,7 +69,7 @@ export default function IngestSettingsPage() {
         <div className="mx-auto max-w-4xl">
           <header className="flex items-center justify-between border-b border-border pb-5">
             <div>
-              <Link href="/settings/connections" className="font-mono text-sm text-text-subtle">
+              <Link href="/auth/settings/connections" className="font-mono text-sm text-text-subtle">
                 Settings
               </Link>
               <h1 className="mt-4 text-2xl font-medium text-text-primary">Ingest</h1>
