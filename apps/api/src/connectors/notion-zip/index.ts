@@ -4,6 +4,22 @@ import AdmZip from 'adm-zip';
 
 import type { Connector, ConnectorSource, ExtractOptions, NormalizedDoc } from '../interface.js';
 
+export const DEFAULT_NOTION_ZIP_LIMITS = {
+  maxEntries: 2_000,
+  maxEntryBytes: 5 * 1024 * 1024,
+  maxTotalBytes: 75 * 1024 * 1024,
+  maxCompressionRatio: 100,
+};
+
+export interface NotionZipLimits {
+  maxEntries?: number;
+  maxEntryBytes?: number;
+  maxTotalBytes?: number;
+  maxCompressionRatio?: number;
+}
+
+type ResolvedNotionZipLimits = Required<NotionZipLimits>;
+
 const IMAGE_EXTENSIONS = new Set([
   '.apng',
   '.avif',
@@ -19,12 +35,17 @@ export class NotionZipConnector implements Connector {
   readonly name = 'notion-zip';
   readonly version = '0.1.0';
 
+  constructor(private readonly limits: NotionZipLimits = {}) {}
+
   async *extract(source: ConnectorSource, opts: ExtractOptions = {}): AsyncIterable<NormalizedDoc> {
+    const limits = resolveLimits(this.limits);
     const zip = new AdmZip(source.zipPath);
     const entries = zip
       .getEntries()
       .filter((entry) => !entry.isDirectory && !isImage(entry.entryName));
+    assertZipLimits(entries, limits);
     const slugByTarget = buildSlugMap(entries.map((entry) => entry.entryName));
+    let actualTotalBytes = 0;
 
     for (const entry of entries) {
       opts.signal?.throwIfAborted();
@@ -33,7 +54,11 @@ export class NotionZipConnector implements Connector {
 
       const title = stripFilenameUuid(path.basename(entry.entryName, ext));
       const slug = slugByTarget.get(entry.entryName) ?? slugify(title);
-      const raw = entry.getData().toString('utf8');
+      const { text: raw, byteLength } = readTextEntry(entry, limits);
+      actualTotalBytes += byteLength;
+      if (actualTotalBytes > limits.maxTotalBytes) {
+        throw new Error('notion_zip_too_large');
+      }
       const content = ext === '.csv' ? csvToMarkdown(raw) : normalizeMarkdown(raw, slugByTarget);
 
       yield {
@@ -47,6 +72,43 @@ export class NotionZipConnector implements Connector {
       };
     }
   }
+}
+
+function resolveLimits(limits: NotionZipLimits): ResolvedNotionZipLimits {
+  return { ...DEFAULT_NOTION_ZIP_LIMITS, ...limits };
+}
+
+function assertZipLimits(entries: AdmZip.IZipEntry[], limits: ResolvedNotionZipLimits): void {
+  if (entries.length > limits.maxEntries) {
+    throw new Error('notion_zip_too_many_entries');
+  }
+
+  let totalBytes = 0;
+  for (const entry of entries) {
+    const uncompressedBytes = Number(entry.header.size ?? 0);
+    const compressedBytes = Math.max(Number(entry.header.compressedSize ?? 0), 1);
+    totalBytes += uncompressedBytes;
+    if (uncompressedBytes > limits.maxEntryBytes) {
+      throw new Error('notion_zip_entry_too_large');
+    }
+    if (totalBytes > limits.maxTotalBytes) {
+      throw new Error('notion_zip_too_large');
+    }
+    if (uncompressedBytes / compressedBytes > limits.maxCompressionRatio) {
+      throw new Error('notion_zip_compression_ratio_too_high');
+    }
+  }
+}
+
+function readTextEntry(
+  entry: AdmZip.IZipEntry,
+  limits: ResolvedNotionZipLimits,
+): { text: string; byteLength: number } {
+  const data = entry.getData();
+  if (data.byteLength > limits.maxEntryBytes) {
+    throw new Error('notion_zip_entry_too_large');
+  }
+  return { text: data.toString('utf8'), byteLength: data.byteLength };
 }
 
 export function stripFilenameUuid(name: string): string {

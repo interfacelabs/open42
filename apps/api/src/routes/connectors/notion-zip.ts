@@ -1,26 +1,33 @@
-import { mkdtemp, writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { unlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 
-import { eq } from 'drizzle-orm';
-import { Router, type Request } from 'express';
+import { and, eq } from 'drizzle-orm';
+import { Router, type NextFunction, type Request, type Response } from 'express';
 import multer from 'multer';
 
-import { validateSession } from '../../auth/sessions.js';
+import { validateSession, type SessionRecord } from '../../auth/sessions.js';
 import { NotionZipConnector } from '../../connectors/notion-zip/index.js';
+import type { NormalizedDoc } from '../../connectors/interface.js';
 import { db, schema } from '../../db/client.js';
 import { GbrainClient } from '../../gbrain/client.js';
 
+const MAX_UPLOAD_BYTES = 100 * 1024 * 1024;
+
 const upload = multer({
   dest: tmpdir(),
-  limits: { fileSize: 500 * 1024 * 1024 },
+  limits: { fileSize: MAX_UPLOAD_BYTES, files: 1, fields: 0 },
 });
 
 export const notionZipRouter = Router();
 
-notionZipRouter.post('/', upload.single('file'), async (req, res, next) => {
+interface AuthenticatedRequest extends Request {
+  open42Session?: SessionRecord;
+}
+
+notionZipRouter.post('/', requireSession, parseUpload, async (req, res, next) => {
+  const authedReq = req as AuthenticatedRequest;
   try {
-    const session = await sessionFromRequest(req);
+    const session = authedReq.open42Session;
     if (!session) {
       res.status(401).json({ error: 'unauthorized' });
       return;
@@ -30,18 +37,18 @@ notionZipRouter.post('/', upload.single('file'), async (req, res, next) => {
       return;
     }
 
-    const workspace = await workspaceForUser(session.userId);
-    if (!workspace) {
+    const workspace = await currentWorkspaceForUser(session.userId);
+    if (!workspace || !isWorkspaceReady(workspace)) {
       res.status(409).json({ error: 'workspace_not_ready' });
       return;
     }
 
-    const stagingDir = await mkdtemp(join(tmpdir(), 'open42-notion-'));
     const connector = new NotionZipConnector();
     let pagesTotal = 0;
+    const docs: NormalizedDoc[] = [];
     for await (const doc of connector.extract({ zipPath: req.file.path })) {
       pagesTotal += 1;
-      await writeFile(join(stagingDir, `${doc.slug}.md`), doc.content_md, 'utf8');
+      docs.push(doc);
     }
 
     const gbrainBaseUrl = workspace.gbrainBaseUrl ?? formatGbrainBaseUrl(workspace.flyPrivateIp ?? '');
@@ -58,28 +65,35 @@ notionZipRouter.post('/', upload.single('file'), async (req, res, next) => {
       oauthClientId,
       oauthClientSecretCiphertext,
     });
-    const submitted = (await gbrain.submitJob('sync', { path: stagingDir })) as {
-      id?: string | number;
-      job_id?: string | number;
-    };
-    const gbrainJobId = String(submitted.id ?? submitted.job_id ?? '');
+    for (const doc of docs) {
+      await gbrain.putPage(doc.slug, doc.content_md);
+    }
 
     const [job] = await db
       .insert(schema.ingestJobs)
       .values({
         workspaceId: workspace.id,
-        gbrainJobId,
+        gbrainJobId: null,
         connector: 'notion-zip',
-        status: 'running',
+        status: 'completed',
         pagesTotal,
-        pagesProcessed: 0,
+        pagesProcessed: pagesTotal,
         startedAt: new Date(),
+        completedAt: new Date(),
       })
       .returning();
 
-    res.json({ ok: true, jobId: job?.id, gbrainJobId, pagesTotal });
+    res.json({ ok: true, jobId: job?.id, gbrainJobId: null, pagesTotal });
   } catch (err) {
+    if (err instanceof Error && err.message.startsWith('notion_zip_')) {
+      res.status(400).json({ error: err.message });
+      return;
+    }
     next(err);
+  } finally {
+    if (req.file?.path) {
+      await unlink(req.file.path).catch(() => undefined);
+    }
   }
 });
 
@@ -90,11 +104,18 @@ notionZipRouter.get('/jobs/:id', async (req, res, next) => {
       res.status(401).json({ error: 'unauthorized' });
       return;
     }
+    const workspace = await currentWorkspaceForUser(session.userId);
+    if (!workspace) {
+      res.status(404).json({ error: 'job_not_found' });
+      return;
+    }
 
     const [job] = await db
       .select()
       .from(schema.ingestJobs)
-      .where(eq(schema.ingestJobs.id, req.params.id))
+      .where(
+        and(eq(schema.ingestJobs.id, req.params.id), eq(schema.ingestJobs.workspaceId, workspace.id)),
+      )
       .limit(1);
     if (!job) {
       res.status(404).json({ error: 'job_not_found' });
@@ -114,13 +135,41 @@ notionZipRouter.get('/jobs/:id', async (req, res, next) => {
   }
 });
 
+async function requireSession(req: Request, res: Response, next: NextFunction) {
+  try {
+    const session = await sessionFromRequest(req);
+    if (!session) {
+      res.status(401).json({ error: 'unauthorized' });
+      return;
+    }
+    (req as AuthenticatedRequest).open42Session = session;
+    next();
+  } catch (err) {
+    next(err);
+  }
+}
+
+function parseUpload(req: Request, res: Response, next: NextFunction) {
+  upload.single('file')(req, res, (err) => {
+    if (!err) {
+      next();
+      return;
+    }
+    if (err instanceof multer.MulterError) {
+      res.status(err.code === 'LIMIT_FILE_SIZE' ? 413 : 400).json({ error: err.code });
+      return;
+    }
+    next(err);
+  });
+}
+
 async function sessionFromRequest(req: Request) {
   const sessionId = req.cookies?.[process.env.SESSION_COOKIE_NAME ?? 'open42_session'];
   if (!sessionId) return null;
   return validateSession(sessionId, { userAgent: req.header('user-agent'), ip: req.ip });
 }
 
-async function workspaceForUser(userId: string) {
+async function currentWorkspaceForUser(userId: string) {
   const [user] = await db
     .select()
     .from(schema.users)
@@ -134,14 +183,15 @@ async function workspaceForUser(userId: string) {
     .where(eq(schema.workspaces.id, user.currentWorkspaceId))
     .limit(1);
 
-  if (
-    !(workspace?.gbrainBaseUrl || workspace?.flyPrivateIp) ||
-    !workspace.gbrainOauthClientId ||
-    !workspace.gbrainOauthClientSecretCiphertext
-  ) {
-    return null;
-  }
-  return workspace;
+  return workspace ?? null;
+}
+
+function isWorkspaceReady(workspace: NonNullable<Awaited<ReturnType<typeof currentWorkspaceForUser>>>) {
+  return Boolean(
+    (workspace.gbrainBaseUrl || workspace.flyPrivateIp) &&
+      workspace.gbrainOauthClientId &&
+      workspace.gbrainOauthClientSecretCiphertext,
+  );
 }
 
 function formatGbrainBaseUrl(privateIp: string): string {

@@ -88,4 +88,21 @@ describe('NotionZipConnector', () => {
     expect(external?.content_md).toContain('[Broken](%E0%A4%A.md)');
     expect(docs.some((doc) => doc.metadata.source_ref === 'Files/Archive.pdf')).toBe(false);
   });
+
+  it('rejects archives that exceed safety limits before decompressing content', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'open42-notion-limit-test-'));
+    tempDirs.push(dir);
+    const zipPath = join(dir, 'notion-limit.zip');
+    const zip = new AdmZip();
+    zip.addFile('Huge.md', Buffer.from('x'.repeat(128)));
+    await writeFile(zipPath, zip.toBuffer());
+
+    const connector = new NotionZipConnector({ maxEntryBytes: 64 });
+    await expect(async () => {
+      for await (const doc of connector.extract({ zipPath })) {
+        void doc;
+        // Exhaust the async iterator.
+      }
+    }).rejects.toThrow('notion_zip_entry_too_large');
+  });
 });

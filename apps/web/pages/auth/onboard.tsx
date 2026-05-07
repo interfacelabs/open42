@@ -71,7 +71,7 @@ export default function OnboardPage() {
               <span className="text-sm font-medium text-text-primary">
                 {state.status === 'uploading' ? 'Uploading' : 'Choose Notion zip'}
               </span>
-              <span className="mt-2 text-sm text-text-subtle">Maximum 500MB</span>
+              <span className="mt-2 text-sm text-text-subtle">Maximum 100MB</span>
               <input type="file" accept=".zip" className="sr-only" onChange={onFile} />
             </label>
 
