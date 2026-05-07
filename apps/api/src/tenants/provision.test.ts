@@ -148,6 +148,43 @@ describe('provisionTenant', () => {
     });
     expect(decryptSecret(stored[0].gbrainOauthClientSecretCiphertext)).toBe('secret-local');
   });
+
+  it('returns an existing workspace without provisioning another tenant', async () => {
+    const repo: TenantProvisionRepo = {
+      async findWorkspaceForOwner(ownerUserId) {
+        expect(ownerUserId).toBe('user-existing');
+        return {
+          workspaceId: 'workspace-existing',
+          flyMachineId: 'machine-existing',
+          flyPrivateIp: 'fdaa::2',
+          gbrainBaseUrl: 'http://[fdaa::2]:8080',
+        };
+      },
+      async createWorkspace() {
+        throw new Error('should_not_create_workspace');
+      },
+    };
+    const fetchMock = vi.fn();
+
+    await expect(
+      provisionTenant({
+        ownerUserId: 'user-existing',
+        repo,
+        fetch: fetchMock as typeof fetch,
+        env: {
+          FLY_API_TOKEN: 'fly-token',
+          FLY_TENANTS_APP_NAME: 'open42-tenants',
+          GBRAIN_VERSION: '0.27.1',
+        },
+      }),
+    ).resolves.toEqual({
+      workspaceId: 'workspace-existing',
+      flyMachineId: 'machine-existing',
+      flyPrivateIp: 'fdaa::2',
+      gbrainBaseUrl: 'http://[fdaa::2]:8080',
+    });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
 });
 
 function json(body: unknown, status = 200): Response {

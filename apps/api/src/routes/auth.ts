@@ -12,9 +12,15 @@ import { provisionTenant } from '../tenants/provision.js';
 
 export const authRouter = Router();
 
+const SIGNIN_WINDOW_MS = 15 * 60 * 1000;
+const SIGNIN_LIMIT = 5;
+const signinAttempts = new Map<string, { count: number; resetAt: number }>();
+
 authRouter.post('/signin', async (req, res, next) => {
   try {
-    const email = String(req.body?.email ?? '');
+    const email = normalizeSigninEmail(String(req.body?.email ?? ''));
+    assertSigninRateLimit(req.ip, email);
+    assertSigninAllowed(email);
     const webUrl = process.env.WEB_PUBLIC_URL ?? 'http://localhost:3000';
     const link = await sendSupabaseMagicLink({
       email,
@@ -28,6 +34,14 @@ authRouter.post('/signin', async (req, res, next) => {
   } catch (err) {
     if (err instanceof Error && err.message === 'email_invalid') {
       res.status(400).json({ error: 'email_invalid' });
+      return;
+    }
+    if (err instanceof Error && err.message === 'signin_not_allowed') {
+      res.status(403).json({ error: 'signin_not_allowed' });
+      return;
+    }
+    if (err instanceof Error && err.message === 'signin_rate_limited') {
+      res.status(429).json({ error: 'signin_rate_limited' });
       return;
     }
     if (err instanceof Error && err.message.includes('SUPABASE_')) {
@@ -118,4 +132,53 @@ async function ensureWorkspace(userId: string, currentWorkspaceId: string | null
 
 function optionalString(value: unknown): string | undefined {
   return typeof value === 'string' && value.length > 0 ? value : undefined;
+}
+
+function assertSigninAllowed(email: string, env = process.env): void {
+  const normalized = normalizeSigninEmail(email);
+  const allowedEmails = csv(env.OPEN42_ALLOWED_EMAILS).map((value) => value.toLowerCase());
+  const allowedDomains = csv(env.OPEN42_ALLOWED_EMAIL_DOMAINS).map((value) =>
+    value.replace(/^@/, '').toLowerCase(),
+  );
+  const openSignups =
+    env.OPEN42_ENABLE_OPEN_SIGNUPS === 'true' ||
+    (env.NODE_ENV !== 'production' && allowedEmails.length === 0 && allowedDomains.length === 0);
+  if (openSignups) return;
+  if (allowedEmails.includes(normalized)) return;
+
+  const domain = normalized.split('@')[1] ?? '';
+  if (domain && allowedDomains.includes(domain)) return;
+  throw new Error('signin_not_allowed');
+}
+
+function assertSigninRateLimit(ip: string | undefined, email: string, now = Date.now()): void {
+  hitSigninBucket(`ip:${ip ?? 'unknown'}`, now);
+  hitSigninBucket(`email:${normalizeSigninEmail(email)}`, now);
+}
+
+function hitSigninBucket(key: string, now: number): void {
+  const current = signinAttempts.get(key);
+  if (!current || current.resetAt <= now) {
+    signinAttempts.set(key, { count: 1, resetAt: now + SIGNIN_WINDOW_MS });
+    return;
+  }
+  if (current.count >= SIGNIN_LIMIT) {
+    throw new Error('signin_rate_limited');
+  }
+  signinAttempts.set(key, { ...current, count: current.count + 1 });
+}
+
+function normalizeSigninEmail(email: string): string {
+  const normalized = email.trim().toLowerCase();
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalized)) {
+    throw new Error('email_invalid');
+  }
+  return normalized;
+}
+
+function csv(value: string | undefined): string[] {
+  return (value ?? '')
+    .split(',')
+    .map((item) => item.trim())
+    .filter(Boolean);
 }

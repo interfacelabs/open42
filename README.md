@@ -65,6 +65,10 @@ Sign-in uses Supabase magic links. `SUPABASE_URL` and `SUPABASE_ANON_KEY` must b
 real values for auth to send email. After Supabase verifies the link, Open42
 creates the workspace brain:
 
+In production, sign-in is closed by default. Set `OPEN42_ALLOWED_EMAILS` or
+`OPEN42_ALLOWED_EMAIL_DOMAINS` to control who can create a workspace, or set
+`OPEN42_ENABLE_OPEN_SIGNUPS=true` only for deliberately public deployments.
+
 - `TENANT_PROVISIONER=local-docker` builds `infra/Dockerfile.gbrain-tenant`, then
   starts one container per first-time user. That container runs Postgres +
   pgvector and gbrain together, backed by a Docker volume mounted at `/data`.

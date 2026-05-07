@@ -1,4 +1,4 @@
-import { eq } from 'drizzle-orm';
+import { and, eq, sql } from 'drizzle-orm';
 import { execFile as execFileCallback } from 'node:child_process';
 import { createServer } from 'node:net';
 import { dirname, resolve } from 'node:path';
@@ -30,6 +30,11 @@ export interface TenantProvisionEnv {
 }
 
 export interface TenantProvisionRepo {
+  findWorkspaceForOwner?(ownerUserId: string): Promise<ProvisionTenantResult | null>;
+  withOwnerProvisioningLock?(
+    ownerUserId: string,
+    provision: () => Promise<ProvisionTenantResult>,
+  ): Promise<ProvisionTenantResult>;
   createWorkspace(input: {
     ownerUserId: string;
     flyMachineId: string;
@@ -73,24 +78,57 @@ export async function provisionTenant(
   const gbrainVersion = required(env.GBRAIN_VERSION ?? '0.27.1', 'GBRAIN_VERSION');
   const provider = selectProvisioner(env);
 
+  const provision = async (): Promise<ProvisionTenantResult> => {
+    const existing = await repo.findWorkspaceForOwner?.(options.ownerUserId);
+    if (existing) return existing;
+
+    return provisionTenantResources({
+      env,
+      fetchImpl,
+      gbrainVersion,
+      ownerUserId: options.ownerUserId,
+      provider,
+      repo,
+      runCommand: options.runCommand ?? runCommand,
+      allocatePort: options.allocatePort ?? allocatePort,
+      sleep: options.sleep ?? sleep,
+    });
+  };
+
+  return repo.withOwnerProvisioningLock
+    ? repo.withOwnerProvisioningLock(options.ownerUserId, provision)
+    : provision();
+}
+
+async function provisionTenantResources(options: {
+  env: TenantProvisionEnv;
+  fetchImpl: Fetch;
+  gbrainVersion: string;
+  ownerUserId: string;
+  provider: 'fly' | 'local-docker';
+  repo: TenantProvisionRepo;
+  runCommand: CommandRunner;
+  allocatePort: (startAt: number) => Promise<number>;
+  sleep: (ms: number) => Promise<void>;
+}): Promise<ProvisionTenantResult> {
   const tenant =
-    provider === 'fly'
+    options.provider === 'fly'
       ? await createFlyTenant({
-          env,
-          gbrainVersion,
+          env: options.env,
+          gbrainVersion: options.gbrainVersion,
           ownerUserId: options.ownerUserId,
-          fetch: fetchImpl,
+          fetch: options.fetchImpl,
         })
       : await createLocalDockerTenant({
-          env,
-          gbrainVersion,
+          env: options.env,
+          gbrainVersion: options.gbrainVersion,
           ownerUserId: options.ownerUserId,
-          runCommand: options.runCommand ?? runCommand,
-          allocatePort: options.allocatePort ?? allocatePort,
+          runCommand: options.runCommand,
+          allocatePort: options.allocatePort,
         });
 
-  await waitForGbrainHealth(tenant.gbrainBaseUrl, fetchImpl, options.sleep ?? sleep);
-  const oauth = await registerGbrainOAuthClient(tenant.gbrainBaseUrl, fetchImpl);
+  await waitForGbrainHealth(tenant.gbrainBaseUrl, options.fetchImpl, options.sleep);
+  const oauth = await registerGbrainOAuthClient(tenant.gbrainBaseUrl, options.fetchImpl);
   await assertGbrainVersion(
     new GbrainClient(
       {
@@ -99,20 +137,20 @@ export async function provisionTenant(
         oauthClientId: oauth.client_id,
         oauthClientSecret: oauth.client_secret,
       },
-      { fetch: fetchImpl },
+      { fetch: options.fetchImpl },
     ),
-    gbrainVersion,
+    options.gbrainVersion,
   );
 
   const encryptedSecret = encryptSecret(oauth.client_secret);
-  const workspace = await repo.createWorkspace({
+  const workspace = await options.repo.createWorkspace({
     ownerUserId: options.ownerUserId,
     flyMachineId: tenant.machineId,
     flyPrivateIp: tenant.privateIp,
     gbrainBaseUrl: tenant.gbrainBaseUrl,
     gbrainOauthClientId: oauth.client_id,
     gbrainOauthClientSecretCiphertext: encryptedSecret,
-    gbrainVersion,
+    gbrainVersion: options.gbrainVersion,
   });
 
   return {
@@ -367,6 +405,37 @@ async function waitForGbrainHealth(
 
 function createDrizzleTenantRepo(): TenantProvisionRepo {
   return {
+    async findWorkspaceForOwner(ownerUserId) {
+      const [workspace] = await defaultDb
+        .select()
+        .from(schema.workspaces)
+        .where(
+          and(
+            eq(schema.workspaces.ownerUserId, ownerUserId),
+            eq(schema.workspaces.status, 'ready'),
+          ),
+        )
+        .limit(1);
+      if (
+        !workspace ||
+        !(workspace.gbrainBaseUrl || workspace.flyPrivateIp) ||
+        !workspace.flyMachineId
+      ) {
+        return null;
+      }
+      return {
+        workspaceId: workspace.id,
+        flyMachineId: workspace.flyMachineId,
+        flyPrivateIp: workspace.flyPrivateIp ?? '',
+        gbrainBaseUrl: workspace.gbrainBaseUrl ?? formatGbrainBaseUrl(workspace.flyPrivateIp ?? ''),
+      };
+    },
+    async withOwnerProvisioningLock(ownerUserId, provision) {
+      return defaultDb.transaction(async (tx) => {
+        await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${ownerUserId}))`);
+        return provision();
+      });
+    },
     async createWorkspace(input) {
       return defaultDb.transaction(async (tx) => {
         const [workspace] = await tx

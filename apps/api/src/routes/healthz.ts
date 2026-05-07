@@ -18,12 +18,12 @@ healthzRouter.get('/', async (_req, res) => {
       tier: 'api',
       db: ok ? 'reachable' : 'unreachable',
     });
-  } catch (err) {
+  } catch {
     res.status(503).json({
       ok: false,
       tier: 'api',
       db: 'error',
-      error: err instanceof Error ? err.message : 'unknown',
+      error: 'db_unreachable',
     });
   }
 });
