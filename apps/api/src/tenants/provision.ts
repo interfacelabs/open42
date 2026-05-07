@@ -6,7 +6,6 @@ import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 
 import { encryptSecret } from '../crypto/envelope.js';
-import { db as defaultDb, schema } from '../db/client.js';
 import { GbrainClient, registerGbrainOAuthClient } from '../gbrain/client.js';
 import { assertGbrainVersion } from '../gbrain/version-check.js';
 
@@ -406,6 +405,7 @@ async function waitForGbrainHealth(
 function createDrizzleTenantRepo(): TenantProvisionRepo {
   return {
     async findWorkspaceForOwner(ownerUserId) {
+      const { db: defaultDb, schema } = await import('../db/client.js');
       const [workspace] = await defaultDb
         .select()
         .from(schema.workspaces)
@@ -431,12 +431,14 @@ function createDrizzleTenantRepo(): TenantProvisionRepo {
       };
     },
     async withOwnerProvisioningLock(ownerUserId, provision) {
+      const { db: defaultDb } = await import('../db/client.js');
       return defaultDb.transaction(async (tx) => {
         await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${ownerUserId}))`);
         return provision();
       });
     },
     async createWorkspace(input) {
+      const { db: defaultDb, schema } = await import('../db/client.js');
       return defaultDb.transaction(async (tx) => {
         const [workspace] = await tx
           .insert(schema.workspaces)

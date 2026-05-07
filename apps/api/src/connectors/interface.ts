@@ -8,12 +8,12 @@ export interface NormalizedDoc {
     last_modified_at?: Date;
     tags?: string[];
     author?: string;
+    title?: string;
   };
 }
 
 export interface IngestProgress {
   pages_total: number;
-  pages_processed: number;
   state:
     | 'extracting'
     | 'normalizing'
@@ -24,16 +24,29 @@ export interface IngestProgress {
   message?: string;
 }
 
-export interface ConnectorSource {
-  zipPath: string;
+export type ConnectorSource =
+  | { kind: 'notion-zip'; zipPath: string }
+  | { kind: 'notion-composio' };
+
+export interface ConnectorContext {
+  cursor: Record<string, unknown>;
+  source: ConnectorSource;
+  account?: { composio_connected_account_id: string };
+  workspaceId: string;
 }
 
 export interface ExtractOptions {
   signal?: AbortSignal;
 }
 
+export interface ExtractResult {
+  docs: AsyncIterable<NormalizedDoc>;
+  finalize(): Record<string, unknown>;
+}
+
 export interface Connector {
   readonly name: string;
   readonly version: string;
-  extract(source: ConnectorSource, opts?: ExtractOptions): AsyncIterable<NormalizedDoc>;
+  readonly mode: 'one_shot' | 'pollable';
+  extract(ctx: ConnectorContext, opts?: ExtractOptions): ExtractResult;
 }

@@ -1,29 +1,17 @@
 import type { AppProps } from 'next/app';
-import { Geist, Geist_Mono } from 'next/font/google';
+import { GeistSans } from 'geist/font/sans';
+import { GeistMono } from 'geist/font/mono';
 
 import '@/styles/globals.css';
 
-const geistSans = Geist({
-  subsets: ['latin'],
-  variable: '--font-geist-sans',
-  weight: ['400', '500', '600'],
-});
-
-const geistMono = Geist_Mono({
-  subsets: ['latin'],
-  variable: '--font-geist-mono',
-  weight: ['400', '500'],
-});
-
 /**
- * Pages Router app shell. Geist Sans + Mono attach as CSS variables
- * (--font-geist-sans, --font-geist-mono) via the className on the wrapper.
- * Tailwind's font-sans / font-mono resolve through those variables
- * (see tailwind.config.ts).
+ * Pages Router app shell. Geist Sans + Mono attach as CSS variables via
+ * the local `geist` package so production builds do not need Google Fonts
+ * network access.
  */
 export default function App({ Component, pageProps }: AppProps) {
   return (
-    <div className={`${geistSans.variable} ${geistMono.variable} font-sans`}>
+    <div className={`${GeistSans.variable} ${GeistMono.variable} font-sans`}>
       <Component {...pageProps} />
     </div>
   );

@@ -1,119 +1,160 @@
 import Head from 'next/head';
 import Link from 'next/link';
-import { ChangeEvent, useMemo, useState } from 'react';
+import { useRouter } from 'next/router';
+import { ChangeEvent, useEffect, useState } from 'react';
+import { FileArchive, PlugZap } from 'lucide-react';
 import useSWR from 'swr';
 
 import { Button } from '@/components/ui/button';
 
-type UploadState =
-  | { status: 'idle' }
-  | { status: 'uploading' }
-  | { status: 'submitted'; jobId: string; pagesTotal: number }
-  | { status: 'error'; message: string };
+interface ConnectionsPayload {
+  workspaceId: string | null;
+  connections: Array<{ id: string; kind: string; status: string }>;
+}
+
+interface IngestPayload {
+  lastJob: { status: string; pagesTotal: number } | null;
+}
 
 const fetcher = (url: string) => fetch(url).then((res) => res.json());
 
 export default function OnboardPage() {
-  const [state, setState] = useState<UploadState>({ status: 'idle' });
-  const jobId = state.status === 'submitted' ? state.jobId : null;
-  const { data: job } = useSWR(jobId ? `/api/connectors/notion-zip/jobs/${jobId}` : null, fetcher, {
-    refreshInterval: (latest) =>
-      latest && ['completed', 'failed'].includes(latest.status) ? 0 : 1000,
-  });
-  const progress = useMemo(() => {
-    const total = job?.pagesTotal ?? (state.status === 'submitted' ? state.pagesTotal : 0);
-    const processed = job?.pagesProcessed ?? 0;
-    return total > 0 ? Math.round((processed / total) * 100) : 0;
-  }, [job, state]);
+  const router = useRouter();
+  const [uploadState, setUploadState] = useState<'idle' | 'uploading' | 'queued' | 'error'>('idle');
+  const step = typeof router.query.step === 'string' ? router.query.step : 'connect';
+  const { data: connections, mutate: mutateConnections } = useSWR<ConnectionsPayload>(
+    '/api/connections',
+    fetcher,
+  );
+  const workspaceId = connections?.workspaceId ?? null;
+  const { data: ingest } = useSWR<IngestPayload>(
+    step === 'ingesting' && workspaceId ? `/api/workspaces/${workspaceId}/ingest` : null,
+    fetcher,
+    {
+      refreshInterval: (latest) =>
+        latest?.lastJob && ['completed', 'failed'].includes(latest.lastJob.status) ? 0 : 1000,
+    },
+  );
 
-  async function onFile(event: ChangeEvent<HTMLInputElement>) {
+  useEffect(() => {
+    if (router.query.connected === 'notion') {
+      void router.replace('/auth/onboard?step=ingesting');
+    }
+  }, [router.query.connected, router]);
+
+  useEffect(() => {
+    if (step === 'ingesting' && ingest?.lastJob?.status === 'completed') {
+      void router.push('/auth/chat');
+    }
+  }, [ingest, router, step]);
+
+  async function connectOAuth() {
+    const response = await fetch('/api/connections/init', {
+      method: 'POST',
+      headers: { ...csrfHeaders(), 'Content-Type': 'application/json' },
+      body: JSON.stringify({ kind: 'notion-composio' }),
+    });
+    const payload = await response.json();
+    if (response.ok && payload.redirect_url) window.location.href = payload.redirect_url;
+  }
+
+  async function uploadZip(event: ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0];
     if (!file) return;
-
-    setState({ status: 'uploading' });
+    setUploadState('uploading');
     const form = new FormData();
     form.set('file', file);
-    const response = await fetch(`${apiUrl()}/connectors/notion-zip`, {
+    const response = await fetch('/api/connections/notion-zip', {
       method: 'POST',
-      credentials: 'include',
       headers: csrfHeaders(),
       body: form,
     });
-    const payload = await response.json();
     if (!response.ok) {
-      setState({ status: 'error', message: payload.error ?? 'upload_failed' });
+      setUploadState('error');
       return;
     }
-    setState({ status: 'submitted', jobId: payload.jobId, pagesTotal: payload.pagesTotal });
+    setUploadState('queued');
+    await mutateConnections();
+    void router.push('/auth/onboard?step=ingesting');
   }
 
   return (
     <>
       <Head>
-        <title>Import Notion - Open42</title>
+        <title>Connect Notion - Open42</title>
       </Head>
       <main className="min-h-screen bg-background px-6 py-8">
         <div className="mx-auto max-w-landing">
           <Link href="/auth/home" className="font-mono text-sm text-text-subtle">
             open42
           </Link>
-          <section className="pt-20">
-            <p className="font-mono text-xs text-text-subtle">NOTION ZIP</p>
-            <h1 className="mt-4 text-4xl font-medium leading-headline tracking-tight text-text-primary md:text-5xl">
-              Import the docs. Let the brain work.
-            </h1>
-            <p className="mt-5 max-w-xl text-base leading-body text-text-body">
-              Drop a Notion HTML/Markdown export. Open42 normalizes pages, stages
-              markdown, and submits a gbrain sync job in the background.
-            </p>
 
-            <label className="mt-10 flex min-h-48 cursor-pointer flex-col items-center justify-center rounded-2xl border border-dashed border-border bg-white px-6 text-center transition-colors hover:border-input">
-              <span className="text-sm font-medium text-text-primary">
-                {state.status === 'uploading' ? 'Uploading' : 'Choose Notion zip'}
-              </span>
-              <span className="mt-2 text-sm text-text-subtle">Maximum 100MB</span>
-              <input type="file" accept=".zip" className="sr-only" onChange={onFile} />
-            </label>
-
-            {state.status === 'submitted' ? (
-              <div className="mt-8 rounded-2xl border border-border bg-white p-5">
+          {step === 'ingesting' ? (
+            <section className="pt-20">
+              <p className="font-mono text-xs text-text-subtle">INGESTING</p>
+              <h1 className="mt-4 text-4xl font-medium leading-headline text-text-primary md:text-5xl">
+                Building the first brain.
+              </h1>
+              <div className="mt-10 border-y border-border py-5">
                 <div className="flex items-center justify-between text-sm">
                   <span className="font-medium text-text-primary">
-                    {job?.status ?? 'submitted_to_gbrain'}
+                    {ingest?.lastJob?.status ?? 'queued'}
                   </span>
-                  <span className="font-mono text-xs text-text-subtle">{progress}%</span>
+                  <span className="font-mono text-xs text-text-subtle">
+                    {ingest?.lastJob?.pagesTotal ?? 0} pages
+                  </span>
                 </div>
-                <div className="mt-4 h-2 overflow-hidden rounded-full bg-muted">
-                  <div
-                    className="h-full rounded-full bg-accent transition-transform duration-200"
-                    style={{ transform: `scaleX(${Math.max(progress, 4) / 100})`, transformOrigin: 'left' }}
-                  />
-                </div>
-                <p className="mt-4 text-sm leading-body text-text-body">
-                  You can close this tab. The home pane will show the imported pages
-                  when processing completes.
-                </p>
               </div>
-            ) : null}
-
-            {state.status === 'error' ? (
-              <div className="mt-8 rounded-2xl border border-destructive/20 bg-white p-5">
-                <p className="text-sm font-medium text-destructive">{state.message}</p>
-                <p className="mt-2 text-sm leading-body text-text-body">
-                  The import did not start. Check that your workspace has a ready
-                  gbrain tenant and try again.
-                </p>
+            </section>
+          ) : (
+            <section className="pt-20">
+              <p className="font-mono text-xs text-text-subtle">NOTION</p>
+              <h1 className="mt-4 text-4xl font-medium leading-headline text-text-primary md:text-5xl">
+                Connect the first source.
+              </h1>
+              <div className="mt-10 grid gap-3 sm:grid-cols-2">
+                <button
+                  type="button"
+                  className="flex min-h-36 items-start justify-between border border-border bg-white p-5 text-left hover:border-input"
+                  onClick={connectOAuth}
+                >
+                  <span>
+                    <span className="block text-sm font-medium text-text-primary">
+                      Connect Notion live
+                    </span>
+                    <span className="mt-2 block text-sm text-text-subtle">OAuth via Composio</span>
+                  </span>
+                  <PlugZap className="h-5 w-5 text-text-subtle" strokeWidth={1.5} />
+                </button>
+                <label className="flex min-h-36 cursor-pointer items-start justify-between border border-border bg-white p-5 text-left hover:border-input">
+                  <span>
+                    <span className="block text-sm font-medium text-text-primary">
+                      Upload Notion export
+                    </span>
+                    <span className="mt-2 block text-sm text-text-subtle">
+                      {uploadState === 'uploading'
+                        ? 'Uploading'
+                        : uploadState === 'queued'
+                          ? 'Queued'
+                          : 'Zip file'}
+                    </span>
+                  </span>
+                  <FileArchive className="h-5 w-5 text-text-subtle" strokeWidth={1.5} />
+                  <input type="file" accept=".zip" className="sr-only" onChange={uploadZip} />
+                </label>
               </div>
-            ) : null}
-          </section>
+              {uploadState === 'error' ? (
+                <p className="mt-5 text-sm font-medium text-destructive">Upload failed</p>
+              ) : null}
+              <Button asChild variant="link" className="mt-8 px-0">
+                <Link href="/auth/chat">Skip</Link>
+              </Button>
+            </section>
+          )}
         </div>
       </main>
     </>
   );
-}
-
-function apiUrl() {
-  return (process.env.NEXT_PUBLIC_API_PUBLIC_URL ?? 'http://localhost:3001').replace(/\/+$/, '');
 }
 
 function csrfHeaders(): HeadersInit {

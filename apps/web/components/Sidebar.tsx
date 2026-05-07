@@ -1,11 +1,12 @@
 import Link from 'next/link';
-import { Brain, FileArchive, LogOut, MessageSquare, WandSparkles } from 'lucide-react';
+import { Brain, FileArchive, LogOut, MessageSquare, Settings, WandSparkles } from 'lucide-react';
 
 const nav = [
   { href: '/auth/home', label: 'Brain status', icon: Brain },
   { href: '/auth/onboard', label: 'Connectors', icon: FileArchive },
   { href: '/auth/chat', label: 'Chat', icon: MessageSquare },
   { href: '/auth/skills/refund-policy', label: 'Skills', icon: WandSparkles },
+  { href: '/auth/settings/connections', label: 'Settings', icon: Settings },
   { href: '/sign_out', label: 'Sign out', icon: LogOut },
 ];
 

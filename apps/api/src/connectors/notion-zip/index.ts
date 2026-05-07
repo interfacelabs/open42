@@ -2,7 +2,13 @@ import path from 'node:path';
 
 import AdmZip from 'adm-zip';
 
-import type { Connector, ConnectorSource, ExtractOptions, NormalizedDoc } from '../interface.js';
+import type {
+  Connector,
+  ConnectorContext,
+  ExtractOptions,
+  ExtractResult,
+  NormalizedDoc,
+} from '../interface.js';
 
 export const DEFAULT_NOTION_ZIP_LIMITS = {
   maxEntries: 2_000,
@@ -33,44 +39,58 @@ const IMAGE_EXTENSIONS = new Set([
 
 export class NotionZipConnector implements Connector {
   readonly name = 'notion-zip';
-  readonly version = '0.1.0';
+  readonly version = '0.2.0';
+  readonly mode = 'one_shot' as const;
 
   constructor(private readonly limits: NotionZipLimits = {}) {}
 
-  async *extract(source: ConnectorSource, opts: ExtractOptions = {}): AsyncIterable<NormalizedDoc> {
-    const limits = resolveLimits(this.limits);
-    const zip = new AdmZip(source.zipPath);
-    const entries = zip
-      .getEntries()
-      .filter((entry) => !entry.isDirectory && !isImage(entry.entryName));
-    assertZipLimits(entries, limits);
-    const slugByTarget = buildSlugMap(entries.map((entry) => entry.entryName));
-    let actualTotalBytes = 0;
-
-    for (const entry of entries) {
-      opts.signal?.throwIfAborted();
-      const ext = path.extname(entry.entryName).toLowerCase();
-      if (!['.md', '.markdown', '.txt', '.csv'].includes(ext)) continue;
-
-      const title = stripFilenameUuid(path.basename(entry.entryName, ext));
-      const slug = slugByTarget.get(entry.entryName) ?? slugify(title);
-      const { text: raw, byteLength } = readTextEntry(entry, limits);
-      actualTotalBytes += byteLength;
-      if (actualTotalBytes > limits.maxTotalBytes) {
-        throw new Error('notion_zip_too_large');
-      }
-      const content = ext === '.csv' ? csvToMarkdown(raw) : normalizeMarkdown(raw, slugByTarget);
-
-      yield {
-        slug,
-        title,
-        content_md: content.trim() ? content.trimEnd() + '\n' : '',
-        metadata: {
-          source_ref: entry.entryName,
-          last_modified_at: entry.header.time,
-        },
-      };
+  extract(ctx: ConnectorContext, opts?: ExtractOptions): ExtractResult {
+    if (ctx.source.kind !== 'notion-zip') {
+      throw new Error(`notion-zip connector cannot accept source kind ${ctx.source.kind}`);
     }
+    const zipPath = ctx.source.zipPath;
+    const limits = resolveLimits(this.limits);
+
+    const docs = (async function* (): AsyncIterable<NormalizedDoc> {
+      const zip = new AdmZip(zipPath);
+      const entries = zip
+        .getEntries()
+        .filter((entry) => !entry.isDirectory && !isImage(entry.entryName));
+      assertZipLimits(entries, limits);
+      const slugByTarget = buildSlugMap(entries.map((entry) => entry.entryName));
+      let actualTotalBytes = 0;
+
+      for (const entry of entries) {
+        opts?.signal?.throwIfAborted();
+        const ext = path.extname(entry.entryName).toLowerCase();
+        if (!['.md', '.markdown', '.txt', '.csv'].includes(ext)) continue;
+
+        const title = stripFilenameUuid(path.basename(entry.entryName, ext));
+        const slug = slugByTarget.get(entry.entryName) ?? slugify(title);
+        const { text: raw, byteLength } = readTextEntry(entry, limits);
+        actualTotalBytes += byteLength;
+        if (actualTotalBytes > limits.maxTotalBytes) {
+          throw new Error('notion_zip_too_large');
+        }
+        const content = ext === '.csv' ? csvToMarkdown(raw) : normalizeMarkdown(raw, slugByTarget);
+
+        yield {
+          slug,
+          title,
+          content_md: content.trim() ? content.trimEnd() + '\n' : '',
+          metadata: {
+            source_ref: `notion-zip:${entry.entryName}`,
+            last_modified_at: entry.header.time,
+            title,
+          },
+        };
+      }
+    })();
+
+    return {
+      docs,
+      finalize: () => ({ zipPath, importedAt: new Date().toISOString() }),
+    };
   }
 }
 

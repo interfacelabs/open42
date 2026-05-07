@@ -2,8 +2,6 @@ import { randomBytes } from 'node:crypto';
 
 import { eq } from 'drizzle-orm';
 
-import { db as defaultDb, schema } from '../db/client.js';
-
 const CSRF_BYTES = 32;
 const DEFAULT_TTL_DAYS = 30;
 
@@ -83,6 +81,7 @@ export async function invalidateSession(
 function createDrizzleSessionRepo(): SessionRepo {
   return {
     async create(record) {
+      const { db: defaultDb, schema } = await import('../db/client.js');
       const [session] = await defaultDb
         .insert(schema.sessions)
         .values(record)
@@ -91,6 +90,7 @@ function createDrizzleSessionRepo(): SessionRepo {
       return session;
     },
     async find(id) {
+      const { db: defaultDb, schema } = await import('../db/client.js');
       const [session] = await defaultDb
         .select()
         .from(schema.sessions)
@@ -99,9 +99,11 @@ function createDrizzleSessionRepo(): SessionRepo {
       return session ?? null;
     },
     async updateExpiry(id, expiresAt) {
+      const { db: defaultDb, schema } = await import('../db/client.js');
       await defaultDb.update(schema.sessions).set({ expiresAt }).where(eq(schema.sessions.id, id));
     },
     async invalidate(id) {
+      const { db: defaultDb, schema } = await import('../db/client.js');
       await defaultDb
         .update(schema.sessions)
         .set({ expiresAt: new Date(0) })
