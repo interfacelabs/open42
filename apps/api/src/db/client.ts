@@ -14,5 +14,5 @@ const pool = new pg.Pool({
   idleTimeoutMillis: 30_000,
 });
 
-export const db = drizzle(pool, { schema });
+export const db = drizzle({ client: pool });
 export { schema };

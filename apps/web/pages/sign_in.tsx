@@ -22,7 +22,10 @@ export default function SignInPage() {
     const payload = verificationPayload(router.query, window.location.hash);
     if (!payload) return;
 
-    setState({ status: 'verifying' });
+    let cancelled = false;
+    queueMicrotask(() => {
+      if (!cancelled) setState({ status: 'verifying' });
+    });
     void fetch('/api/auth/verify', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -35,6 +38,9 @@ export default function SignInPage() {
       const payload = await response.json();
       await router.replace(payload.redirectTo ?? '/auth/home');
     });
+    return () => {
+      cancelled = true;
+    };
   }, [router]);
 
   async function submit(event: FormEvent<HTMLFormElement>) {
