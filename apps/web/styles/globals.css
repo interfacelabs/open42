@@ -123,3 +123,35 @@
 .np-flash {
   animation: np-flash 0.35s ease-out;
 }
+
+/* Editorial onboarding — envelope entry / exit (EnvelopeStage). */
+@keyframes env-anim-in {
+  0% {
+    opacity: 0;
+    transform: translateY(-22px) scale(0.8);
+  }
+  60% {
+    opacity: 1;
+    transform: translateY(2px) scale(1.02);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+@keyframes env-anim-out {
+  from {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+  to {
+    opacity: 0;
+    transform: translateY(-14px) scale(0.85);
+  }
+}
+.env-anim-in {
+  animation: env-anim-in 0.4s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+.env-anim-out {
+  animation: env-anim-out 0.25s cubic-bezier(0.7, 0, 0.84, 0) forwards;
+}
