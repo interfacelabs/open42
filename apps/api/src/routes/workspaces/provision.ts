@@ -1,8 +1,11 @@
 import { and, desc, eq, sql } from 'drizzle-orm';
 import { Router, type Request } from 'express';
 
+import { generateInviteLink as defaultGenerateInviteLink } from '../../auth/supabase.js';
 import { validateSession } from '../../auth/sessions.js';
 import { db, schema } from '../../db/client.js';
+import { renderInviteEmail } from '../../integrations/email-templates/invite.js';
+import { sendEmail as defaultSendEmail } from '../../integrations/resend.js';
 import { provisionTenant as defaultProvisionTenant } from '../../tenants/provision.js';
 
 const WORKSPACE_NAME_MAX = 80;
@@ -28,23 +31,39 @@ interface CurrentPayload {
   lastJob: { id: string; status: string; pagesTotal: number; createdAt: Date } | null;
 }
 
+export interface InviteRow {
+  id: string;
+  email: string;
+}
+
+export interface UpsertInvitesResult {
+  workspaceId: string;
+  workspaceName: string;
+  inviterEmail: string;
+  invites: InviteRow[];
+}
+
 interface WorkspaceLifecycleRepo {
   current(userId: string): Promise<CurrentPayload | null>;
   saveWorkspaceName(
     userId: string,
     name: string,
   ): Promise<{ payload: CurrentPayload; wasCreated: boolean }>;
-  saveInvites(userId: string, emails: string[]): Promise<CurrentPayload>;
+  upsertInvites(userId: string, emails: string[]): Promise<UpsertInvitesResult>;
   savePlan(userId: string, plan: WorkspacePlan): Promise<CurrentPayload>;
 }
 
 export function buildWorkspaceProvisionRouter(deps: {
   provisionTenant?: typeof defaultProvisionTenant;
   repo?: WorkspaceLifecycleRepo;
+  sendEmail?: typeof defaultSendEmail;
+  generateInviteLink?: typeof defaultGenerateInviteLink;
 } = {}) {
   const router = Router();
   const provisionTenant = deps.provisionTenant ?? defaultProvisionTenant;
   const repo = deps.repo ?? createDrizzleWorkspaceLifecycleRepo();
+  const sendEmail = deps.sendEmail ?? defaultSendEmail;
+  const generateInviteLink = deps.generateInviteLink ?? defaultGenerateInviteLink;
 
   router.get('/current', async (req, res, next) => {
     try {
@@ -95,7 +114,45 @@ export function buildWorkspaceProvisionRouter(deps: {
         res.status(400).json({ error: 'invite_emails_invalid' });
         return;
       }
-      res.json(await repo.saveInvites(session.userId, emails));
+      const { workspaceName, inviterEmail, invites } = await repo.upsertInvites(
+        session.userId,
+        emails,
+      );
+
+      const webUrl = (process.env.WEB_PUBLIC_URL ?? 'http://localhost:3000').replace(/\/+$/, '');
+      let sent = 0;
+      let failed = 0;
+      for (const invite of invites) {
+        try {
+          const { actionLink } = await generateInviteLink({
+            email: invite.email,
+            redirectTo: `${webUrl}/auth/invite/accept?invite_id=${invite.id}`,
+          });
+          const rendered = renderInviteEmail({
+            workspaceName,
+            inviterEmail,
+            inviteUrl: actionLink,
+          });
+          const result = await sendEmail({
+            to: invite.email,
+            subject: rendered.subject,
+            html: rendered.html,
+            text: rendered.text,
+          });
+          if (result.ok) {
+            sent += 1;
+          } else {
+            failed += 1;
+            console.error('[invite-email] resend failed', invite.email, result.error);
+          }
+        } catch (err) {
+          failed += 1;
+          console.error('[invite-email] generate-link failed', invite.email, err);
+        }
+      }
+
+      const payload = await repo.current(session.userId);
+      res.json({ ...payload, sent, failed });
     } catch (err) {
       next(err);
     }
@@ -242,26 +299,44 @@ function createDrizzleWorkspaceLifecycleRepo(): WorkspaceLifecycleRepo {
       if (!current) throw new Error('user_not_found');
       return { payload: current, wasCreated };
     },
-    async saveInvites(userId, emails) {
+    async upsertInvites(userId, emails) {
       const current = await currentPayload(userId);
       if (!current?.workspace) throw new Error('workspace_required');
-      if (emails.length > 0) {
-        await db
-          .insert(schema.workspaceInvites)
-          .values(
-            emails.map((email) => ({
-              workspaceId: current.workspace!.id,
-              invitedByUserId: userId,
-              email,
-              role: 'member' as const,
-              status: 'pending' as const,
-            })),
-          )
-          .onConflictDoNothing();
+      const workspaceId = current.workspace.id;
+      const inviterEmail = current.user.email;
+      const workspaceName = current.workspace.name;
+
+      if (emails.length === 0) {
+        return { workspaceId, workspaceName, inviterEmail, invites: [] };
       }
-      const next = await currentPayload(userId);
-      if (!next) throw new Error('user_not_found');
-      return next;
+
+      // D5: re-inviting an email refreshes createdAt and rebinds invitedByUserId.
+      // Partial unique index on (workspaceId, email) where status='pending' targets the conflict.
+      const inserted = await db
+        .insert(schema.workspaceInvites)
+        .values(
+          emails.map((email) => ({
+            workspaceId,
+            invitedByUserId: userId,
+            email,
+            role: 'member' as const,
+            status: 'pending' as const,
+          })),
+        )
+        .onConflictDoUpdate({
+          target: [schema.workspaceInvites.workspaceId, schema.workspaceInvites.email],
+          targetWhere: sql`${schema.workspaceInvites.status} = 'pending'`,
+          set: {
+            invitedByUserId: userId,
+            createdAt: sql`NOW()`,
+          },
+        })
+        .returning({
+          id: schema.workspaceInvites.id,
+          email: schema.workspaceInvites.email,
+        });
+
+      return { workspaceId, workspaceName, inviterEmail, invites: inserted };
     },
     async savePlan(userId, plan) {
       const current = await currentPayload(userId);

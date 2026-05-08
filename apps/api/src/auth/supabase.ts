@@ -35,9 +35,25 @@ export interface SupabaseAuthClient {
   };
 }
 
+export interface SupabaseAdminClient {
+  auth: {
+    admin: {
+      generateLink(input: {
+        type: 'invite';
+        email: string;
+        options?: { redirectTo?: string };
+      }): Promise<{
+        data: { properties?: { action_link?: string } | null } | null;
+        error: SupabaseAuthError | null;
+      }>;
+    };
+  };
+}
+
 export interface SupabaseAuthEnv {
   SUPABASE_URL?: string;
   SUPABASE_ANON_KEY?: string;
+  SUPABASE_SERVICE_ROLE_KEY?: string;
   MAGIC_LINK_TTL_MINUTES?: string;
 }
 
@@ -50,6 +66,20 @@ export function createSupabaseAuthClient(env: SupabaseAuthEnv = process.env): Su
       persistSession: false,
     },
   }) as unknown as SupabaseAuthClient;
+}
+
+export function createSupabaseAdminClient(env: SupabaseAuthEnv = process.env): SupabaseAdminClient {
+  const url = requiredSupabaseEnv(env.SUPABASE_URL, 'SUPABASE_URL');
+  const serviceRoleKey = requiredSupabaseEnv(
+    env.SUPABASE_SERVICE_ROLE_KEY,
+    'SUPABASE_SERVICE_ROLE_KEY',
+  );
+  return createClient(url, serviceRoleKey, {
+    auth: {
+      autoRefreshToken: false,
+      persistSession: false,
+    },
+  }) as unknown as SupabaseAdminClient;
 }
 
 export async function sendSupabaseMagicLink(options: {
@@ -77,6 +107,41 @@ export async function sendSupabaseMagicLink(options: {
   );
   const now = options.now ?? new Date();
   return { email, expiresAt: new Date(now.getTime() + ttl * 60 * 1000) };
+}
+
+export interface GenerateInviteLinkInput {
+  email: string;
+  redirectTo: string;
+  env?: SupabaseAuthEnv;
+  client?: SupabaseAdminClient;
+  now?: Date;
+}
+
+export interface GenerateInviteLinkOutput {
+  actionLink: string;
+  expiresAt: Date;
+}
+
+const SUPABASE_INVITE_TTL_HOURS = 24;
+
+export async function generateInviteLink(
+  input: GenerateInviteLinkInput,
+): Promise<GenerateInviteLinkOutput> {
+  const email = normalizeEmail(input.email);
+  const admin = input.client ?? createSupabaseAdminClient(input.env);
+  const { data, error } = await admin.auth.admin.generateLink({
+    type: 'invite',
+    email,
+    options: { redirectTo: input.redirectTo },
+  });
+  if (error) throw new Error(`supabase_invite_link_failed:${error.message}`);
+  const actionLink = data?.properties?.action_link;
+  if (!actionLink) throw new Error('supabase_invite_link_missing');
+  const now = input.now ?? new Date();
+  return {
+    actionLink,
+    expiresAt: new Date(now.getTime() + SUPABASE_INVITE_TTL_HOURS * 60 * 60 * 1000),
+  };
 }
 
 export async function verifySupabaseIdentity(options: {
