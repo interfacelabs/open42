@@ -107,6 +107,7 @@ export const workspaces = pgTable(
       'workspaces_ingest_interval_hours_range',
       sql`${t.ingestIntervalHours} BETWEEN 1 AND 168`,
     ),
+    ownerUserIdUnique: uniqueIndex('workspaces_owner_user_id_uniq').on(t.ownerUserId),
   }),
 );
 
