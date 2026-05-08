@@ -1,4 +1,4 @@
-import { and, desc, eq, sql } from 'drizzle-orm';
+import { and, desc, eq, or, sql } from 'drizzle-orm';
 import { Router, type Request } from 'express';
 
 import { generateInviteLink as defaultGenerateInviteLink } from '../../auth/supabase.js';
@@ -13,13 +13,22 @@ const INVITE_LIMIT = 10;
 
 type WorkspacePlan = 'starter' | 'team' | 'business';
 
+type WorkspaceRuntime = 'pending' | 'ready' | 'failed';
+
 interface CurrentWorkspace {
   id: string;
   name: string;
   plan: WorkspacePlan | null;
   status: string;
   gbrainReady: boolean;
+  runtime: WorkspaceRuntime;
   createdAt: Date;
+}
+
+export function deriveRuntime(input: { status: string; gbrainReady: boolean }): WorkspaceRuntime {
+  if (input.status === 'failed') return 'failed';
+  if (input.status === 'ready' && input.gbrainReady) return 'ready';
+  return 'pending';
 }
 
 interface CurrentPayload {
@@ -293,9 +302,7 @@ async function currentPayload(userId: string): Promise<CurrentPayload | null> {
   const [user] = await db.select().from(schema.users).where(eq(schema.users.id, userId)).limit(1);
   if (!user) return null;
 
-  const workspace = user.currentWorkspaceId
-    ? await currentWorkspace(user.currentWorkspaceId)
-    : null;
+  const workspace = await currentWorkspaceForUser(userId);
   const invites = workspace
     ? await db
         .select({
@@ -347,23 +354,37 @@ async function currentPayload(userId: string): Promise<CurrentPayload | null> {
   };
 }
 
-async function currentWorkspace(workspaceId: string): Promise<CurrentWorkspace | null> {
-  const [workspace] = await db
-    .select()
+export async function currentWorkspaceForUser(userId: string): Promise<CurrentWorkspace | null> {
+  // Resolve via owner OR membership. Membership covers invite-accepted members
+  // who don't have a `users.currentWorkspaceId` write yet.
+  const [row] = await db
+    .select({ workspace: schema.workspaces })
     .from(schema.workspaces)
-    .where(eq(schema.workspaces.id, workspaceId))
+    .leftJoin(
+      schema.memberships,
+      and(
+        eq(schema.memberships.workspaceId, schema.workspaces.id),
+        eq(schema.memberships.userId, userId),
+      ),
+    )
+    .where(
+      or(eq(schema.workspaces.ownerUserId, userId), eq(schema.memberships.userId, userId)),
+    )
     .limit(1);
-  if (!workspace) return null;
+  if (!row?.workspace) return null;
+  const workspace = row.workspace;
+  const gbrainReady = Boolean(
+    (workspace.gbrainBaseUrl || workspace.flyPrivateIp) &&
+      workspace.gbrainOauthClientId &&
+      workspace.gbrainOauthClientSecretCiphertext,
+  );
   return {
     id: workspace.id,
     name: workspace.name,
     plan: workspace.plan,
     status: workspace.status,
-    gbrainReady: Boolean(
-      (workspace.gbrainBaseUrl || workspace.flyPrivateIp) &&
-        workspace.gbrainOauthClientId &&
-        workspace.gbrainOauthClientSecretCiphertext,
-    ),
+    gbrainReady,
+    runtime: deriveRuntime({ status: workspace.status, gbrainReady }),
     createdAt: workspace.createdAt,
   };
 }

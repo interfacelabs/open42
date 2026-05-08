@@ -3,7 +3,7 @@ import cookieParser from 'cookie-parser';
 import request from 'supertest';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { buildWorkspaceProvisionRouter } from './provision.js';
+import { buildWorkspaceProvisionRouter, deriveRuntime } from './provision.js';
 
 const mocks = vi.hoisted(() => ({
   validateSession: vi.fn(),
@@ -108,6 +108,7 @@ describe('workspace provision route', () => {
           plan: null,
           status: 'provisioning',
           gbrainReady: false,
+          runtime: 'pending',
           createdAt: new Date('2026-05-07T10:00:00Z'),
         },
       });
@@ -120,6 +121,7 @@ describe('workspace provision route', () => {
             plan: null,
             status: 'provisioning',
             gbrainReady: false,
+            runtime: 'pending',
             createdAt: new Date('2026-05-07T10:00:00Z'),
           },
           invites: [],
@@ -169,6 +171,7 @@ describe('workspace provision route', () => {
             plan: 'team',
             status: 'provisioning',
             gbrainReady: false,
+            runtime: 'pending',
             createdAt: new Date('2026-05-07T10:00:00Z'),
           },
           invites: [],
@@ -287,6 +290,91 @@ describe('workspace provision route', () => {
       expect(res.body.failed).toBe(1);
     });
   });
+
+  describe('GET /workspaces/current runtime field', () => {
+    it("exposes runtime: 'pending' from the repo when status is 'provisioning'", async () => {
+      mocks.validateSession.mockResolvedValue({ userId: 'user-1' });
+      const repo = makeRepo({
+        workspace: {
+          id: 'workspace-1',
+          name: 'Speedrun Labs',
+          plan: null,
+          status: 'provisioning',
+          gbrainReady: false,
+          runtime: 'pending',
+          createdAt: new Date('2026-05-07T10:00:00Z'),
+        },
+      });
+
+      const res = await request(makeApp(repo))
+        .get('/workspaces/current')
+        .set('Cookie', 'open42_session=session-1');
+
+      expect(res.status).toBe(200);
+      expect(res.body.workspace.runtime).toBe('pending');
+    });
+
+    it("exposes runtime: 'ready' when status='ready' and gbrain is configured", async () => {
+      mocks.validateSession.mockResolvedValue({ userId: 'user-1' });
+      const repo = makeRepo({
+        workspace: {
+          id: 'workspace-1',
+          name: 'Speedrun Labs',
+          plan: 'team',
+          status: 'ready',
+          gbrainReady: true,
+          runtime: 'ready',
+          createdAt: new Date('2026-05-07T10:00:00Z'),
+        },
+      });
+
+      const res = await request(makeApp(repo))
+        .get('/workspaces/current')
+        .set('Cookie', 'open42_session=session-1');
+
+      expect(res.body.workspace.runtime).toBe('ready');
+    });
+
+    it("exposes runtime: 'failed' when workspace status is 'failed'", async () => {
+      mocks.validateSession.mockResolvedValue({ userId: 'user-1' });
+      const repo = makeRepo({
+        workspace: {
+          id: 'workspace-1',
+          name: 'Speedrun Labs',
+          plan: null,
+          status: 'failed',
+          gbrainReady: false,
+          runtime: 'failed',
+          createdAt: new Date('2026-05-07T10:00:00Z'),
+        },
+      });
+
+      const res = await request(makeApp(repo))
+        .get('/workspaces/current')
+        .set('Cookie', 'open42_session=session-1');
+
+      expect(res.body.workspace.runtime).toBe('failed');
+    });
+  });
+});
+
+describe('deriveRuntime', () => {
+  it("returns 'pending' when status='provisioning'", () => {
+    expect(deriveRuntime({ status: 'provisioning', gbrainReady: false })).toBe('pending');
+  });
+
+  it("returns 'ready' when status='ready' AND gbrainReady=true", () => {
+    expect(deriveRuntime({ status: 'ready', gbrainReady: true })).toBe('ready');
+  });
+
+  it("returns 'failed' when status='failed'", () => {
+    expect(deriveRuntime({ status: 'failed', gbrainReady: false })).toBe('failed');
+    expect(deriveRuntime({ status: 'failed', gbrainReady: true })).toBe('failed');
+  });
+
+  it("returns 'pending' when status='ready' but gbrain not configured", () => {
+    expect(deriveRuntime({ status: 'ready', gbrainReady: false })).toBe('pending');
+  });
 });
 
 function makeApp(repo = makeRepo()) {
@@ -306,6 +394,7 @@ function makeApp(repo = makeRepo()) {
 }
 
 type WorkspacePlan = 'starter' | 'team' | 'business';
+type WorkspaceRuntime = 'pending' | 'ready' | 'failed';
 
 interface MockWorkspace {
   id: string;
@@ -313,6 +402,7 @@ interface MockWorkspace {
   plan: WorkspacePlan | null;
   status: string;
   gbrainReady: boolean;
+  runtime: WorkspaceRuntime;
   createdAt: Date;
 }
 
@@ -333,6 +423,7 @@ function makeRepo(currentOverride: Partial<MockCurrent> = {}) {
       plan: 'team',
       status: 'provisioning',
       gbrainReady: false,
+      runtime: 'pending',
       createdAt: new Date('2026-05-07T10:00:00Z'),
     },
     invites: [],
