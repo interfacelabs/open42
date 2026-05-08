@@ -30,7 +30,10 @@ interface CurrentPayload {
 
 interface WorkspaceLifecycleRepo {
   current(userId: string): Promise<CurrentPayload | null>;
-  saveWorkspaceName(userId: string, name: string): Promise<CurrentPayload>;
+  saveWorkspaceName(
+    userId: string,
+    name: string,
+  ): Promise<{ payload: CurrentPayload; wasCreated: boolean }>;
   saveInvites(userId: string, emails: string[]): Promise<CurrentPayload>;
   savePlan(userId: string, plan: WorkspacePlan): Promise<CurrentPayload>;
 }
@@ -70,7 +73,14 @@ export function buildWorkspaceProvisionRouter(deps: {
         res.status(400).json({ error: 'workspace_name_invalid' });
         return;
       }
-      res.json(await repo.saveWorkspaceName(session.userId, name));
+      const { payload, wasCreated } = await repo.saveWorkspaceName(session.userId, name);
+      if (wasCreated && payload.workspace) {
+        // Fire-and-forget: provisioning is slow (~30s), client polls /current.runtime for state.
+        void provisionTenant({ ownerUserId: session.userId }).catch((err) =>
+          console.error('[provision] async failure', err),
+        );
+      }
+      res.json(payload);
     } catch (err) {
       next(err);
     }
@@ -186,7 +196,7 @@ function createDrizzleWorkspaceLifecycleRepo(): WorkspaceLifecycleRepo {
       return currentPayload(userId);
     },
     async saveWorkspaceName(userId, name) {
-      await db.transaction(async (tx) => {
+      const wasCreated = await db.transaction(async (tx) => {
         const [user] = await tx
           .select()
           .from(schema.users)
@@ -204,7 +214,7 @@ function createDrizzleWorkspaceLifecycleRepo(): WorkspaceLifecycleRepo {
                 eq(schema.workspaces.ownerUserId, userId),
               ),
             );
-          return;
+          return false;
         }
 
         const [workspace] = await tx
@@ -226,10 +236,11 @@ function createDrizzleWorkspaceLifecycleRepo(): WorkspaceLifecycleRepo {
           .insert(schema.memberships)
           .values({ userId, workspaceId: workspace.id, role: 'owner' })
           .onConflictDoNothing();
+        return true;
       });
       const current = await currentPayload(userId);
       if (!current) throw new Error('user_not_found');
-      return current;
+      return { payload: current, wasCreated };
     },
     async saveInvites(userId, emails) {
       const current = await currentPayload(userId);

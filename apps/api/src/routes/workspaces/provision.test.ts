@@ -89,6 +89,106 @@ describe('workspace provision route', () => {
     expect(mocks.provisionTenant).not.toHaveBeenCalled();
   });
 
+  describe('POST /workspaces/onboarding/workspace (idempotent)', () => {
+    it('creates workspace + kicks off provisioning on first call', async () => {
+      mocks.validateSession.mockResolvedValue({ userId: 'user-1' });
+      mocks.provisionTenant.mockResolvedValue({
+        workspaceId: 'workspace-1',
+        flyMachineId: 'machine-1',
+        flyPrivateIp: '127.0.0.1:18080',
+        gbrainBaseUrl: 'http://127.0.0.1:18080',
+      });
+      const repo = makeRepo({
+        workspace: {
+          id: 'workspace-1',
+          name: 'Speedrun Labs',
+          plan: null,
+          status: 'provisioning',
+          gbrainReady: false,
+          createdAt: new Date('2026-05-07T10:00:00Z'),
+        },
+      });
+      repo.saveWorkspaceName.mockResolvedValueOnce({
+        payload: {
+          user: { id: 'user-1', email: 'user@example.com' },
+          workspace: {
+            id: 'workspace-1',
+            name: 'Speedrun Labs',
+            plan: null,
+            status: 'provisioning',
+            gbrainReady: false,
+            createdAt: new Date('2026-05-07T10:00:00Z'),
+          },
+          invites: [],
+          connections: [],
+          lastJob: null,
+        },
+        wasCreated: true,
+      });
+      const app = makeApp(repo);
+
+      const res = await request(app)
+        .post('/workspaces/onboarding/workspace')
+        .set('Cookie', 'open42_session=session-1')
+        .send({ name: 'Speedrun Labs' });
+
+      expect(res.status).toBe(200);
+      await new Promise((r) => setImmediate(r));
+      expect(mocks.provisionTenant).toHaveBeenCalledTimes(1);
+      expect(mocks.provisionTenant).toHaveBeenCalledWith({ ownerUserId: 'user-1' });
+    });
+
+    it('returns existing workspace and does NOT re-provision when name matches', async () => {
+      mocks.validateSession.mockResolvedValue({ userId: 'user-1' });
+      const repo = makeRepo();
+      // saveWorkspaceName default returns wasCreated: false
+      const app = makeApp(repo);
+
+      const res = await request(app)
+        .post('/workspaces/onboarding/workspace')
+        .set('Cookie', 'open42_session=session-1')
+        .send({ name: 'Speedrun Labs' });
+
+      expect(res.status).toBe(200);
+      await new Promise((r) => setImmediate(r));
+      expect(mocks.provisionTenant).not.toHaveBeenCalled();
+    });
+
+    it('renames existing workspace and does NOT re-provision when name differs', async () => {
+      mocks.validateSession.mockResolvedValue({ userId: 'user-1' });
+      const repo = makeRepo();
+      repo.saveWorkspaceName.mockResolvedValueOnce({
+        payload: {
+          user: { id: 'user-1', email: 'user@example.com' },
+          workspace: {
+            id: 'workspace-1',
+            name: 'New Name',
+            plan: 'team',
+            status: 'provisioning',
+            gbrainReady: false,
+            createdAt: new Date('2026-05-07T10:00:00Z'),
+          },
+          invites: [],
+          connections: [],
+          lastJob: null,
+        },
+        wasCreated: false,
+      });
+      const app = makeApp(repo);
+
+      const res = await request(app)
+        .post('/workspaces/onboarding/workspace')
+        .set('Cookie', 'open42_session=session-1')
+        .send({ name: 'New Name' });
+
+      expect(res.status).toBe(200);
+      expect(res.body.workspace.name).toBe('New Name');
+      await new Promise((r) => setImmediate(r));
+      expect(mocks.provisionTenant).not.toHaveBeenCalled();
+      expect(repo.saveWorkspaceName).toHaveBeenCalledWith('user-1', 'New Name');
+    });
+  });
+
   it('provisions a workspace only when onboarding explicitly requests it', async () => {
     mocks.validateSession.mockResolvedValue({ userId: 'user-1' });
     mocks.provisionTenant.mockResolvedValue({
@@ -132,13 +232,32 @@ function makeApp(repo = makeRepo()) {
   return app;
 }
 
-function makeRepo(currentOverride = {}) {
-  const current = {
+type WorkspacePlan = 'starter' | 'team' | 'business';
+
+interface MockWorkspace {
+  id: string;
+  name: string;
+  plan: WorkspacePlan | null;
+  status: string;
+  gbrainReady: boolean;
+  createdAt: Date;
+}
+
+interface MockCurrent {
+  user: { id: string; email: string };
+  workspace: MockWorkspace | null;
+  invites: Array<{ id: string; email: string; status: string; createdAt: Date }>;
+  connections: Array<{ id: string; kind: string; status: string; displayName: string }>;
+  lastJob: { id: string; status: string; pagesTotal: number; createdAt: Date } | null;
+}
+
+function makeRepo(currentOverride: Partial<MockCurrent> = {}) {
+  const current: MockCurrent = {
     user: { id: 'user-1', email: 'user@example.com' },
     workspace: {
       id: 'workspace-1',
       name: 'Speedrun Labs',
-      plan: 'team' as const,
+      plan: 'team',
       status: 'provisioning',
       gbrainReady: false,
       createdAt: new Date('2026-05-07T10:00:00Z'),
@@ -150,7 +269,7 @@ function makeRepo(currentOverride = {}) {
   };
   return {
     current: vi.fn(async () => current),
-    saveWorkspaceName: vi.fn(async () => current),
+    saveWorkspaceName: vi.fn(async () => ({ payload: current, wasCreated: false })),
     saveInvites: vi.fn(async () => current),
     savePlan: vi.fn(async () => current),
   };
