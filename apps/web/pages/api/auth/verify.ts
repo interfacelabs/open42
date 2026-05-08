@@ -7,10 +7,19 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     return;
   }
 
+  const body = req.body ?? {};
+  const forwarded = {
+    accessToken: body.accessToken,
+    tokenHash: body.tokenHash,
+    type: body.type,
+    email: body.email,
+    token: body.token,
+    inviteId: body.inviteId,
+  };
   const backend = await fetch(`${apiUrl()}/auth/verify`, {
     method: 'POST',
     headers: proxyHeaders(req),
-    body: JSON.stringify(req.body),
+    body: JSON.stringify(forwarded),
   });
   forwardSetCookie(backend, res);
   res.status(backend.status).json(await backend.json());

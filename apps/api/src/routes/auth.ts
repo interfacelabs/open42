@@ -57,6 +57,7 @@ authRouter.post('/signin', async (req, res, next) => {
 });
 
 authRouter.post('/verify', async (req, res, next) => {
+  const inviteId = optionalString(req.body?.inviteId);
   try {
     const identity = await verifySupabaseIdentity({
       accessToken: optionalString(req.body?.accessToken),
@@ -67,6 +68,46 @@ authRouter.post('/verify', async (req, res, next) => {
     });
     const user = await upsertUser(identity);
 
+    if (inviteId) {
+      const [invite] = await db
+        .select()
+        .from(schema.workspaceInvites)
+        .where(eq(schema.workspaceInvites.id, inviteId))
+        .limit(1);
+      if (!invite) {
+        res.status(400).json({ error: 'invite_not_found' });
+        return;
+      }
+      if (invite.email.toLowerCase() !== identity.email.toLowerCase()) {
+        res.status(400).json({ error: 'invite_email_mismatch' });
+        return;
+      }
+      if (invite.status !== 'accepted') {
+        const [ownedWorkspace] = await db
+          .select({ id: schema.workspaces.id })
+          .from(schema.workspaces)
+          .where(eq(schema.workspaces.ownerUserId, user.id))
+          .limit(1);
+        if (ownedWorkspace) {
+          res
+            .status(409)
+            .json({ error: 'invite_blocked', reason: 'user_already_has_workspace' });
+          return;
+        }
+        await db.transaction(async (tx) => {
+          await tx.insert(schema.memberships).values({
+            workspaceId: invite.workspaceId,
+            userId: user.id,
+            role: invite.role,
+          });
+          await tx
+            .update(schema.workspaceInvites)
+            .set({ status: 'accepted' })
+            .where(eq(schema.workspaceInvites.id, invite.id));
+        });
+      }
+    }
+
     const session = await createSession(user.id, {
       userAgent: req.header('user-agent'),
       ip: req.ip,
@@ -74,9 +115,13 @@ authRouter.post('/verify', async (req, res, next) => {
     setSessionCookies(res, session);
     res.json({
       ok: true,
-      redirectTo: '/auth/onboard',
+      redirectTo: inviteId ? '/auth/home' : '/auth/onboard',
     });
   } catch (err) {
+    if (inviteId && err instanceof Error && isOtpExpiredError(err)) {
+      res.status(400).json({ error: 'invite_expired' });
+      return;
+    }
     if (err instanceof Error && err.message.startsWith('supabase_')) {
       res.status(400).json({ error: err.message });
       return;
@@ -160,6 +205,13 @@ async function upsertUser(identity: SupabaseIdentity) {
     if (!user) throw new Error('user_upsert_failed');
     return user;
   });
+}
+
+function isOtpExpiredError(err: Error): boolean {
+  // Supabase errors flow through verifySupabaseIdentity wrapped as
+  // `supabase_verify_failed:otp_expired`; the test harness uses the bare
+  // `supabase_otp_expired` form. Accept both.
+  return /otp_expired/i.test(err.message);
 }
 
 function optionalString(value: unknown): string | undefined {
