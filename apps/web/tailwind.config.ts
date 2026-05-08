@@ -64,6 +64,10 @@ const config: Config = {
           subtle: 'hsl(var(--text-subtle))',
           faint: 'hsl(var(--text-faint))',
         },
+
+        // Editorial onboarding layer (per spec D6)
+        'accent-deep': '#0a1f8a',
+        'accent-soft': '#eef1ff',
       },
       borderRadius: {
         lg: 'var(--radius)',
@@ -76,6 +80,7 @@ const config: Config = {
       fontFamily: {
         sans: ['var(--font-geist-sans)', 'ui-sans-serif', 'system-ui', 'sans-serif'],
         mono: ['var(--font-geist-mono)', 'ui-monospace', 'monospace'],
+        newsreader: ['var(--font-newsreader)', 'Georgia', 'serif'],
       },
       lineHeight: {
         display: '0.95',
