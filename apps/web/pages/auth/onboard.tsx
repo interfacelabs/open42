@@ -1,155 +1,136 @@
 import Head from 'next/head';
-import Link from 'next/link';
 import { useRouter } from 'next/router';
-import { ChangeEvent, useEffect, useState } from 'react';
-import { FileArchive, PlugZap } from 'lucide-react';
+import { FormEvent, ReactNode, useCallback, useEffect, useMemo, useState } from 'react';
+import { motion } from 'motion/react';
 import useSWR from 'swr';
 
-import { Button } from '@/components/ui/button';
+import { EditorialPane } from '@/components/onboarding/EditorialPane';
+import { EnvelopeStage } from '@/components/onboarding/EnvelopeStage';
+import { Nameplate } from '@/components/onboarding/Nameplate';
+import {
+  CurrentPayload,
+  OnboardStep,
+  deriveOnboardStep,
+} from '@/lib/onboarding/derive';
+import { EASE_STANDARD } from '@/lib/motion';
 
-interface ConnectionsPayload {
-  workspaceId: string | null;
-  connections: Array<{ id: string; kind: string; status: string }>;
+interface OnboardCurrentPayload extends CurrentPayload {
+  workspace: { id: string; name: string; runtime: 'pending' | 'ready' | 'failed' } | null;
+  invites: Array<{ id: string; email: string; status: string }>;
+  user: { id: string; email: string };
 }
 
-interface IngestPayload {
-  lastJob: { status: string; pagesTotal: number } | null;
-}
+const fetcher = async (url: string) => {
+  const res = await fetch(url);
+  if (!res.ok) {
+    const err = new Error('fetch_failed') as Error & { status?: number };
+    err.status = res.status;
+    throw err;
+  }
+  return res.json();
+};
 
-const fetcher = (url: string) => fetch(url).then((res) => res.json());
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const isValidEmail = (s: string) => EMAIL_RE.test(s.trim().toLowerCase());
+const parseLines = (text: string): string[] =>
+  text
+    .split(/[,;\n]+/)
+    .map((s) => s.trim().toLowerCase())
+    .filter(Boolean);
 
 export default function OnboardPage() {
   const router = useRouter();
-  const [uploadState, setUploadState] = useState<'idle' | 'uploading' | 'queued' | 'error'>('idle');
-  const step = typeof router.query.step === 'string' ? router.query.step : 'connect';
-  const { data: connections, mutate: mutateConnections } = useSWR<ConnectionsPayload>(
-    '/api/connections',
+  const urlStep = typeof router.query.step === 'string' ? router.query.step : null;
+  const { data: current, error, mutate, isLoading } = useSWR<OnboardCurrentPayload>(
+    '/api/workspaces/current',
     fetcher,
   );
-  const workspaceId = connections?.workspaceId ?? null;
-  const { data: ingest } = useSWR<IngestPayload>(
-    step === 'ingesting' && workspaceId ? `/api/workspaces/${workspaceId}/ingest` : null,
-    fetcher,
-    {
-      refreshInterval: (latest) =>
-        latest?.lastJob && ['completed', 'failed'].includes(latest.lastJob.status) ? 0 : 1000,
-    },
-  );
+
+  // Lifted so the editorial pane reacts live to the form as the user types.
+  const [workspaceName, setWorkspaceName] = useState<string>('');
+  const [seededFromServer, setSeededFromServer] = useState(false);
+  const [inviteText, setInviteText] = useState<string>('');
 
   useEffect(() => {
-    if (router.query.connected === 'notion') {
-      void router.replace('/auth/onboard?step=ingesting');
+    if (error && (error as { status?: number }).status === 401) {
+      void router.replace('/sign_in');
     }
-  }, [router.query.connected, router]);
+  }, [error, router]);
 
+  // Seed the workspace input from the server payload exactly once when current arrives.
   useEffect(() => {
-    if (step === 'ingesting' && ingest?.lastJob?.status === 'completed') {
-      void router.push('/auth/chat');
+    if (!seededFromServer && current?.workspace?.name) {
+      setWorkspaceName(current.workspace.name);
+      setSeededFromServer(true);
     }
-  }, [ingest, router, step]);
+  }, [current, seededFromServer]);
 
-  async function connectOAuth() {
-    const response = await fetch('/api/connections/init', {
-      method: 'POST',
-      headers: { ...csrfHeaders(), 'Content-Type': 'application/json' },
-      body: JSON.stringify({ kind: 'notion-composio' }),
-    });
-    const payload = await response.json();
-    if (response.ok && payload.redirect_url) window.location.href = payload.redirect_url;
-  }
+  const step: OnboardStep | null = current ? deriveOnboardStep(current, urlStep) : null;
+  const topbarWorkspaceName = current?.workspace?.name ?? '';
 
-  async function uploadZip(event: ChangeEvent<HTMLInputElement>) {
-    const file = event.target.files?.[0];
-    if (!file) return;
-    setUploadState('uploading');
-    const form = new FormData();
-    form.set('file', file);
-    const response = await fetch('/api/connections/notion-zip', {
-      method: 'POST',
-      headers: csrfHeaders(),
-      body: form,
-    });
-    if (!response.ok) {
-      setUploadState('error');
-      return;
-    }
-    setUploadState('queued');
-    await mutateConnections();
-    void router.push('/auth/onboard?step=ingesting');
-  }
+  const inviteLines = useMemo(() => parseLines(inviteText), [inviteText]);
 
   return (
     <>
       <Head>
-        <title>Connect Notion - Open42</title>
+        <title>Set up your brain - Open42</title>
       </Head>
-      <main className="min-h-screen bg-background px-6 py-8">
-        <div className="mx-auto max-w-landing">
-          <Link href="/auth/home" className="font-mono text-sm text-text-subtle">
-            open42
-          </Link>
+      <main className="min-h-screen bg-background">
+        <div className="grid min-h-screen grid-cols-1 md:grid-cols-[1.25fr_1fr]">
+          <div className="flex flex-1 flex-col px-6 py-8 md:px-16 md:py-12">
+            <TopBar step={step} workspaceName={topbarWorkspaceName} />
 
-          {step === 'ingesting' ? (
-            <section className="pt-20">
-              <p className="font-mono text-xs text-text-subtle">INGESTING</p>
-              <h1 className="mt-4 text-4xl font-medium leading-headline text-text-primary md:text-5xl">
-                Building the first brain.
-              </h1>
-              <div className="mt-10 border-y border-border py-5">
-                <div className="flex items-center justify-between text-sm">
-                  <span className="font-medium text-text-primary">
-                    {ingest?.lastJob?.status ?? 'queued'}
-                  </span>
-                  <span className="font-mono text-xs text-text-subtle">
-                    {ingest?.lastJob?.pagesTotal ?? 0} pages
-                  </span>
-                </div>
+            <div className="mt-12 flex flex-1 items-start md:mt-16 md:items-center">
+              <div className="w-full max-w-[460px]">
+                {isLoading || !current ? (
+                  <p className="font-mono text-xs text-text-subtle" aria-live="polite">
+                    {error && (error as { status?: number }).status !== 401
+                      ? 'Couldn\u2019t load your workspace. Refresh to try again.'
+                      : 'Loading\u2026'}
+                  </p>
+                ) : step === 'workspace' ? (
+                  <WorkspaceStep
+                    name={workspaceName}
+                    setName={setWorkspaceName}
+                    mutate={mutate}
+                  />
+                ) : (
+                  <InviteStep
+                    current={current}
+                    text={inviteText}
+                    setText={setInviteText}
+                    lines={inviteLines}
+                    mutate={mutate}
+                  />
+                )}
               </div>
-            </section>
+            </div>
+          </div>
+
+          {step === 'invite' ? (
+            <EditorialPane
+              quote={
+                <>
+                  A brain you can&rsquo;t share
+                  <br />
+                  is just <em>a notebook.</em>
+                </>
+              }
+              attribution="— OPEN42 OPERATING PRINCIPLE №2"
+              illustration={<EnvelopeStage lines={inviteLines} isValid={isValidEmail} />}
+            />
           ) : (
-            <section className="pt-20">
-              <p className="font-mono text-xs text-text-subtle">NOTION</p>
-              <h1 className="mt-4 text-4xl font-medium leading-headline text-text-primary md:text-5xl">
-                Connect the first source.
-              </h1>
-              <div className="mt-10 grid gap-3 sm:grid-cols-2">
-                <button
-                  type="button"
-                  className="flex min-h-36 items-start justify-between border border-border bg-white p-5 text-left hover:border-input"
-                  onClick={connectOAuth}
-                >
-                  <span>
-                    <span className="block text-sm font-medium text-text-primary">
-                      Connect Notion live
-                    </span>
-                    <span className="mt-2 block text-sm text-text-subtle">OAuth via Composio</span>
-                  </span>
-                  <PlugZap className="h-5 w-5 text-text-subtle" strokeWidth={1.5} />
-                </button>
-                <label className="flex min-h-36 cursor-pointer items-start justify-between border border-border bg-white p-5 text-left hover:border-input">
-                  <span>
-                    <span className="block text-sm font-medium text-text-primary">
-                      Upload Notion export
-                    </span>
-                    <span className="mt-2 block text-sm text-text-subtle">
-                      {uploadState === 'uploading'
-                        ? 'Uploading'
-                        : uploadState === 'queued'
-                          ? 'Queued'
-                          : 'Zip file'}
-                    </span>
-                  </span>
-                  <FileArchive className="h-5 w-5 text-text-subtle" strokeWidth={1.5} />
-                  <input type="file" accept=".zip" className="sr-only" onChange={uploadZip} />
-                </label>
-              </div>
-              {uploadState === 'error' ? (
-                <p className="mt-5 text-sm font-medium text-destructive">Upload failed</p>
-              ) : null}
-              <Button asChild variant="link" className="mt-8 px-0">
-                <Link href="/auth/chat">Skip</Link>
-              </Button>
-            </section>
+            <EditorialPane
+              quote={
+                <>
+                  Every brain has <em>a name.</em>
+                  <br />
+                  Pick one your team <em>recognizes.</em>
+                </>
+              }
+              attribution="— OPEN42 OPERATING PRINCIPLE №1"
+              illustration={<Nameplate value={workspaceName} />}
+            />
           )}
         </div>
       </main>
@@ -157,10 +138,425 @@ export default function OnboardPage() {
   );
 }
 
+function TopBar({
+  step,
+  workspaceName,
+}: {
+  step: OnboardStep | null;
+  workspaceName: string;
+}) {
+  return (
+    <div className="flex items-center justify-between">
+      <span className="flex items-center gap-2 font-mono text-[13px] font-medium text-text-primary">
+        <span className="h-[10px] w-[10px] rounded-full bg-accent" aria-hidden="true" />
+        open42
+        {workspaceName ? (
+          <span className="text-text-subtle">&middot; {workspaceName}</span>
+        ) : null}
+      </span>
+      <ProgressIndicator step={step} />
+    </div>
+  );
+}
+
+type DotState = 'active' | 'done' | 'pending';
+
+function ProgressIndicator({ step }: { step: OnboardStep | null }) {
+  const dots: [DotState, DotState, DotState] = useMemo(() => {
+    if (step === 'workspace') return ['active', 'pending', 'pending'];
+    if (step === 'invite') return ['done', 'active', 'pending'];
+    return ['pending', 'pending', 'pending'];
+  }, [step]);
+
+  const label = step === 'workspace' ? 'Workspace' : step === 'invite' ? 'Invite' : '';
+
+  return (
+    <div className="flex items-center gap-2.5 font-mono text-[11px] text-text-subtle">
+      {label ? <span className="font-medium text-text-primary">{label}</span> : null}
+      <div className="flex items-center gap-1.5" aria-label="onboarding progress">
+        <Dot state={dots[0]} />
+        <Connector state={lineState(dots[0], dots[1])} />
+        <Dot state={dots[1]} />
+        <Connector state={lineState(dots[1], dots[2])} />
+        <Dot state={dots[2]} />
+      </div>
+    </div>
+  );
+}
+
+function lineState(a: DotState, b: DotState): 'done' | 'pending' {
+  if (a === 'done' && (b === 'done' || b === 'active')) return 'done';
+  return 'pending';
+}
+
+function Dot({ state }: { state: DotState }) {
+  const cls =
+    state === 'active'
+      ? 'bg-accent'
+      : state === 'done'
+        ? 'bg-accent opacity-55'
+        : 'bg-[#e5e5e5]';
+  return (
+    <span
+      className={`h-[7px] w-[7px] rounded-full transition-colors duration-200 ${cls}`}
+      aria-hidden="true"
+    />
+  );
+}
+
+function Connector({ state }: { state: 'done' | 'pending' }) {
+  const cls = state === 'done' ? 'bg-accent opacity-55' : 'bg-[#e5e5e5]';
+  return <span className={`h-px w-[18px] ${cls}`} aria-hidden="true" />;
+}
+
+function PulsingNote({ children }: { children: ReactNode }) {
+  return (
+    <p className="mt-12 flex items-center gap-2 text-xs leading-[1.7] text-text-subtle">
+      <span
+        className="h-[7px] w-[7px] rounded-full bg-accent"
+        style={{ animation: 'pulse 1.6s ease-in-out infinite' }}
+        aria-hidden="true"
+      />
+      {children}
+    </p>
+  );
+}
+
+function WorkspaceStep({
+  name,
+  setName,
+  mutate,
+}: {
+  name: string;
+  setName: (value: string) => void;
+  mutate: () => Promise<unknown>;
+}) {
+  const router = useRouter();
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const submit = useCallback(
+    async (event: FormEvent<HTMLFormElement>) => {
+      event.preventDefault();
+      const trimmed = name.trim();
+      if (!trimmed || submitting) return;
+      setSubmitting(true);
+      setError(null);
+      try {
+        const response = await fetch('/api/workspaces/onboarding/workspace', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', ...csrfHeaders() },
+          body: JSON.stringify({ name: trimmed }),
+        });
+        if (!response.ok) {
+          const payload = await response.json().catch(() => ({}));
+          setError(payload.error ?? 'workspace_failed');
+          setSubmitting(false);
+          return;
+        }
+        await mutate();
+        await router.replace('/auth/onboard?step=invite');
+      } catch {
+        setError('network_error');
+        setSubmitting(false);
+      }
+    },
+    [name, submitting, mutate, router],
+  );
+
+  return (
+    <motion.div
+      key="workspace"
+      initial={{ opacity: 0, y: 4 }}
+      animate={{
+        opacity: 1,
+        y: 0,
+        transition: { duration: 0.2, ease: EASE_STANDARD },
+      }}
+    >
+      <h1 className="text-[38px] font-medium leading-[1.06] tracking-[-0.025em] text-text-primary">
+        Name{' '}
+        <em className="font-newsreader font-normal italic text-text-primary">
+          your brain.
+        </em>
+      </h1>
+      <p className="mt-3.5 max-w-[42ch] text-sm leading-body text-text-body">
+        A workspace is one company&rsquo;s brain. Pick something your team will recognize
+        &mdash; you can rename it later.
+      </p>
+      <form onSubmit={submit} className="mt-7" noValidate>
+        <label
+          htmlFor="workspace-name"
+          className="mb-2 block text-[13px] font-medium text-text-primary"
+        >
+          Workspace name
+        </label>
+        <input
+          id="workspace-name"
+          type="text"
+          autoComplete="off"
+          required
+          maxLength={80}
+          value={name}
+          onChange={(event) => setName(event.target.value)}
+          placeholder="Speedrun Labs"
+          className="h-11 w-full rounded-input border border-input bg-white px-3.5 text-[15px] text-text-primary outline-none transition-[border-color,box-shadow] duration-140 focus:border-accent focus:shadow-[0_0_0_4px_rgba(29,77,255,0.10)]"
+        />
+        <p className="mt-2 text-xs text-text-subtle">
+          80 characters max. Letters, numbers, spaces.
+        </p>
+        <button
+          type="submit"
+          disabled={submitting || !name.trim()}
+          className="mt-6 inline-flex h-11 items-center justify-center rounded-xl bg-accent px-6 text-[15px] font-medium tracking-[-0.01em] text-white transition-[filter,transform] duration-140 hover:brightness-110 active:translate-y-px disabled:cursor-not-allowed disabled:opacity-60"
+        >
+          {submitting ? 'Saving\u2026' : 'Continue \u2192'}
+        </button>
+        {error ? (
+          <p role="alert" className="mt-3 text-[13px] font-medium text-destructive">
+            {humanizeError(error)}
+          </p>
+        ) : null}
+      </form>
+      <PulsingNote>
+        We&rsquo;ll prepare your private brain runtime in the background.
+      </PulsingNote>
+    </motion.div>
+  );
+}
+
+function InviteStep({
+  current,
+  text,
+  setText,
+  lines,
+  mutate,
+}: {
+  current: OnboardCurrentPayload;
+  text: string;
+  setText: (value: string) => void;
+  lines: string[];
+  mutate: () => Promise<unknown>;
+}) {
+  const router = useRouter();
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [warning, setWarning] = useState<string | null>(null);
+
+  const validEmails = useMemo(() => lines.filter(isValidEmail), [lines]);
+
+  const removeChip = useCallback(
+    (target: string) => {
+      const lower = target.toLowerCase();
+      const next = text
+        .split(/(\r?\n|,|;)/)
+        .filter((tok) => tok.trim().toLowerCase() !== lower)
+        .join('');
+      setText(next.replace(/(\r?\n|,|;)+\s*$/g, '').replace(/^(\r?\n|,|;)+/g, ''));
+    },
+    [text, setText],
+  );
+
+  const submit = useCallback(async () => {
+    if (submitting) return;
+    setSubmitting(true);
+    setError(null);
+    setWarning(null);
+    try {
+      const response = await fetch('/api/workspaces/onboarding/invites', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...csrfHeaders() },
+        body: JSON.stringify({ emails: validEmails }),
+      });
+      if (!response.ok) {
+        const payload = await response.json().catch(() => ({}));
+        setError(payload.error ?? 'invites_failed');
+        setSubmitting(false);
+        return;
+      }
+      const payload = await response.json().catch(() => ({}));
+      await mutate();
+      const failed = payload.failed ?? 0;
+      const sent = payload.sent ?? 0;
+      if (failed > 0) {
+        setWarning(`couldn\u2019t email ${failed} of ${sent + failed}`);
+        await new Promise((resolve) => setTimeout(resolve, 600));
+      }
+      await router.push('/auth/home');
+    } catch {
+      setError('network_error');
+      setSubmitting(false);
+    }
+  }, [submitting, validEmails, mutate, router]);
+
+  const skip = useCallback(() => {
+    void router.push('/auth/home');
+  }, [router]);
+
+  const runtime = current.workspace?.runtime ?? 'pending';
+  const runtimeLabel =
+    runtime === 'ready'
+      ? 'Brain runtime: ready'
+      : runtime === 'failed'
+        ? 'Brain runtime: failed \u2014 we\u2019ll retry on the dashboard'
+        : 'Brain runtime: spinning up\u2026';
+
+  return (
+    <motion.div
+      key="invite"
+      initial={{ opacity: 0, y: 4 }}
+      animate={{
+        opacity: 1,
+        y: 0,
+        transition: { duration: 0.2, ease: EASE_STANDARD },
+      }}
+    >
+      <h1 className="text-[38px] font-medium leading-[1.06] tracking-[-0.025em] text-text-primary">
+        Who else{' '}
+        <em className="font-newsreader font-normal italic text-text-primary">
+          needs this brain?
+        </em>
+      </h1>
+      <p className="mt-3.5 max-w-[42ch] text-sm leading-body text-text-body">
+        Add teammates by email &mdash; comma or newline-separated. Watch the right side as
+        you type.
+      </p>
+      <form
+        onSubmit={(event) => {
+          event.preventDefault();
+          void submit();
+        }}
+        className="mt-7"
+        noValidate
+      >
+        <label
+          htmlFor="invite-emails"
+          className="mb-2 block text-[13px] font-medium text-text-primary"
+        >
+          Email addresses
+        </label>
+        <textarea
+          id="invite-emails"
+          rows={5}
+          value={text}
+          onChange={(event) => setText(event.target.value)}
+          placeholder="founder@speedrun.dev, ops@speedrun.dev"
+          className="w-full rounded-input border border-input bg-white px-3.5 py-3 text-[14px] leading-body text-text-primary outline-none transition-[border-color,box-shadow] duration-140 focus:border-accent focus:shadow-[0_0_0_4px_rgba(29,77,255,0.10)] font-sans resize-y"
+        />
+        {validEmails.length > 0 ? (
+          <div className="mt-3 flex flex-wrap gap-1.5">
+            {validEmails.map((email) => (
+              <span
+                key={email}
+                className="inline-flex items-center gap-1.5 rounded-full bg-accent-soft px-2.5 py-1 font-mono text-[11px] font-medium text-accent-deep"
+              >
+                {email}
+                <button
+                  type="button"
+                  onClick={() => removeChip(email)}
+                  aria-label={`remove ${email}`}
+                  className="flex h-3 w-3 items-center justify-center text-accent-deep hover:opacity-70"
+                >
+                  <svg
+                    viewBox="0 0 10 10"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth={1.5}
+                    width={10}
+                    height={10}
+                  >
+                    <path d="M2 2 L8 8 M8 2 L2 8" />
+                  </svg>
+                </button>
+              </span>
+            ))}
+          </div>
+        ) : null}
+        <p className="mt-2 text-xs text-text-subtle">
+          {lines.length === 0 ? (
+            <>Type one email per line. The right side reacts as you go.</>
+          ) : (
+            <>
+              <b className="font-medium text-text-primary">{validEmails.length}</b> valid
+              email{validEmails.length === 1 ? '' : 's'} of{' '}
+              <b className="font-medium text-text-primary">{lines.length}</b> &mdash;
+              they&rsquo;ll receive an invite from{' '}
+              <code className="font-mono text-[11px]">
+                open42 &lt;noreply@open42.app&gt;
+              </code>
+              .
+            </>
+          )}
+        </p>
+        <div className="mt-3 flex items-center gap-3 font-mono text-[10px] text-text-subtle">
+          <span className="inline-flex items-center gap-1.5">
+            <span
+              className="inline-block h-3 w-[18px] rounded-sm border-[1.4px] border-accent"
+              aria-hidden="true"
+            />
+            valid email
+          </span>
+          <span className="inline-flex items-center gap-1.5">
+            <span
+              className="inline-block h-3 w-[18px] rounded-sm border-[1.4px] border-dashed border-accent opacity-60"
+              aria-hidden="true"
+            />
+            still typing&hellip;
+          </span>
+        </div>
+        <div className="mt-6 flex items-center gap-2">
+          <button
+            type="submit"
+            disabled={submitting}
+            className="inline-flex h-11 items-center justify-center rounded-xl bg-accent px-5 text-[15px] font-medium tracking-[-0.01em] text-white transition-[filter,transform] duration-140 hover:brightness-110 active:translate-y-px disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            {submitting ? 'Sending\u2026' : 'Send invites \u00b7 Continue \u2192'}
+          </button>
+          <button
+            type="button"
+            onClick={skip}
+            disabled={submitting}
+            className="inline-flex h-11 items-center justify-center rounded-xl bg-transparent px-4 text-sm font-medium text-text-subtle transition-colors duration-140 hover:bg-[#fafafa] hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            Skip for now
+          </button>
+        </div>
+        {error ? (
+          <p role="alert" className="mt-3 text-[13px] font-medium text-destructive">
+            {humanizeError(error)}
+          </p>
+        ) : null}
+        {warning ? (
+          <p role="status" className="mt-3 text-[13px] font-medium text-text-subtle">
+            {warning}
+          </p>
+        ) : null}
+      </form>
+      <PulsingNote>{runtimeLabel}</PulsingNote>
+    </motion.div>
+  );
+}
+
 function csrfHeaders(): HeadersInit {
+  if (typeof document === 'undefined') return {};
   const csrf = document.cookie
     .split('; ')
     .find((part) => part.startsWith('open42_csrf='))
     ?.split('=')[1];
   return csrf ? { 'X-CSRF-Token': csrf } : {};
+}
+
+function humanizeError(code: string): string {
+  switch (code) {
+    case 'workspace_name_invalid':
+      return 'That workspace name isn\u2019t valid. 80 characters max.';
+    case 'invite_emails_invalid':
+      return 'One or more email addresses look off. Check the list and try again.';
+    case 'unauthorized':
+      return 'Your session expired. Sign in again.';
+    case 'network_error':
+      return 'Couldn\u2019t reach the server. Check your connection and try again.';
+    default:
+      return 'Something went wrong. Try again.';
+  }
 }
