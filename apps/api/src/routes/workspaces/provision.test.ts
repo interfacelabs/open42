@@ -33,16 +33,16 @@ describe('workspace provision route', () => {
     const app = makeApp();
 
     const res = await request(app)
-      .post('/workspaces/provision')
+      .post('/workspaces/onboarding/workspace')
       .set('Cookie', 'open42_session=session-missing')
-      .send({});
+      .send({ name: 'Speedrun Labs' });
 
     expect(res.status).toBe(401);
     expect(res.body).toEqual({ error: 'unauthorized' });
     expect(mocks.provisionTenant).not.toHaveBeenCalled();
   });
 
-  it('captures workspace name, invites, and plan during onboarding', async () => {
+  it('captures workspace name and invites during onboarding', async () => {
     mocks.validateSession.mockResolvedValue({ userId: 'user-1' });
     mocks.generateInviteLink.mockResolvedValue({
       actionLink: 'https://supabase.example/verify?token=abc',
@@ -62,39 +62,33 @@ describe('workspace provision route', () => {
       .set('Cookie', 'open42_session=session-1')
       .send({ emails: ['founder@example.com', 'Founder@example.com '] })
       .expect(200);
-    await request(app)
-      .post('/workspaces/onboarding/plan')
-      .set('Cookie', 'open42_session=session-1')
-      .send({ plan: 'team' })
-      .expect(200);
 
     expect(repo.saveWorkspaceName).toHaveBeenCalledWith('user-1', 'Speedrun Labs');
     expect(repo.upsertInvites).toHaveBeenCalledWith('user-1', ['founder@example.com']);
-    expect(repo.savePlan).toHaveBeenCalledWith('user-1', 'team');
-    expect(mocks.provisionTenant).not.toHaveBeenCalled();
   });
 
-  it('requires a selected plan before tenant provisioning starts', async () => {
+  it('returns 404 for the deleted POST /workspaces/onboarding/plan endpoint', async () => {
     mocks.validateSession.mockResolvedValue({ userId: 'user-1' });
-    const repo = makeRepo({
-      workspace: {
-        id: 'workspace-1',
-        name: 'Speedrun Labs',
-        plan: null,
-        status: 'provisioning',
-        gbrainReady: false,
-        createdAt: new Date('2026-05-07T10:00:00Z'),
-      },
-    });
-    const app = makeApp(repo);
+    const app = makeApp();
+
+    const res = await request(app)
+      .post('/workspaces/onboarding/plan')
+      .set('Cookie', 'open42_session=session-1')
+      .send({ plan: 'team' });
+
+    expect(res.status).toBe(404);
+  });
+
+  it('returns 404 for the deleted POST /workspaces/provision endpoint', async () => {
+    mocks.validateSession.mockResolvedValue({ userId: 'user-1' });
+    const app = makeApp();
 
     const res = await request(app)
       .post('/workspaces/provision')
       .set('Cookie', 'open42_session=session-1')
       .send({});
 
-    expect(res.status).toBe(409);
-    expect(res.body).toEqual({ error: 'plan_required' });
+    expect(res.status).toBe(404);
     expect(mocks.provisionTenant).not.toHaveBeenCalled();
   });
 
@@ -196,34 +190,6 @@ describe('workspace provision route', () => {
       expect(mocks.provisionTenant).not.toHaveBeenCalled();
       expect(repo.saveWorkspaceName).toHaveBeenCalledWith('user-1', 'New Name');
     });
-  });
-
-  it('provisions a workspace only when onboarding explicitly requests it', async () => {
-    mocks.validateSession.mockResolvedValue({ userId: 'user-1' });
-    mocks.provisionTenant.mockResolvedValue({
-      workspaceId: 'workspace-1',
-      flyMachineId: 'machine-1',
-      flyPrivateIp: '127.0.0.1:18080',
-      gbrainBaseUrl: 'http://127.0.0.1:18080',
-    });
-    const app = makeApp(makeRepo());
-
-    const res = await request(app)
-      .post('/workspaces/provision')
-      .set('Cookie', 'open42_session=session-1')
-      .send({});
-
-    expect(res.status).toBe(200);
-    expect(res.body).toEqual({
-      ok: true,
-      workspace: {
-        workspaceId: 'workspace-1',
-        flyMachineId: 'machine-1',
-        flyPrivateIp: '127.0.0.1:18080',
-        gbrainBaseUrl: 'http://127.0.0.1:18080',
-      },
-    });
-    expect(mocks.provisionTenant).toHaveBeenCalledWith({ ownerUserId: 'user-1' });
   });
 
   describe('POST /workspaces/onboarding/invites', () => {
@@ -383,6 +349,5 @@ function makeRepo(currentOverride: Partial<MockCurrent> = {}) {
       inviterEmail: current.user.email,
       invites: emails.map((email, idx) => ({ id: `invite-${idx}`, email })),
     })),
-    savePlan: vi.fn(async () => current),
   };
 }

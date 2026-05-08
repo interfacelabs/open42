@@ -10,7 +10,6 @@ import { provisionTenant as defaultProvisionTenant } from '../../tenants/provisi
 
 const WORKSPACE_NAME_MAX = 80;
 const INVITE_LIMIT = 10;
-const PLANS = new Set(['starter', 'team', 'business']);
 
 type WorkspacePlan = 'starter' | 'team' | 'business';
 
@@ -50,7 +49,6 @@ interface WorkspaceLifecycleRepo {
     name: string,
   ): Promise<{ payload: CurrentPayload; wasCreated: boolean }>;
   upsertInvites(userId: string, emails: string[]): Promise<UpsertInvitesResult>;
-  savePlan(userId: string, plan: WorkspacePlan): Promise<CurrentPayload>;
 }
 
 export function buildWorkspaceProvisionRouter(deps: {
@@ -158,52 +156,6 @@ export function buildWorkspaceProvisionRouter(deps: {
     }
   });
 
-  router.post('/onboarding/plan', async (req, res, next) => {
-    try {
-      const session = await requireSession(req, res);
-      if (!session) return;
-      const plan = normalizePlan(req.body?.plan);
-      if (!plan) {
-        res.status(400).json({ error: 'workspace_plan_invalid' });
-        return;
-      }
-      res.json(await repo.savePlan(session.userId, plan));
-    } catch (err) {
-      next(err);
-    }
-  });
-
-  router.post('/provision', async (req, res, next) => {
-    try {
-      const session = await requireSession(req, res);
-      if (!session) return;
-
-      const current = await repo.current(session.userId);
-      if (!current?.workspace) {
-        res.status(409).json({ error: 'workspace_required' });
-        return;
-      }
-      if (!current.workspace.plan) {
-        res.status(409).json({ error: 'plan_required' });
-        return;
-      }
-      if (current.workspace.gbrainReady) {
-        res.json({ ok: true, workspace: current.workspace });
-        return;
-      }
-
-      try {
-        const workspace = await provisionTenant({ ownerUserId: session.userId });
-        res.json({ ok: true, workspace });
-      } catch (err) {
-        console.error('tenant provisioning failed', err);
-        res.status(503).json({ error: 'workspace_provision_failed' });
-      }
-    } catch (err) {
-      next(err);
-    }
-  });
-
   return router;
 }
 
@@ -241,10 +193,6 @@ function normalizeInviteEmails(value: unknown): string[] | null {
   if (emails.length > INVITE_LIMIT) return null;
   if (emails.some((email) => !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email))) return null;
   return emails;
-}
-
-function normalizePlan(value: unknown): WorkspacePlan | null {
-  return typeof value === 'string' && PLANS.has(value) ? (value as WorkspacePlan) : null;
 }
 
 function createDrizzleWorkspaceLifecycleRepo(): WorkspaceLifecycleRepo {
@@ -337,17 +285,6 @@ function createDrizzleWorkspaceLifecycleRepo(): WorkspaceLifecycleRepo {
         });
 
       return { workspaceId, workspaceName, inviterEmail, invites: inserted };
-    },
-    async savePlan(userId, plan) {
-      const current = await currentPayload(userId);
-      if (!current?.workspace) throw new Error('workspace_required');
-      await db
-        .update(schema.workspaces)
-        .set({ plan })
-        .where(and(eq(schema.workspaces.id, current.workspace.id), eq(schema.workspaces.ownerUserId, userId)));
-      const next = await currentPayload(userId);
-      if (!next) throw new Error('user_not_found');
-      return next;
     },
   };
 }
