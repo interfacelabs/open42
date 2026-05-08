@@ -1,7 +1,7 @@
 import express from 'express';
 import { eq } from 'drizzle-orm';
 import request from 'supertest';
-import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import '../env.js';
 
@@ -326,6 +326,81 @@ describeDb('auth routes', () => {
         .where(eq(dbMod.schema.users.email, inviteeEmail))
         .limit(1);
       if (invitee) userIds.push(invitee.id);
+    });
+  });
+
+  describe('POST /auth/signin rate limiting', () => {
+    beforeEach(() => {
+      mod.__resetSigninAttempts();
+      mocks.sendSupabaseMagicLink.mockResolvedValue({
+        email: 'a@x.com',
+        expiresAt: new Date(Date.now() + 15 * 60 * 1000),
+      });
+    });
+
+    afterEach(() => {
+      vi.useRealTimers();
+      mod.__resetSigninAttempts();
+    });
+
+    it('rejects second call within 30s with 429', async () => {
+      vi.useFakeTimers({ now: new Date('2026-05-08T10:00:00Z') });
+      const app = buildApp();
+
+      const r1 = await request(app)
+        .post('/auth/signin')
+        .set('User-Agent', 'rate-limit-test')
+        .send({ email: 'a@x.com' });
+      expect(r1.status).toBe(200);
+
+      vi.advanceTimersByTime(15_000);
+
+      const r2 = await request(app)
+        .post('/auth/signin')
+        .set('User-Agent', 'rate-limit-test')
+        .send({ email: 'a@x.com' });
+      expect(r2.status).toBe(429);
+      expect(r2.headers['retry-after']).toBeDefined();
+      expect(r2.body.error).toBe('signin_rate_limited');
+    });
+
+    it('allows second call after 30s', async () => {
+      vi.useFakeTimers({ now: new Date('2026-05-08T10:00:00Z') });
+      const app = buildApp();
+
+      const r1 = await request(app)
+        .post('/auth/signin')
+        .set('User-Agent', 'rate-limit-test')
+        .send({ email: 'a@x.com' });
+      expect(r1.status).toBe(200);
+
+      vi.advanceTimersByTime(31_000);
+
+      const r2 = await request(app)
+        .post('/auth/signin')
+        .set('User-Agent', 'rate-limit-test')
+        .send({ email: 'a@x.com' });
+      expect(r2.status).toBe(200);
+    });
+
+    it('still enforces 5/15min ceiling', async () => {
+      vi.useFakeTimers({ now: new Date('2026-05-08T10:00:00Z') });
+      const app = buildApp();
+
+      for (let i = 0; i < 5; i++) {
+        const r = await request(app)
+          .post('/auth/signin')
+          .set('User-Agent', 'rate-limit-test')
+          .send({ email: 'a@x.com' });
+        expect(r.status).toBe(200);
+        vi.advanceTimersByTime(31_000);
+      }
+
+      const r = await request(app)
+        .post('/auth/signin')
+        .set('User-Agent', 'rate-limit-test')
+        .send({ email: 'a@x.com' });
+      expect(r.status).toBe(429);
     });
   });
 });

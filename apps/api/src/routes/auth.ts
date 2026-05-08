@@ -14,7 +14,15 @@ export const authRouter = Router();
 
 const SIGNIN_WINDOW_MS = 15 * 60 * 1000;
 const SIGNIN_LIMIT = 5;
-const signinAttempts = new Map<string, { count: number; resetAt: number }>();
+const SIGNIN_MIN_GAP_MS = 30 * 1000;
+const signinAttempts = new Map<
+  string,
+  { count: number; resetAt: number; lastAttemptAt: number }
+>();
+
+export function __resetSigninAttempts(): void {
+  signinAttempts.clear();
+}
 
 authRouter.post('/signin', async (req, res, next) => {
   try {
@@ -41,7 +49,9 @@ authRouter.post('/signin', async (req, res, next) => {
       return;
     }
     if (err instanceof Error && err.message === 'signin_rate_limited') {
-      res.status(429).json({ error: 'signin_rate_limited' });
+      const retryAfter = (err as Error & { retryAfter?: number }).retryAfter ?? 30;
+      res.setHeader('Retry-After', String(retryAfter));
+      res.status(429).json({ error: 'signin_rate_limited', retryAfter });
       return;
     }
     if (err instanceof Error && err.message.includes('SUPABASE_')) {
@@ -235,21 +245,26 @@ function assertSigninAllowed(email: string, env = process.env): void {
   throw new Error('signin_not_allowed');
 }
 
-function assertSigninRateLimit(ip: string | undefined, email: string, now = Date.now()): void {
-  hitSigninBucket(`ip:${ip ?? 'unknown'}`, now);
-  hitSigninBucket(`email:${normalizeSigninEmail(email)}`, now);
-}
-
-function hitSigninBucket(key: string, now: number): void {
-  const current = signinAttempts.get(key);
-  if (!current || current.resetAt <= now) {
-    signinAttempts.set(key, { count: 1, resetAt: now + SIGNIN_WINDOW_MS });
-    return;
+function assertSigninRateLimit(ip: string | undefined, email: string): void {
+  const key = `${normalizeSigninEmail(email)}:${ip ?? 'unknown'}`;
+  const now = Date.now();
+  const entry = signinAttempts.get(key);
+  if (entry && now < entry.resetAt) {
+    if (now - entry.lastAttemptAt < SIGNIN_MIN_GAP_MS) {
+      const err = new Error('signin_rate_limited') as Error & { retryAfter?: number };
+      err.retryAfter = Math.ceil((SIGNIN_MIN_GAP_MS - (now - entry.lastAttemptAt)) / 1000);
+      throw err;
+    }
+    if (entry.count >= SIGNIN_LIMIT) {
+      const err = new Error('signin_rate_limited') as Error & { retryAfter?: number };
+      err.retryAfter = Math.ceil((entry.resetAt - now) / 1000);
+      throw err;
+    }
+    entry.count += 1;
+    entry.lastAttemptAt = now;
+  } else {
+    signinAttempts.set(key, { count: 1, resetAt: now + SIGNIN_WINDOW_MS, lastAttemptAt: now });
   }
-  if (current.count >= SIGNIN_LIMIT) {
-    throw new Error('signin_rate_limited');
-  }
-  signinAttempts.set(key, { ...current, count: current.count + 1 });
 }
 
 function normalizeSigninEmail(email: string): string {
