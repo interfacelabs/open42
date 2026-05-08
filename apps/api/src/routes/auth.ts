@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import { eq } from 'drizzle-orm';
 
 import { createSession, invalidateSession } from '../auth/sessions.js';
 import {
@@ -8,7 +9,6 @@ import {
 } from '../auth/supabase.js';
 import { db, schema } from '../db/client.js';
 import { clearSessionCookies, setSessionCookies } from '../middleware/csrf.js';
-import { provisionTenant } from '../tenants/provision.js';
 
 export const authRouter = Router();
 
@@ -66,21 +66,23 @@ authRouter.post('/verify', async (req, res, next) => {
       token: optionalString(req.body?.token),
     });
     const user = await upsertUser(identity);
-    const provisioned = await ensureWorkspace(user.id, user.currentWorkspaceId);
-    if (!provisioned) {
-      res.status(503).json({ error: 'workspace_provision_failed' });
-      return;
-    }
 
     const session = await createSession(user.id, {
       userAgent: req.header('user-agent'),
       ip: req.ip,
     });
     setSessionCookies(res, session);
-    res.json({ ok: true, redirectTo: '/auth/home' });
+    res.json({
+      ok: true,
+      redirectTo: '/auth/onboard',
+    });
   } catch (err) {
     if (err instanceof Error && err.message.startsWith('supabase_')) {
       res.status(400).json({ error: err.message });
+      return;
+    }
+    if (err instanceof Error && err.message === 'email_already_linked') {
+      res.status(409).json({ error: 'email_already_linked' });
       return;
     }
     next(err);
@@ -103,31 +105,61 @@ authRouter.post('/signout', async (req, res, next) => {
 });
 
 async function upsertUser(identity: SupabaseIdentity) {
-  const [user] = await db
-    .insert(schema.users)
-    .values({
-      email: identity.email,
-      supabaseUserId: identity.supabaseUserId,
-    })
-    .onConflictDoUpdate({
-      target: schema.users.supabaseUserId,
-      set: { email: identity.email },
-    })
-    .returning();
-  if (!user) throw new Error('user_upsert_failed');
-  return user;
-}
+  return db.transaction(async (tx) => {
+    const [bySupabaseId] = await tx
+      .select()
+      .from(schema.users)
+      .where(eq(schema.users.supabaseUserId, identity.supabaseUserId))
+      .limit(1);
 
-async function ensureWorkspace(userId: string, currentWorkspaceId: string | null): Promise<boolean> {
-  if (currentWorkspaceId) return true;
+    if (bySupabaseId) {
+      if (bySupabaseId.email === identity.email) return bySupabaseId;
+      const [emailOwner] = await tx
+        .select()
+        .from(schema.users)
+        .where(eq(schema.users.email, identity.email))
+        .limit(1);
+      if (emailOwner && emailOwner.id !== bySupabaseId.id) {
+        throw new Error('email_already_linked');
+      }
+      const [updated] = await tx
+        .update(schema.users)
+        .set({ email: identity.email })
+        .where(eq(schema.users.id, bySupabaseId.id))
+        .returning();
+      if (!updated) throw new Error('user_upsert_failed');
+      return updated;
+    }
 
-  try {
-    await provisionTenant({ ownerUserId: userId });
-    return true;
-  } catch (err) {
-    console.error('tenant provisioning failed', err);
-    return false;
-  }
+    const [byEmail] = await tx
+      .select()
+      .from(schema.users)
+      .where(eq(schema.users.email, identity.email))
+      .limit(1);
+
+    if (byEmail) {
+      if (byEmail.supabaseUserId && byEmail.supabaseUserId !== identity.supabaseUserId) {
+        throw new Error('email_already_linked');
+      }
+      const [updated] = await tx
+        .update(schema.users)
+        .set({ supabaseUserId: identity.supabaseUserId })
+        .where(eq(schema.users.id, byEmail.id))
+        .returning();
+      if (!updated) throw new Error('user_upsert_failed');
+      return updated;
+    }
+
+    const [user] = await tx
+      .insert(schema.users)
+      .values({
+        email: identity.email,
+        supabaseUserId: identity.supabaseUserId,
+      })
+      .returning();
+    if (!user) throw new Error('user_upsert_failed');
+    return user;
+  });
 }
 
 function optionalString(value: unknown): string | undefined {

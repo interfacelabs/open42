@@ -16,7 +16,8 @@ describe('state HMAC', () => {
 
   it('rejects a tampered mac', () => {
     const state = signState('secret', payload);
-    expect(verifyState('secret', `${state.slice(0, -1)}0`)).toBeNull();
+    const replacement = state.endsWith('0') ? '1' : '0';
+    expect(verifyState('secret', `${state.slice(0, -1)}${replacement}`)).toBeNull();
   });
 
   it('rejects a tampered payload', () => {

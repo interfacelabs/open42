@@ -18,7 +18,7 @@ describe('sessions', () => {
     expect(session.ipFirstOctet).toBe('203');
   });
 
-  it('validates fingerprint and slides expiry', async () => {
+  it('validates user agent and slides expiry', async () => {
     const repo = memoryRepo();
     const session = await createSession(
       'user-1',
@@ -67,7 +67,7 @@ describe('sessions', () => {
     ).resolves.toBeNull();
   });
 
-  it('rejects missing, expired, and IP-mismatched sessions', async () => {
+  it('rejects missing, expired, and user-agent-mismatched sessions', async () => {
     const repo = memoryRepo();
     const session = await createSession(
       'user-1',
@@ -91,7 +91,7 @@ describe('sessions', () => {
         repo,
         new Date('2026-05-07T10:00:00Z'),
       ),
-    ).resolves.toBeNull();
+    ).resolves.toMatchObject({ id: session.id });
     await expect(
       validateSession(
         session.id,

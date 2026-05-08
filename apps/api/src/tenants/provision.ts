@@ -440,21 +440,44 @@ function createDrizzleTenantRepo(): TenantProvisionRepo {
     async createWorkspace(input) {
       const { db: defaultDb, schema } = await import('../db/client.js');
       return defaultDb.transaction(async (tx) => {
-        const [workspace] = await tx
-          .insert(schema.workspaces)
-          .values({
-            ownerUserId: input.ownerUserId,
-            flyMachineId: input.flyMachineId,
-            flyPrivateIp: input.flyPrivateIp,
-            gbrainBaseUrl: input.gbrainBaseUrl,
-            gbrainOauthClientId: input.gbrainOauthClientId,
-            gbrainOauthClientSecretCiphertext: input.gbrainOauthClientSecretCiphertext,
-            gbrainVersion: input.gbrainVersion,
-            status: 'ready',
+        const [user] = await tx
+          .select({
+            currentWorkspaceId: schema.users.currentWorkspaceId,
           })
-          .returning({ id: schema.workspaces.id });
+          .from(schema.users)
+          .where(eq(schema.users.id, input.ownerUserId))
+          .limit(1);
 
-        if (!workspace) {
+        const values = {
+          flyMachineId: input.flyMachineId,
+          flyPrivateIp: input.flyPrivateIp,
+          gbrainBaseUrl: input.gbrainBaseUrl,
+          gbrainOauthClientId: input.gbrainOauthClientId,
+          gbrainOauthClientSecretCiphertext: input.gbrainOauthClientSecretCiphertext,
+          gbrainVersion: input.gbrainVersion,
+          status: 'ready' as const,
+        };
+
+        const [workspace] = user?.currentWorkspaceId
+          ? await tx
+              .update(schema.workspaces)
+              .set(values)
+              .where(
+                and(
+                  eq(schema.workspaces.id, user.currentWorkspaceId),
+                  eq(schema.workspaces.ownerUserId, input.ownerUserId),
+                ),
+              )
+              .returning({ id: schema.workspaces.id })
+          : await tx
+              .insert(schema.workspaces)
+              .values({
+                ownerUserId: input.ownerUserId,
+                ...values,
+              })
+              .returning({ id: schema.workspaces.id });
+
+        if (!workspace?.id) {
           throw new Error('workspace insert returned no row');
         }
 
@@ -463,11 +486,14 @@ function createDrizzleTenantRepo(): TenantProvisionRepo {
           .set({ currentWorkspaceId: workspace.id })
           .where(eq(schema.users.id, input.ownerUserId));
 
-        await tx.insert(schema.memberships).values({
-          userId: input.ownerUserId,
-          workspaceId: workspace.id,
-          role: 'owner',
-        });
+        await tx
+          .insert(schema.memberships)
+          .values({
+            userId: input.ownerUserId,
+            workspaceId: workspace.id,
+            role: 'owner',
+          })
+          .onConflictDoNothing();
 
         return workspace;
       });
@@ -487,8 +513,8 @@ function formatGbrainBaseUrl(privateIp: string): string {
 function selectProvisioner(env: TenantProvisionEnv): 'fly' | 'local-docker' {
   if (env.TENANT_PROVISIONER === 'fly') return 'fly';
   if (env.TENANT_PROVISIONER === 'local-docker') return 'local-docker';
-  if (env.FLY_API_TOKEN && env.FLY_API_TOKEN !== 'fo_...' && env.FLY_TENANTS_APP_NAME) {
-    return 'fly';
+  if (env.TENANT_PROVISIONER) {
+    throw new Error('TENANT_PROVISIONER must be "fly" or "local-docker"');
   }
   return 'local-docker';
 }

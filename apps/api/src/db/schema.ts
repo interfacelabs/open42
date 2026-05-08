@@ -43,6 +43,12 @@ export const workspaceStatusEnum = pgEnum('workspace_status', [
   'failed',
   'deleted',
 ]);
+export const workspacePlanEnum = pgEnum('workspace_plan', ['starter', 'team', 'business']);
+export const workspaceInviteStatusEnum = pgEnum('workspace_invite_status', [
+  'pending',
+  'accepted',
+  'revoked',
+]);
 export const skillTypeEnum = pgEnum('skill_type', ['refund-policy']);
 export const ingestStatusEnum = pgEnum('ingest_status', [
   'pending',
@@ -84,6 +90,8 @@ export const workspaces = pgTable(
   'workspaces',
   {
     id: uuid('id').primaryKey().defaultRandom(),
+    name: text('name').notNull().default('Untitled workspace'),
+    plan: workspacePlanEnum('plan'),
     ownerUserId: uuid('owner_user_id')
       .notNull()
       .references(() => users.id, { onDelete: 'cascade' }),
@@ -130,6 +138,33 @@ export const memberships = pgTable(
   (t) => ({
     pk: primaryKey({ columns: [t.userId, t.workspaceId] }),
     workspaceIdx: index('memberships_workspace_idx').on(t.workspaceId),
+  }),
+);
+
+// =====================================================================
+// workspace_invites (captured during Slack-shaped onboarding)
+// =====================================================================
+
+export const workspaceInvites = pgTable(
+  'workspace_invites',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    workspaceId: uuid('workspace_id')
+      .notNull()
+      .references(() => workspaces.id, { onDelete: 'cascade' }),
+    email: text('email').notNull(),
+    invitedByUserId: uuid('invited_by_user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    role: membershipRoleEnum('role').notNull().default('member'),
+    status: workspaceInviteStatusEnum('status').notNull().default('pending'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    workspaceIdx: index('workspace_invites_workspace_idx').on(t.workspaceId),
+    pendingEmailUniq: uniqueIndex('workspace_invites_pending_email_uniq')
+      .on(t.workspaceId, t.email)
+      .where(sql`${t.status} = 'pending'`),
   }),
 );
 
@@ -237,7 +272,7 @@ export const connections = pgTable(
     // disconnected rows do not count.
     oneNotionPerWorkspace: uniqueIndex('connections_one_notion_per_workspace')
       .on(t.workspaceId)
-      .where(sql`${t.kind}::text LIKE 'notion-%' AND ${t.status} <> 'disconnected'`),
+      .where(sql`${t.kind} IN ('notion-composio', 'notion-zip') AND ${t.status} <> 'disconnected'`),
     composioAccountUniq: uniqueIndex('connections_composio_account_uniq')
       .on(t.composioConnectedAccountId)
       .where(sql`${t.composioConnectedAccountId} IS NOT NULL AND ${t.status} <> 'disconnected'`),
@@ -277,6 +312,7 @@ export type NewUser = typeof users.$inferInsert;
 export type Workspace = typeof workspaces.$inferSelect;
 export type NewWorkspace = typeof workspaces.$inferInsert;
 export type Membership = typeof memberships.$inferSelect;
+export type WorkspaceInvite = typeof workspaceInvites.$inferSelect;
 export type Session = typeof sessions.$inferSelect;
 export type SkillExport = typeof skillExports.$inferSelect;
 export type IngestJob = typeof ingestJobs.$inferSelect;

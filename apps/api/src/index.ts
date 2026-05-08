@@ -27,6 +27,7 @@ import { buildNotionZipRouter } from './routes/connections/notion-zip.js';
 import { buildComposioRouter } from './routes/connections/composio.js';
 import { buildConnectionsRouter } from './routes/connections/index.js';
 import { buildIngestRouter } from './routes/workspaces/ingest.js';
+import { buildWorkspaceProvisionRouter } from './routes/workspaces/provision.js';
 import { buildHealthzRouter } from './routes/healthz.js';
 import { refundPolicySkillRouter } from './routes/skills/refund-policy.js';
 import { runWorkspaceCycle, type OrchestratorDeps, type RunCycleOptions } from './ingest/orchestrator.js';
@@ -107,6 +108,7 @@ app.use('/auth', authRouter);
 app.use('/connections', buildConnectionsRouter(connectionRouteDeps));
 app.use('/connections', buildComposioRouter({ kick: kickWorkspaceIngest }));
 app.use('/connections/notion-zip', buildNotionZipRouter({ kick: kickWorkspaceIngest }));
+app.use('/workspaces', buildWorkspaceProvisionRouter());
 app.use(
   '/workspaces',
   buildIngestRouter({

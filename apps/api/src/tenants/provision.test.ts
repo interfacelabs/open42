@@ -47,6 +47,7 @@ describe('provisionTenant', () => {
         repo,
         fetch: fetchMock as typeof fetch,
         env: {
+          TENANT_PROVISIONER: 'fly',
           FLY_API_TOKEN: 'fly-token',
           FLY_TENANTS_APP_NAME: 'open42-tenants',
           GBRAIN_VERSION: '0.27.1',
@@ -149,6 +150,56 @@ describe('provisionTenant', () => {
     expect(decryptSecret(stored[0].gbrainOauthClientSecretCiphertext)).toBe('secret-local');
   });
 
+  it('defaults to local Docker in development even when Fly credentials are present', async () => {
+    process.env.OPEN42_KEK = '4'.repeat(64);
+    const stored: any[] = [];
+    const repo: TenantProvisionRepo = {
+      async createWorkspace(input) {
+        stored.push(input);
+        return { id: 'workspace-local-with-fly-env' };
+      },
+    };
+    const fetchMock = vi.fn(async (url: string | URL | Request) => {
+      const href = String(url);
+      if (href === 'http://127.0.0.1:19002/health') {
+        return json({ status: 'ok', version: '0.27.1' });
+      }
+      if (href === 'http://127.0.0.1:19002/register') {
+        return json({ client_id: 'client-local-fly-env', client_secret: 'secret-local-fly-env' });
+      }
+      if (href === 'http://127.0.0.1:19002/token') {
+        return json({ access_token: 'token-local-fly-env', expires_in: 3600 });
+      }
+      throw new Error(`unexpected URL ${href}`);
+    });
+
+    await expect(
+      provisionTenant({
+        ownerUserId: 'user-flyenv1',
+        repo,
+        fetch: fetchMock as typeof fetch,
+        allocatePort: async () => 19002,
+        sleep: async () => undefined,
+        runCommand: async () => ({ stdout: '', stderr: '' }),
+        env: {
+          FLY_API_TOKEN: 'fly-token',
+          FLY_TENANTS_APP_NAME: 'open42-tenants',
+          GBRAIN_VERSION: '0.27.1',
+        },
+      }),
+    ).resolves.toMatchObject({
+      workspaceId: 'workspace-local-with-fly-env',
+      flyMachineId: 'open42-gbrain-user-fly',
+      flyPrivateIp: '127.0.0.1:19002',
+    });
+
+    expect(stored[0]).toMatchObject({
+      flyMachineId: 'open42-gbrain-user-fly',
+      gbrainBaseUrl: 'http://127.0.0.1:19002',
+      gbrainOauthClientId: 'client-local-fly-env',
+    });
+  });
+
   it('returns an existing workspace without provisioning another tenant', async () => {
     const repo: TenantProvisionRepo = {
       async findWorkspaceForOwner(ownerUserId) {
@@ -172,6 +223,7 @@ describe('provisionTenant', () => {
         repo,
         fetch: fetchMock as typeof fetch,
         env: {
+          TENANT_PROVISIONER: 'fly',
           FLY_API_TOKEN: 'fly-token',
           FLY_TENANTS_APP_NAME: 'open42-tenants',
           GBRAIN_VERSION: '0.27.1',
