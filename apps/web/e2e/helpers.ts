@@ -89,7 +89,7 @@ export async function signInE2E(page: Page, email: string): Promise<void> {
 
   const code = await readTestOtp(page, email);
   for (let i = 0; i < 6; i++) {
-    await page.getByLabel(new RegExp(`digit ${i + 1} of 6`, 'i')).fill(code[i]);
+    await page.getByLabel(new RegExp(`digit ${i + 1} of 6`, 'i')).fill(code.charAt(i));
   }
 
   // 6th digit auto-submits → land on /auth/onboard or /auth/home depending on state.
