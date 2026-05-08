@@ -32,6 +32,7 @@ function apiUrl() {
 function proxyHeaders(req: NextApiRequest): HeadersInit {
   return {
     'Content-Type': 'application/json',
+    'User-Agent': String(req.headers['user-agent'] ?? ''),
     Origin: process.env.WEB_PUBLIC_URL ?? `http://${req.headers.host ?? 'localhost:3000'}`,
     'Sec-Fetch-Site': 'same-origin',
   };
