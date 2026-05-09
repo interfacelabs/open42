@@ -23,9 +23,16 @@ const REQUEST_PASSTHROUGH_HEADERS = ['content-type', 'accept', 'user-agent'];
 type Fetch = typeof fetch;
 type VerifyProxyToken = typeof defaultVerifyProxyToken;
 
+export type ProxyMethod = 'GET' | 'POST';
+
+export interface ProviderProxyRoute {
+  method: ProxyMethod;
+  path: string;
+}
+
 export interface ProviderProxyConfig {
   name: 'openai' | 'anthropic';
-  allowedPaths: string[];
+  allowedRoutes: ProviderProxyRoute[];
   apiKeyEnvName: 'OPENAI_API_KEY' | 'ANTHROPIC_API_KEY';
   upstreamUrl: (path: string, query: string) => string;
   upstreamAuthHeaders: (apiKey: string) => Record<string, string>;
@@ -125,11 +132,31 @@ export function buildProviderProxy(
     stream.pipe(res);
   };
 
-  for (const path of config.allowedPaths) {
-    router.all(path, handler);
+  // Bind allowlisted (method, path) pairs explicitly. We deliberately do NOT
+  // use router.all() — that would let DELETE/PUT/etc. through on a path that
+  // is only meant for POST or GET. Disallowed methods on an allowlisted path
+  // fall through to the catch-all 405 below; unknown paths fall to 404.
+  const allowedPaths = new Set<string>();
+  for (const route of config.allowedRoutes) {
+    allowedPaths.add(route.path);
+    if (route.method === 'GET') router.get(route.path, handler);
+    else if (route.method === 'POST') router.post(route.path, handler);
   }
 
-  router.use((_req, res) => {
+  // Method on an allowlisted path but not the allowed verb → 405. Path not
+  // allowlisted at all → 404.
+  router.use((req, res) => {
+    if (allowedPaths.has(req.path)) {
+      res.setHeader(
+        'Allow',
+        config.allowedRoutes
+          .filter((r) => r.path === req.path)
+          .map((r) => r.method)
+          .join(', '),
+      );
+      res.status(405).json({ error: 'method_not_allowed' });
+      return;
+    }
     res.status(404).json({ error: 'not_found' });
   });
 

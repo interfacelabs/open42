@@ -1,12 +1,20 @@
-import { buildProviderProxy, type ProviderProxyDeps } from './shared.js';
+import {
+  buildProviderProxy,
+  type ProviderProxyDeps,
+  type ProviderProxyRoute,
+} from './shared.js';
 
-const OPENAI_ALLOWED_PATHS = ['/v1/embeddings', '/v1/chat/completions', '/v1/models'];
+const OPENAI_ALLOWED_ROUTES: ProviderProxyRoute[] = [
+  { method: 'POST', path: '/v1/embeddings' },
+  { method: 'POST', path: '/v1/chat/completions' },
+  { method: 'GET', path: '/v1/models' },
+];
 
 export function buildOpenAIProxy(deps: ProviderProxyDeps = {}) {
   return buildProviderProxy(
     {
       name: 'openai',
-      allowedPaths: OPENAI_ALLOWED_PATHS,
+      allowedRoutes: OPENAI_ALLOWED_ROUTES,
       apiKeyEnvName: 'OPENAI_API_KEY',
       upstreamUrl: (path, query) => `https://api.openai.com/v1${stripV1Prefix(path)}${query}`,
       upstreamAuthHeaders: (apiKey) => ({

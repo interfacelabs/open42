@@ -129,6 +129,49 @@ describe('LLM egress proxy routes', () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
+  it('returns 405 when an allowlisted path is called with a disallowed method', async () => {
+    const fetchMock = vi.fn();
+    const app = express().use(
+      buildOpenAIProxy({
+        env: { OPENAI_API_KEY: 'upstream-openai' } as NodeJS.ProcessEnv,
+        fetch: fetchMock as typeof fetch,
+        logger,
+        verifyProxyToken: async () => ({ workspaceId: 'workspace-abc' }),
+      }),
+    );
+
+    // /v1/chat/completions is POST-only
+    const getRes = await request(app)
+      .get('/v1/chat/completions')
+      .set('Authorization', 'Bearer tnt_workspace_abc');
+    expect(getRes.status).toBe(405);
+    expect(getRes.headers['allow']).toBe('POST');
+    expect(fetchMock).not.toHaveBeenCalled();
+
+    // DELETE on POST-only path
+    const delRes = await request(app)
+      .delete('/v1/embeddings')
+      .set('Authorization', 'Bearer tnt_workspace_abc');
+    expect(delRes.status).toBe(405);
+
+    // POST on /v1/models (GET-only) is also rejected
+    const postModels = await request(app)
+      .post('/v1/models')
+      .set('Authorization', 'Bearer tnt_workspace_abc');
+    expect(postModels.status).toBe(405);
+    expect(postModels.headers['allow']).toBe('GET');
+
+    // Sanity: GET on /v1/models works (would call upstream)
+    fetchMock.mockResolvedValueOnce(
+      new Response('{"data":[]}', { status: 200, headers: { 'Content-Type': 'application/json' } }),
+    );
+    const ok = await request(app)
+      .get('/v1/models')
+      .set('Authorization', 'Bearer tnt_workspace_abc');
+    expect(ok.status).toBe(200);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
   it('returns 503 instead of crashing when the shared upstream key is unset', async () => {
     const fetchMock = vi.fn();
     const app = express().use(

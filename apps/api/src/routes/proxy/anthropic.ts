@@ -1,12 +1,19 @@
-import { buildProviderProxy, type ProviderProxyDeps } from './shared.js';
+import {
+  buildProviderProxy,
+  type ProviderProxyDeps,
+  type ProviderProxyRoute,
+} from './shared.js';
 
-const ANTHROPIC_ALLOWED_PATHS = ['/v1/messages', '/v1/messages/count_tokens'];
+const ANTHROPIC_ALLOWED_ROUTES: ProviderProxyRoute[] = [
+  { method: 'POST', path: '/v1/messages' },
+  { method: 'POST', path: '/v1/messages/count_tokens' },
+];
 
 export function buildAnthropicProxy(deps: ProviderProxyDeps = {}) {
   return buildProviderProxy(
     {
       name: 'anthropic',
-      allowedPaths: ANTHROPIC_ALLOWED_PATHS,
+      allowedRoutes: ANTHROPIC_ALLOWED_ROUTES,
       apiKeyEnvName: 'ANTHROPIC_API_KEY',
       upstreamUrl: (path, query) => `https://api.anthropic.com${path}${query}`,
       upstreamAuthHeaders: (apiKey) => ({
