@@ -5,7 +5,7 @@ import {
   mutationProxyHeaders,
   rejectCrossSiteMutation,
   sendBackend,
-} from '../_lib/proxy-security';
+} from '@/lib/proxy-security';
 
 export const config = { api: { bodyParser: false } };
 

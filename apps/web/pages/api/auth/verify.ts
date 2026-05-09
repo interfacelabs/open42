@@ -5,7 +5,7 @@ import {
   forwardSetCookie,
   mutationProxyHeaders,
   rejectCrossSiteMutation,
-} from '../_lib/proxy-security';
+} from '@/lib/proxy-security';
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   if (req.method !== 'POST') {

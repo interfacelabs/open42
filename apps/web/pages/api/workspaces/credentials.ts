@@ -6,7 +6,7 @@ import {
   mutationProxyHeaders,
   rejectCrossSiteMutation,
   sendBackend,
-} from '../_lib/proxy-security';
+} from '@/lib/proxy-security';
 
 /**
  * BYOK credentials proxy. Forwards GET / POST / DELETE to the backend

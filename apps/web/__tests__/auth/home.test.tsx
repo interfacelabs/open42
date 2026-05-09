@@ -20,7 +20,7 @@ vi.mock('swr', async () => {
 });
 
 import useSWR from 'swr';
-import HomePage from './home';
+import HomePage from '@/pages/auth/home';
 
 const mkCurrent = (overrides: Record<string, unknown> = {}) => ({
   user: { id: 'u', email: 'a@x.com' },

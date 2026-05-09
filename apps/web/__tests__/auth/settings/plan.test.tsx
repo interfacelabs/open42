@@ -16,7 +16,7 @@ vi.mock('swr', async () => {
 });
 
 import useSWR from 'swr';
-import PlanSettingsPage from './plan';
+import PlanSettingsPage from '@/pages/auth/settings/plan';
 
 describe('PlanSettingsPage', () => {
   beforeEach(() => {

@@ -11,7 +11,7 @@ vi.mock('next/router', () => ({
   }),
 }));
 
-import AcceptInvitePage from './accept';
+import AcceptInvitePage from '@/pages/auth/invite/accept';
 
 describe('AcceptInvitePage', () => {
   it('renders verifying state on mount', () => {

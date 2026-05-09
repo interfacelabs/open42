@@ -20,7 +20,7 @@ vi.mock('swr', async () => {
 });
 
 import useSWR from 'swr';
-import OnboardPage from './onboard';
+import OnboardPage from '@/pages/auth/onboard';
 
 describe('OnboardPage', () => {
   beforeEach(() => {

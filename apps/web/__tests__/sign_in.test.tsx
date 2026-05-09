@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, fireEvent, findAllByLabelText } from '@testing-library/react';
 
-import SignInPage from './sign_in';
+import SignInPage from '@/pages/sign_in';
 
 vi.mock('next/router', () => ({
   useRouter: () => ({
