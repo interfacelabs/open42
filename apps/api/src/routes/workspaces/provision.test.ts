@@ -3,7 +3,11 @@ import cookieParser from 'cookie-parser';
 import request from 'supertest';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { buildWorkspaceProvisionRouter, deriveRuntime } from './provision.js';
+import {
+  buildWorkspaceProvisionRouter,
+  deriveRuntime,
+  sanitizeProvisioningLastError,
+} from './provision.js';
 
 const mocks = vi.hoisted(() => ({
   validateSession: vi.fn(),
@@ -226,10 +230,7 @@ describe('workspace provision route', () => {
       expect(res.status).toBe(200);
       expect(res.body.sent).toBe(2);
       expect(res.body.failed).toBe(0);
-      expect(repo.upsertInvites).toHaveBeenCalledWith('user-1', [
-        'a@example.com',
-        'b@example.com',
-      ]);
+      expect(repo.upsertInvites).toHaveBeenCalledWith('user-1', ['a@example.com', 'b@example.com']);
       expect(mocks.generateInviteLink).toHaveBeenCalledTimes(2);
       expect(mocks.generateInviteLink).toHaveBeenCalledWith({
         email: 'a@example.com',
@@ -375,6 +376,7 @@ describe('workspace provision route', () => {
         .set('Cookie', 'open42_session=session-1');
 
       expect(res.body.workspace.runtime).toBe('failed');
+      expect(res.body.workspace.lastError).toBe('docker_unavailable');
     });
   });
 });
@@ -445,6 +447,18 @@ describe('deriveRuntime', () => {
         now,
       }),
     ).toBe('provisioning');
+  });
+});
+
+describe('sanitizeProvisioningLastError', () => {
+  it('returns only stable provisioning error codes', () => {
+    expect(sanitizeProvisioningLastError('docker_unavailable: cannot connect to docker')).toBe(
+      'docker_unavailable',
+    );
+    expect(sanitizeProvisioningLastError('postgres://user:secret@example/db')).toBe(
+      'provisioning_failed',
+    );
+    expect(sanitizeProvisioningLastError(null)).toBeNull();
   });
 });
 

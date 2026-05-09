@@ -2,10 +2,12 @@ import Anthropic from '@anthropic-ai/sdk';
 import { eq } from 'drizzle-orm';
 import { Router, type Request } from 'express';
 
+import { resolveLlmKey, type ResolvedLlmKey } from '../auth/llm-keys.js';
 import { resolveOwnerWorkspaceId } from '../auth/membership.js';
 import { validateSession } from '../auth/sessions.js';
 import { db, schema } from '../db/client.js';
 import { GbrainCitationChunk, GbrainClient } from '../gbrain/client.js';
+import { checkWorkspaceChatBudget } from './chat-budget.js';
 
 export const chatRouter = Router();
 
@@ -28,6 +30,15 @@ chatRouter.post('/', async (req, res, next) => {
       res.status(409).json({ error: 'workspace_not_ready' });
       return;
     }
+    const budget = checkWorkspaceChatBudget({
+      workspaceId: workspace.id,
+      inputChars: query.length,
+    });
+    if (!budget.ok) {
+      res.setHeader('Retry-After', String(budget.retryAfter));
+      res.status(429).json({ error: budget.error });
+      return;
+    }
 
     const gbrain = new GbrainClient(
       {
@@ -47,6 +58,14 @@ chatRouter.post('/', async (req, res, next) => {
       last_updated: chunk.last_updated ?? null,
       excerpt: chunk.excerpt ?? chunk.chunk_text ?? '',
     }));
+    const resolvedAnthropic =
+      citations.length > 0
+        ? await resolveLlmKey({
+            workspaceId: workspace.id,
+            provider: 'anthropic',
+            scope: 'chat',
+          })
+        : null;
 
     res.setHeader('Content-Type', 'application/x-ndjson; charset=utf-8');
     res.setHeader('Cache-Control', 'no-cache, no-transform');
@@ -63,7 +82,7 @@ chatRouter.post('/', async (req, res, next) => {
       return;
     }
 
-    await streamAnthropicAnswer({ query, chunks, res });
+    await streamAnthropicAnswer({ resolvedAnthropic, query, chunks, res });
     res.end(JSON.stringify({ type: 'done' }) + '\n');
   } catch (err) {
     next(err);
@@ -78,12 +97,12 @@ function normalizeChunks(chunks: GbrainCitationChunk[]): GbrainCitationChunk[] {
 }
 
 async function streamAnthropicAnswer(options: {
+  resolvedAnthropic: ResolvedLlmKey | null;
   query: string;
   chunks: GbrainCitationChunk[];
   res: { write: (chunk: string) => void };
 }) {
-  const apiKey = process.env.ANTHROPIC_API_KEY;
-  if (!apiKey || apiKey === 'sk-ant-...') {
+  if (!options.resolvedAnthropic || options.resolvedAnthropic.apiKey === 'sk-ant-...') {
     const first = options.chunks[0];
     options.res.write(
       JSON.stringify({
@@ -100,7 +119,7 @@ async function streamAnthropicAnswer(options: {
     return;
   }
 
-  const anthropic = new Anthropic({ apiKey });
+  const anthropic = new Anthropic({ apiKey: options.resolvedAnthropic.apiKey });
   const context = options.chunks
     .map(
       (chunk, index) =>
@@ -108,7 +127,10 @@ async function streamAnthropicAnswer(options: {
     )
     .join('\n\n');
   const stream = anthropic.messages.stream({
-    model: process.env.ANTHROPIC_MODEL ?? 'claude-3-5-sonnet-latest',
+    model:
+      options.resolvedAnthropic.model?.trim() ||
+      process.env.ANTHROPIC_MODEL ||
+      'claude-3-5-sonnet-latest',
     max_tokens: 700,
     system:
       'You answer as Open42. Use only the provided context. Every factual claim must include a bracketed citation like [1]. If the context is insufficient, say so plainly.',

@@ -23,7 +23,7 @@ const escapeHtml = (s: string): string => s.replace(/[&<>"']/g, (c) => HTML_ESCA
 export function renderInviteEmail(input: InviteEmailInput): InviteEmailOutput {
   const ws = escapeHtml(input.workspaceName);
   const inviter = escapeHtml(input.inviterEmail);
-  const url = input.inviteUrl;
+  const htmlUrl = escapeHtml(input.inviteUrl);
 
   const subject = `${input.inviterEmail} invited you to ${input.workspaceName} on Open42`;
 
@@ -38,7 +38,7 @@ export function renderInviteEmail(input: InviteEmailInput): InviteEmailOutput {
       ${inviter} added you to <strong>${ws}</strong>'s company brain on Open42 — a self-hostable place to ask your team's documentation what your team actually knows, with citations.
     </p>
     <p style="margin:24px 0;">
-      <a href="${url}" style="display:inline-block;background:#1d4dff;color:#fff;padding:12px 22px;border-radius:12px;text-decoration:none;font-weight:500;">
+      <a href="${htmlUrl}" style="display:inline-block;background:#1d4dff;color:#fff;padding:12px 22px;border-radius:12px;text-decoration:none;font-weight:500;">
         Accept invite →
       </a>
     </p>
@@ -53,7 +53,7 @@ export function renderInviteEmail(input: InviteEmailInput): InviteEmailOutput {
 ${input.inviterEmail} added you to ${input.workspaceName}'s company brain on Open42.
 
 Accept your invite:
-${url}
+${input.inviteUrl}
 
 This link is valid for 24 hours. If you weren't expecting this, ignore the email.`;
 

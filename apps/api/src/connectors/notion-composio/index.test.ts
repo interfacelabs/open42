@@ -96,6 +96,120 @@ describe('NotionComposioConnector', () => {
     expect(result.finalize()).toEqual({ since_iso: '2026-04-10T00:00:00.000Z' });
   });
 
+  it('caps pages per cycle and stores a resume cursor without advancing since_iso', async () => {
+    const fake = createFakeComposio({
+      toolHandlers: {
+        NOTION_SEARCH: async ({ args }) => {
+          expect((args as { page_size?: number }).page_size).toBe(1);
+          return {
+            has_more: true,
+            next_cursor: 'p2',
+            results: [fixturePage('id-1', 'Page One', '2026-04-02T00:00:00.000Z')],
+          };
+        },
+        NOTION_FETCH_PAGE_CONTENT: async () => ({ blocks: [] }),
+      },
+    });
+    const connector = new NotionComposioConnector(fake, { maxPagesPerCycle: 1 });
+    const result = connector.extract({
+      cursor: { since_iso: '2026-04-01T00:00:00.000Z' },
+      source: { kind: 'notion-composio' },
+      account: { composio_connected_account_id: 'fake-acc' },
+      workspaceId: 'w1',
+    });
+
+    const docs: NormalizedDoc[] = [];
+    for await (const d of result.docs) docs.push(d);
+
+    expect(docs).toHaveLength(1);
+    expect(result.finalize()).toEqual({
+      since_iso: '2026-04-01T00:00:00.000Z',
+      page_cursor: 'p2',
+      cycle_since_iso: '2026-04-01T00:00:00.000Z',
+      cycle_max_seen_iso: '2026-04-02T00:00:00.000Z',
+    });
+  });
+
+  it('limits blocks and per-page markdown bytes', async () => {
+    const fake = createFakeComposio({
+      toolHandlers: {
+        NOTION_SEARCH: async () => ({
+          has_more: false,
+          next_cursor: null,
+          results: [fixturePage('id-1', 'Limited', '2026-04-02T00:00:00.000Z')],
+        }),
+        NOTION_FETCH_PAGE_CONTENT: async () => ({
+          blocks: [
+            {
+              type: 'paragraph',
+              paragraph: {
+                rich_text: [{ type: 'text', plain_text: 'first block', text: { content: '' } }],
+              },
+            },
+            {
+              type: 'paragraph',
+              paragraph: {
+                rich_text: [{ type: 'text', plain_text: 'second block', text: { content: '' } }],
+              },
+            },
+          ],
+        }),
+      },
+    });
+    const connector = new NotionComposioConnector(fake, {
+      maxBlocksPerPage: 1,
+      maxContentBytesPerPage: 5,
+    });
+    const result = connector.extract({
+      cursor: {},
+      source: { kind: 'notion-composio' },
+      account: { composio_connected_account_id: 'fake-acc' },
+      workspaceId: 'w1',
+    });
+
+    const docs: NormalizedDoc[] = [];
+    for await (const d of result.docs) docs.push(d);
+
+    expect(docs[0]?.content_md).toBe('first');
+  });
+
+  it('fails before exceeding the total content budget', async () => {
+    const fake = createFakeComposio({
+      toolHandlers: {
+        NOTION_SEARCH: async () => ({
+          has_more: false,
+          next_cursor: null,
+          results: [fixturePage('id-1', 'Large', '2026-04-02T00:00:00.000Z')],
+        }),
+        NOTION_FETCH_PAGE_CONTENT: async () => ({
+          blocks: [
+            {
+              type: 'paragraph',
+              paragraph: {
+                rich_text: [{ type: 'text', plain_text: 'too large', text: { content: '' } }],
+              },
+            },
+          ],
+        }),
+      },
+    });
+    const connector = new NotionComposioConnector(fake, { maxTotalContentBytes: 3 });
+    const result = connector.extract({
+      cursor: {},
+      source: { kind: 'notion-composio' },
+      account: { composio_connected_account_id: 'fake-acc' },
+      workspaceId: 'w1',
+    });
+
+    const docs: NormalizedDoc[] = [];
+    await expect(
+      (async () => {
+        for await (const doc of result.docs) docs.push(doc);
+      })(),
+    ).rejects.toThrow('notion_composio_content_budget_exceeded');
+    expect(docs).toHaveLength(0);
+  });
+
   it('declares mode = pollable', () => {
     const connector = new NotionComposioConnector(createFakeComposio());
     expect(connector.mode).toBe('pollable');

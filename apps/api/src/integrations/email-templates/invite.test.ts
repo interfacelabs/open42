@@ -12,7 +12,9 @@ describe('renderInviteEmail', () => {
   it('returns html, text, and subject containing the workspace name and invite URL', () => {
     const out = renderInviteEmail(input);
     expect(out.html).toContain('Speedrun Labs');
-    expect(out.html).toContain(input.inviteUrl);
+    expect(out.html).toContain(
+      'https://open42.app/auth/invite/accept?invite_id=abc123&amp;token_hash=xyz',
+    );
     expect(out.text).toContain('Speedrun Labs');
     expect(out.text).toContain(input.inviteUrl);
     expect(out.subject).toContain('Speedrun Labs');

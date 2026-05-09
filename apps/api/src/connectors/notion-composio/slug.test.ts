@@ -17,4 +17,11 @@ describe('notionPageSlug', () => {
     const id = '00000000-0000-0000-0000-000000000000';
     expect(notionPageSlug(id)).toBe(notionPageSlug(id));
   });
+
+  it.each(['../secret', 'workspace/page', 'page id', '?token=secret', '---'])(
+    'rejects path-like or empty page ids: %j',
+    (id) => {
+      expect(() => notionPageSlug(id)).toThrow('notion_page_id_invalid');
+    },
+  );
 });

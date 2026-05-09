@@ -1,12 +1,10 @@
+import { readFile } from 'node:fs/promises';
+
 import { describe, expect, it, vi } from 'vitest';
 
 import { decryptSecret } from '../crypto/envelope.js';
 import type { TenantProvisionRepo } from './provision.js';
-import {
-  classifyProvisioningError,
-  provisionTenant,
-  safelyProvisionTenant,
-} from './provision.js';
+import { classifyProvisioningError, provisionTenant, safelyProvisionTenant } from './provision.js';
 
 describe('provisionTenant', () => {
   it('creates a Fly machine, registers gbrain OAuth, encrypts the secret, and stores workspace metadata', async () => {
@@ -89,7 +87,9 @@ describe('provisionTenant', () => {
     const machineRequest = flyRequests.find((request) => request.href.endsWith('/machines'));
     expect(machineRequest?.body.config.mounts).toEqual([{ path: '/data', volume: 'volume-1' }]);
     expect(machineRequest?.body.config.env).not.toHaveProperty('GBRAIN_DATABASE_URL');
-    expect(machineRequest?.body.config.env.OPENAI_API_KEY).toMatch(/^tnt_workspace-1_[0-9a-f]{32}$/);
+    expect(machineRequest?.body.config.env.OPENAI_API_KEY).toMatch(
+      /^tnt_workspace-1_[0-9a-f]{32}$/,
+    );
     expect(machineRequest?.body.config.env.OPENAI_BASE_URL).toBe(
       'http://open42-api.flycast/proxy/openai/v1',
     );
@@ -105,6 +105,7 @@ describe('provisionTenant', () => {
     process.env.OPEN42_KEK = '3'.repeat(64);
     const stored: any[] = [];
     const commands: Array<{ file: string; args: string[] }> = [];
+    const envFileBodies: string[] = [];
     const repo: TenantProvisionRepo = {
       async reserveWorkspaceForOwner() {
         return { id: 'workspace-local' };
@@ -137,6 +138,10 @@ describe('provisionTenant', () => {
         sleep: async () => undefined,
         runCommand: async (file, args) => {
           commands.push({ file, args });
+          if (args[0] === 'run') {
+            const envFile = args[args.indexOf('--env-file') + 1];
+            if (envFile) envFileBodies.push(await readFile(envFile, 'utf8'));
+          }
           if (args[0] === 'image' && args[1] === 'inspect') {
             throw new Error('image missing');
           }
@@ -158,24 +163,34 @@ describe('provisionTenant', () => {
       gbrainBaseUrl: 'http://127.0.0.1:19001',
     });
 
-    expect(commands.some((command) => command.args.includes('infra/Dockerfile.gbrain-tenant'))).toBe(
-      true,
-    );
     expect(
-      commands.some((command) =>
-        command.args.includes('GBRAIN_POSTGRES_PASSWORD=local-password'),
-      ),
+      commands.some((command) => command.args.includes('infra/Dockerfile.gbrain-tenant')),
     ).toBe(true);
+    expect(
+      commands.some((command) => command.args.includes('GBRAIN_POSTGRES_PASSWORD=local-password')),
+    ).toBe(false);
     expect(
       commands.some((command) =>
         command.args.some((arg) => arg.startsWith('GBRAIN_DATABASE_URL=')),
       ),
     ).toBe(false);
     const dockerRun = commands.find((command) => command.args[0] === 'run');
-    expect(dockerRun?.args).toContainEqual(expect.stringMatching(/^OPENAI_API_KEY=tnt_workspace-local_[0-9a-f]{32}$/));
-    expect(dockerRun?.args).toContainEqual(expect.stringMatching(/^OPENAI_BASE_URL=http:\/\/.+\/proxy\/openai\/v1$/));
-    expect(dockerRun?.args).toContainEqual(expect.stringMatching(/^ANTHROPIC_API_KEY=tnt_workspace-local_[0-9a-f]{32}$/));
-    expect(dockerRun?.args).toContainEqual(expect.stringMatching(/^ANTHROPIC_BASE_URL=http:\/\/.+\/proxy\/anthropic$/));
+    expect(dockerRun?.args).toContain('--env-file');
+    expect(envFileBodies[0]).toContain('GBRAIN_POSTGRES_PASSWORD=local-password\n');
+    expect(envFileBodies[0]).toContain('OPENAI_BASE_URL=http://');
+    expect(envFileBodies[0]).toContain('ANTHROPIC_BASE_URL=http://');
+    expect(dockerRun?.args).not.toContainEqual(
+      expect.stringMatching(/^OPENAI_API_KEY=tnt_workspace-local_[0-9a-f]{32}$/),
+    );
+    expect(dockerRun?.args).not.toContainEqual(
+      expect.stringMatching(/^OPENAI_BASE_URL=http:\/\/.+\/proxy\/openai\/v1$/),
+    );
+    expect(dockerRun?.args).not.toContainEqual(
+      expect.stringMatching(/^ANTHROPIC_API_KEY=tnt_workspace-local_[0-9a-f]{32}$/),
+    );
+    expect(dockerRun?.args).not.toContainEqual(
+      expect.stringMatching(/^ANTHROPIC_BASE_URL=http:\/\/.+\/proxy\/anthropic$/),
+    );
     expect(stored[0]).toMatchObject({
       flyMachineId: 'open42-gbrain-user-loc',
       flyPrivateIp: '127.0.0.1:19001',
@@ -331,7 +346,7 @@ describe('safelyProvisionTenant', () => {
     expect(result).toEqual({ error: 'docker_unavailable' });
     expect(calls).toHaveLength(1);
     expect(calls[0]?.ownerUserId).toBe('user-9');
-    expect(calls[0]?.errorCode.startsWith('docker_unavailable:')).toBe(true);
+    expect(calls[0]?.errorCode).toBe('docker_unavailable');
   });
 });
 

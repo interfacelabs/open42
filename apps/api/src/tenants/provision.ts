@@ -1,7 +1,9 @@
 import { and, eq, sql } from 'drizzle-orm';
 import { execFile as execFileCallback } from 'node:child_process';
+import { chmod, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:net';
-import { dirname, resolve } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
+import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 
@@ -33,10 +35,7 @@ export interface TenantProvisionEnv {
 
 export interface TenantProvisionRepo {
   findWorkspaceForOwner?(ownerUserId: string): Promise<ProvisionTenantResult | null>;
-  reserveWorkspaceForOwner?(
-    ownerUserId: string,
-    gbrainVersion: string,
-  ): Promise<{ id: string }>;
+  reserveWorkspaceForOwner?(ownerUserId: string, gbrainVersion: string): Promise<{ id: string }>;
   withOwnerProvisioningLock?(
     ownerUserId: string,
     provision: () => Promise<ProvisionTenantResult>,
@@ -68,7 +67,9 @@ export type ProvisioningErrorCode =
 
 export function classifyProvisioningError(err: unknown): ProvisioningErrorCode {
   const message = err instanceof Error ? err.message : String(err ?? '');
-  if (/docker.*not (running|found)|cannot connect to the docker daemon|enoent.*docker/i.test(message)) {
+  if (
+    /docker.*not (running|found)|cannot connect to the docker daemon|enoent.*docker/i.test(message)
+  ) {
     return 'docker_unavailable';
   }
   if (/docker build|image inspect|failed to (build|pull) image/i.test(message)) {
@@ -108,9 +109,8 @@ export async function safelyProvisionTenant(
     return await provisionTenant({ ...options, repo });
   } catch (err) {
     const code = classifyProvisioningError(err);
-    const detail = err instanceof Error ? err.message : String(err ?? 'unknown');
     try {
-      await repo.markWorkspaceFailedForOwner?.(options.ownerUserId, `${code}: ${detail}`);
+      await repo.markWorkspaceFailedForOwner?.(options.ownerUserId, code);
     } catch (markErr) {
       // Last-resort: log to stderr. The startup sweep will catch this row eventually.
       console.error('[provision] failed to mark workspace failed', markErr);
@@ -136,10 +136,7 @@ export interface ProvisionTenantResult {
   gbrainBaseUrl: string;
 }
 
-type CommandRunner = (
-  file: string,
-  args: string[],
-) => Promise<{ stdout: string; stderr: string }>;
+type CommandRunner = (file: string, args: string[]) => Promise<{ stdout: string; stderr: string }>;
 
 export async function provisionTenant(
   options: ProvisionTenantOptions,
@@ -442,38 +439,40 @@ async function createLocalDockerTenant(options: {
   await ensureLocalTenantImage(image, options.gbrainVersion, gitRef, options.runCommand);
   await options.runCommand('docker', ['volume', 'create', dataVolume]);
   await removeDockerContainer(containerName, options.runCommand);
-  await options.runCommand('docker', [
-    'run',
-    '-d',
-    '--name',
-    containerName,
-    '-p',
-    `127.0.0.1:${port}:8080`,
-    '-e',
-    `GBRAIN_PUBLIC_URL=${baseUrl}`,
-    '-e',
-    `GBRAIN_POSTGRES_DB=${postgresDb}`,
-    '-e',
-    `GBRAIN_POSTGRES_USER=${postgresUser}`,
-    ...(options.env.GBRAIN_POSTGRES_PASSWORD
-      ? ['-e', `GBRAIN_POSTGRES_PASSWORD=${options.env.GBRAIN_POSTGRES_PASSWORD}`]
-      : []),
-    '-e',
-    `GBRAIN_VERSION=${options.gbrainVersion}`,
-    '-e',
-    'GBRAIN_HOME=/data/gbrain',
-    '-e',
-    `OPENAI_API_KEY=${options.proxyToken}`,
-    '-e',
-    `OPENAI_BASE_URL=${open42ApiBaseUrl}/proxy/openai/v1`,
-    '-e',
-    `ANTHROPIC_API_KEY=${options.proxyToken}`,
-    '-e',
-    `ANTHROPIC_BASE_URL=${open42ApiBaseUrl}/proxy/anthropic`,
-    '-v',
-    `${dataVolume}:/data`,
-    image,
-  ]);
+  let envFile: string | null = null;
+  try {
+    envFile = await createDockerEnvFile({
+      GBRAIN_PUBLIC_URL: baseUrl,
+      GBRAIN_POSTGRES_DB: postgresDb,
+      GBRAIN_POSTGRES_USER: postgresUser,
+      ...(options.env.GBRAIN_POSTGRES_PASSWORD
+        ? { GBRAIN_POSTGRES_PASSWORD: options.env.GBRAIN_POSTGRES_PASSWORD }
+        : {}),
+      GBRAIN_VERSION: options.gbrainVersion,
+      GBRAIN_HOME: '/data/gbrain',
+      OPENAI_API_KEY: options.proxyToken,
+      OPENAI_BASE_URL: `${open42ApiBaseUrl}/proxy/openai/v1`,
+      ANTHROPIC_API_KEY: options.proxyToken,
+      ANTHROPIC_BASE_URL: `${open42ApiBaseUrl}/proxy/anthropic`,
+    });
+    await options.runCommand('docker', [
+      'run',
+      '-d',
+      '--name',
+      containerName,
+      '-p',
+      `127.0.0.1:${port}:8080`,
+      '--env-file',
+      envFile,
+      '-v',
+      `${dataVolume}:/data`,
+      image,
+    ]);
+  } finally {
+    if (envFile) {
+      await rm(dirname(envFile), { recursive: true, force: true }).catch(() => undefined);
+    }
+  }
 
   return {
     machineId: containerName,
@@ -586,10 +585,7 @@ function createDrizzleTenantRepo(): TenantProvisionRepo {
         const [existing] = await tx
           .select({ workspaceId: schema.memberships.workspaceId })
           .from(schema.memberships)
-          .innerJoin(
-            schema.workspaces,
-            eq(schema.memberships.workspaceId, schema.workspaces.id),
-          )
+          .innerJoin(schema.workspaces, eq(schema.memberships.workspaceId, schema.workspaces.id))
           .where(
             and(
               eq(schema.memberships.userId, ownerUserId),
@@ -774,6 +770,28 @@ function gbrainGitRef(env: TenantProvisionEnv): string {
   return env.GBRAIN_GIT_REF ?? '1bdba7423abf39210832ebcea0b4ca34a1cde689';
 }
 
+async function createDockerEnvFile(env: Record<string, string>): Promise<string> {
+  const dir = await mkdtemp(join(tmpdir(), 'open42-tenant-env-'));
+  const path = join(dir, 'tenant.env');
+  const body =
+    Object.entries(env)
+      .map(([key, value]) => `${key}=${dockerEnvValue(key, value)}`)
+      .join('\n') + '\n';
+  await writeFile(path, body, { mode: 0o600 });
+  await chmod(path, 0o600);
+  return path;
+}
+
+function dockerEnvValue(key: string, value: string): string {
+  if (!/^[A-Z0-9_]+$/.test(key)) {
+    throw new Error(`invalid Docker env key: ${key}`);
+  }
+  if (value.includes('\n') || value.includes('\r') || value.includes('\0')) {
+    throw new Error(`invalid Docker env value for ${key}`);
+  }
+  return value;
+}
+
 function tenantVolumeName(ownerUserId: string): string {
   const suffix =
     ownerUserId
@@ -802,7 +820,10 @@ async function isPortAvailable(port: number): Promise<boolean> {
   });
 }
 
-async function runCommand(file: string, args: string[]): Promise<{ stdout: string; stderr: string }> {
+async function runCommand(
+  file: string,
+  args: string[],
+): Promise<{ stdout: string; stderr: string }> {
   const result = await execFile(file, args, { cwd: repoRoot });
   return {
     stdout: result.stdout,

@@ -14,6 +14,16 @@ import {
 
 const WORKSPACE_NAME_MAX = 80;
 const INVITE_LIMIT = 10;
+const SAFE_PROVISIONING_ERROR_CODES = new Set([
+  'docker_unavailable',
+  'image_build_failed',
+  'container_start_failed',
+  'gbrain_health_timeout',
+  'oauth_registration_failed',
+  'gbrain_version_mismatch',
+  'fly_api_failed',
+  'provisioning_failed',
+]);
 
 type WorkspacePlan = 'starter' | 'team' | 'business';
 
@@ -47,6 +57,12 @@ export function deriveRuntime(input: {
   return 'provisioning';
 }
 
+export function sanitizeProvisioningLastError(value: string | null): string | null {
+  if (!value) return null;
+  const code = value.split(':', 1)[0]?.trim() ?? '';
+  return SAFE_PROVISIONING_ERROR_CODES.has(code) ? code : 'provisioning_failed';
+}
+
 interface CurrentPayload {
   user: { id: string; email: string };
   workspace: CurrentWorkspace | null;
@@ -76,13 +92,15 @@ interface WorkspaceLifecycleRepo {
   upsertInvites(userId: string, emails: string[]): Promise<UpsertInvitesResult>;
 }
 
-export function buildWorkspaceProvisionRouter(deps: {
-  provisionTenant?: typeof defaultProvisionTenant;
-  safelyProvisionTenant?: typeof defaultSafelyProvisionTenant;
-  repo?: WorkspaceLifecycleRepo;
-  sendEmail?: typeof defaultSendEmail;
-  generateInviteLink?: typeof defaultGenerateInviteLink;
-} = {}) {
+export function buildWorkspaceProvisionRouter(
+  deps: {
+    provisionTenant?: typeof defaultProvisionTenant;
+    safelyProvisionTenant?: typeof defaultSafelyProvisionTenant;
+    repo?: WorkspaceLifecycleRepo;
+    sendEmail?: typeof defaultSendEmail;
+    generateInviteLink?: typeof defaultGenerateInviteLink;
+  } = {},
+) {
   const router = Router();
   const safelyProvisionTenant = deps.safelyProvisionTenant ?? defaultSafelyProvisionTenant;
   const repo = deps.repo ?? createDrizzleWorkspaceLifecycleRepo();
@@ -101,7 +119,7 @@ export function buildWorkspaceProvisionRouter(deps: {
         res.status(404).json({ error: 'user_not_found' });
         return;
       }
-      res.json(current);
+      res.json(sanitizeCurrentPayload(current));
     } catch (err) {
       next(err);
     }
@@ -123,8 +141,12 @@ export function buildWorkspaceProvisionRouter(deps: {
         // swallowing the error — see /onboarding/retry-provision for the recovery path.
         void safelyProvisionTenant({ ownerUserId: session.userId });
       }
-      res.json(payload);
+      res.json(sanitizeCurrentPayload(payload));
     } catch (err) {
+      if (err instanceof Error && err.message === 'workspace_owner_required') {
+        res.status(403).json({ error: 'workspace_owner_required' });
+        return;
+      }
       next(err);
     }
   });
@@ -225,7 +247,7 @@ export function buildWorkspaceProvisionRouter(deps: {
       }
 
       const payload = await repo.current(session.userId);
-      res.json({ ...payload, sent, failed });
+      res.json(payload ? { ...sanitizeCurrentPayload(payload), sent, failed } : { sent, failed });
     } catch (err) {
       next(err);
     }
@@ -234,7 +256,10 @@ export function buildWorkspaceProvisionRouter(deps: {
   return router;
 }
 
-async function requireSession(req: Request, res: { status: (status: number) => { json: (body: unknown) => void } }) {
+async function requireSession(
+  req: Request,
+  res: { status: (status: number) => { json: (body: unknown) => void } },
+) {
   const session = await sessionFromRequest(req);
   if (!session) {
     res.status(401).json({ error: 'unauthorized' });
@@ -290,10 +315,7 @@ function createDrizzleWorkspaceLifecycleRepo(): WorkspaceLifecycleRepo {
         const [ownerRow] = await tx
           .select({ workspaceId: schema.memberships.workspaceId })
           .from(schema.memberships)
-          .innerJoin(
-            schema.workspaces,
-            eq(schema.workspaces.id, schema.memberships.workspaceId),
-          )
+          .innerJoin(schema.workspaces, eq(schema.workspaces.id, schema.memberships.workspaceId))
           .where(
             and(
               eq(schema.memberships.userId, userId),
@@ -337,8 +359,11 @@ function createDrizzleWorkspaceLifecycleRepo(): WorkspaceLifecycleRepo {
       return { payload: current, wasCreated };
     },
     async upsertInvites(userId, emails) {
+      const ownerWorkspaceId = await resolveOwnerWorkspaceId(userId);
+      if (!ownerWorkspaceId) throw new Error('workspace_owner_required');
       const current = await currentPayload(userId);
       if (!current?.workspace) throw new Error('workspace_required');
+      if (current.workspace.id !== ownerWorkspaceId) throw new Error('workspace_owner_required');
       const workspaceId = current.workspace.id;
       const inviterEmail = current.user.email;
       const workspaceName = current.workspace.name;
@@ -378,23 +403,36 @@ function createDrizzleWorkspaceLifecycleRepo(): WorkspaceLifecycleRepo {
   };
 }
 
+function sanitizeCurrentPayload(payload: CurrentPayload): CurrentPayload {
+  if (!payload.workspace) return payload;
+  return {
+    ...payload,
+    workspace: {
+      ...payload.workspace,
+      lastError: sanitizeProvisioningLastError(payload.workspace.lastError),
+    },
+  };
+}
+
 async function currentPayload(userId: string): Promise<CurrentPayload | null> {
   const [user] = await db.select().from(schema.users).where(eq(schema.users.id, userId)).limit(1);
   if (!user) return null;
 
   const workspace = await currentWorkspaceForUser(userId);
-  const invites = workspace
-    ? await db
-        .select({
-          id: schema.workspaceInvites.id,
-          email: schema.workspaceInvites.email,
-          status: schema.workspaceInvites.status,
-          createdAt: schema.workspaceInvites.createdAt,
-        })
-        .from(schema.workspaceInvites)
-        .where(eq(schema.workspaceInvites.workspaceId, workspace.id))
-        .orderBy(desc(schema.workspaceInvites.createdAt))
-    : [];
+  const ownerWorkspaceId = workspace ? await resolveOwnerWorkspaceId(userId) : null;
+  const invites =
+    workspace && ownerWorkspaceId === workspace.id
+      ? await db
+          .select({
+            id: schema.workspaceInvites.id,
+            email: schema.workspaceInvites.email,
+            status: schema.workspaceInvites.status,
+            createdAt: schema.workspaceInvites.createdAt,
+          })
+          .from(schema.workspaceInvites)
+          .where(eq(schema.workspaceInvites.workspaceId, workspace.id))
+          .orderBy(desc(schema.workspaceInvites.createdAt))
+      : [];
   const connections = workspace
     ? await db
         .select({
@@ -449,19 +487,14 @@ export async function currentWorkspaceForUser(userId: string): Promise<CurrentWo
         eq(schema.memberships.userId, userId),
       ),
     )
-    .where(
-      and(
-        eq(schema.memberships.userId, userId),
-        sql`${schema.workspaces.deletedAt} IS NULL`,
-      ),
-    )
+    .where(and(eq(schema.memberships.userId, userId), sql`${schema.workspaces.deletedAt} IS NULL`))
     .limit(1);
   if (!row?.workspace) return null;
   const workspace = row.workspace;
   const gbrainReady = Boolean(
     (workspace.gbrainBaseUrl || workspace.flyPrivateIp) &&
-      workspace.gbrainOauthClientId &&
-      workspace.gbrainOauthClientSecretCiphertext,
+    workspace.gbrainOauthClientId &&
+    workspace.gbrainOauthClientSecretCiphertext,
   );
   return {
     id: workspace.id,
@@ -474,7 +507,7 @@ export async function currentWorkspaceForUser(userId: string): Promise<CurrentWo
       gbrainReady,
       provisioningStartedAt: workspace.provisioningStartedAt,
     }),
-    lastError: workspace.lastError,
+    lastError: sanitizeProvisioningLastError(workspace.lastError),
     provisionAttempts: workspace.provisionAttempts,
     provisioningStartedAt: workspace.provisioningStartedAt,
     createdAt: workspace.createdAt,

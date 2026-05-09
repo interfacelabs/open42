@@ -1,5 +1,4 @@
 import { mkdir, rm, writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
 
 import { eq, sql } from 'drizzle-orm';
 
@@ -22,6 +21,7 @@ import {
   mergeIntoFinal,
   sweepStaleCycles,
 } from './staging.js';
+import { docStagingPath } from './doc-path.js';
 
 export interface OrchestratorDeps {
   composio: ComposioClient;
@@ -39,11 +39,7 @@ export interface RunCycleOptions {
   preAcquiredJobId?: string;
 }
 
-export type RunCycleStatus =
-  | 'completed'
-  | 'failed'
-  | 'aborted_lock_lost'
-  | 'skipped_lock_held';
+export type RunCycleStatus = 'completed' | 'failed' | 'aborted_lock_lost' | 'skipped_lock_held';
 
 export interface ConnectorSummaryEntry {
   connection_id: string;
@@ -188,9 +184,7 @@ export async function runWorkspaceCycle(
   };
 
   try {
-    const connections = await db
-      .select()
-      .from(schema.connections)
+    const connections = await db.select().from(schema.connections)
       .where(sql`${schema.connections.workspaceId} = ${workspaceId}
         AND ${schema.connections.status} IN ('pending_import','active')
         AND ${schema.connections.deletedAt} IS NULL`);
@@ -324,8 +318,7 @@ async function extractConnection(
     oneShotCompletedIds: Set<string>;
   },
 ): Promise<void> {
-  const { connection, cycleDir, abortController, summary, successfulIds, cursorsToCommit } =
-    params;
+  const { connection, cycleDir, abortController, summary, successfulIds, cursorsToCommit } = params;
 
   if (connection.composioConnectedAccountId) {
     try {
@@ -352,7 +345,12 @@ async function extractConnection(
         .update(schema.connections)
         .set({ status: 'errored', lastError: `integrity check error: ${message}` })
         .where(eq(schema.connections.id, connection.id));
-      summary.push({ connection_id: connection.id, kind: connection.kind, pages: 0, error: message });
+      summary.push({
+        connection_id: connection.id,
+        kind: connection.kind,
+        pages: 0,
+        error: message,
+      });
       return;
     }
   }
@@ -381,7 +379,7 @@ async function extractConnection(
 
     for await (const doc of result.docs) {
       abortController.signal.throwIfAborted();
-      await writeFile(join(connDir, `${doc.slug}.md`), doc.content_md, 'utf8');
+      await writeFile(docStagingPath(connDir, doc.slug), doc.content_md, 'utf8');
       pages += 1;
     }
 
