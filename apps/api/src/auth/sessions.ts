@@ -63,7 +63,7 @@ export async function validateSession(
   const session = await repo.find(sessionId);
   if (!session || session.expiresAt <= now) return null;
   if ((session.userAgent ?? '') !== (meta.userAgent ?? '')) return null;
-  if ((session.ipFirstOctet ?? '') !== (getIpFirstOctet(meta.ip) ?? '')) return null;
+  // ipFirstOctet is logged for forensics but not gated on — CGNAT shifts /8 across requests.
 
   const ttlDays = Number(process.env.SESSION_TTL_DAYS ?? DEFAULT_TTL_DAYS);
   const nextExpiry = new Date(now.getTime() + ttlDays * 24 * 60 * 60 * 1000);
