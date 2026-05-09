@@ -69,6 +69,8 @@ export const connectionStatusEnum = pgEnum('connection_status', [
   'disconnected',
 ]);
 export const ingestModeEnum = pgEnum('ingest_mode', ['import_once', 'periodic_pull']);
+export const llmProviderEnum = pgEnum('llm_provider', ['openai', 'anthropic']);
+export const llmScopeEnum = pgEnum('llm_scope', ['chat', 'embed']);
 
 // =====================================================================
 // users
@@ -339,6 +341,40 @@ export const mcpAuditLog = pgTable(
 );
 
 // =====================================================================
+// workspace_credentials (per-workspace BYOK keys for LLM providers)
+// One row per (workspace, provider, scope). UI re-saves do an UPSERT.
+// `secret_ciphertext` is AES-GCM-sealed via envelope.encryptSecret with
+// `purpose: 'workspace_credential'`. Plaintext NEVER stored.
+// =====================================================================
+
+export const workspaceCredentials = pgTable(
+  'workspace_credentials',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    workspaceId: uuid('workspace_id')
+      .notNull()
+      .references(() => workspaces.id, { onDelete: 'cascade' }),
+    provider: llmProviderEnum('provider').notNull(),
+    scope: llmScopeEnum('scope').notNull(),
+    secretCiphertext: bytea('secret_ciphertext').notNull(),
+    // Optional model override (e.g. 'claude-haiku-4-5'). The resolver returns
+    // this so callers don't need a second lookup.
+    model: text('model'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    // One credential per (workspace, provider, scope). Re-saving from the UI
+    // does an UPDATE, not an INSERT.
+    workspaceProviderScopeUniq: uniqueIndex('workspace_credentials_uniq').on(
+      t.workspaceId,
+      t.provider,
+      t.scope,
+    ),
+  }),
+);
+
+// =====================================================================
 // Inferred types — re-export for use elsewhere in the API.
 // =====================================================================
 
@@ -357,3 +393,5 @@ export type ConnectionInitState = typeof connectionInitStates.$inferSelect;
 export type NewConnectionInitState = typeof connectionInitStates.$inferInsert;
 export type McpAuditLog = typeof mcpAuditLog.$inferSelect;
 export type NewMcpAuditLog = typeof mcpAuditLog.$inferInsert;
+export type WorkspaceCredential = typeof workspaceCredentials.$inferSelect;
+export type NewWorkspaceCredential = typeof workspaceCredentials.$inferInsert;

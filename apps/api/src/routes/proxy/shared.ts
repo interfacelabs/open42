@@ -86,7 +86,9 @@ export function buildProviderProxy(
     }
     failedAuth.delete(ip);
 
-    // TODO: Prefer a tenant BYOK secret when one is configured for this workspace.
+    // TODO(E2): replace this env lookup with resolveLlmKey({ workspaceId, provider, scope })
+    // from `auth/llm-keys.js`. Returns null when neither tenant key nor env fallback
+    // is set; map to 503 'upstream_key_unconfigured' (already the existing path).
     const upstreamApiKey = env[config.apiKeyEnvName]?.trim();
     if (!upstreamApiKey) {
       res.status(503).json({ error: 'upstream_key_unconfigured' });
