@@ -1,6 +1,11 @@
 import { createCipheriv, createDecipheriv, hkdfSync, randomBytes } from 'node:crypto';
 
-const VERSION = 1;
+// VERSION 1 = no-AAD, KEK-as-DEK (legacy, pre-Codex-#3 hardening).
+// VERSION 2 = AAD-bound, per-tenant HKDF-derived DEK. A v1 ciphertext under
+// the v2 reader produces a clean "unsupported envelope version" error rather
+// than a confusing GCM auth failure. Bump this byte (don't reuse it) for any
+// future format change.
+const VERSION = 2;
 const IV_BYTES = 12;
 const TAG_BYTES = 16;
 const KEK_BYTES = 32;
