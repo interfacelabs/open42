@@ -81,6 +81,13 @@ describeDb('auth routes', () => {
       .returning();
     if (!ws) throw new Error('seedWorkspace failed');
     workspaceIds.push(ws.id);
+    // Membership is the authorization claim — see apps/api/src/auth/membership.ts.
+    // Workspace creation in production always inserts owner+membership atomically
+    // (saveWorkspaceName), so the test fixture mirrors that invariant.
+    await dbMod.db
+      .insert(dbMod.schema.memberships)
+      .values({ userId: ownerUserId, workspaceId: ws.id, role: 'owner' })
+      .onConflictDoNothing();
     return ws;
   }
 
@@ -224,11 +231,14 @@ describeDb('auth routes', () => {
       expect(res.status).toBe(400);
       expect(res.body.error).toBe('invite_email_mismatch');
 
+      // Only the owner's seeded membership should exist — no member row added.
       const memberships = await dbMod.db
         .select()
         .from(dbMod.schema.memberships)
         .where(eq(dbMod.schema.memberships.workspaceId, ws.id));
-      expect(memberships).toEqual([]);
+      expect(memberships).toEqual([
+        expect.objectContaining({ userId: inviter.id, role: 'owner' }),
+      ]);
 
       const [stillPending] = await dbMod.db
         .select()
@@ -274,11 +284,15 @@ describeDb('auth routes', () => {
       expect(res.body.error).toBe('invite_blocked');
       expect(res.body.reason).toBe('user_already_has_workspace');
 
+      // Only the inviter's seeded owner membership should exist on inviterWs —
+      // the blocked invite must not have added the invitee as a member.
       const memberships = await dbMod.db
         .select()
         .from(dbMod.schema.memberships)
         .where(eq(dbMod.schema.memberships.workspaceId, inviterWs.id));
-      expect(memberships).toEqual([]);
+      expect(memberships).toEqual([
+        expect.objectContaining({ userId: inviter.id, role: 'owner' }),
+      ]);
 
       const [stillPending] = await dbMod.db
         .select()
@@ -314,11 +328,15 @@ describeDb('auth routes', () => {
       expect(res.status).toBe(200);
       expect(res.body.redirectTo).toBe('/auth/home');
 
+      // Already-accepted invites are idempotent — only the inviter's seeded
+      // owner membership exists; no second insert for the invitee.
       const memberships = await dbMod.db
         .select()
         .from(dbMod.schema.memberships)
         .where(eq(dbMod.schema.memberships.workspaceId, ws.id));
-      expect(memberships).toEqual([]);
+      expect(memberships).toEqual([
+        expect.objectContaining({ userId: inviter.id, role: 'owner' }),
+      ]);
 
       const [invitee] = await dbMod.db
         .select()

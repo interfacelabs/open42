@@ -1,15 +1,16 @@
 import { Router, type Request } from 'express';
 import { and, eq, sql } from 'drizzle-orm';
 
+import { resolveOwnerWorkspaceId } from '../../auth/membership.js';
 import { validateSession } from '../../auth/sessions.js';
 import type { ComposioClient } from '../../composio/client.js';
 import { createComposioClient } from '../../composio/client.js';
 import { generateNonce, signState, verifyState } from '../../connections/state-hmac.js';
 import { db, schema } from '../../db/client.js';
 import {
-  API_PUBLIC_URL,
   COMPOSIO_API_KEY,
   COMPOSIO_BASE_URL,
+  COMPOSIO_NOTION_AUTH_CONFIG_ID,
   OPEN42_INGEST_HMAC_SECRET,
   WEB_PUBLIC_URL,
 } from '../../env.js';
@@ -49,6 +50,12 @@ export function buildComposioRouter(depsIn: ComposioRouterDeps = {}) {
         res.status(400).json({ error: 'unsupported_connection_kind' });
         return;
       }
+      if (!COMPOSIO_NOTION_AUTH_CONFIG_ID) {
+        res
+          .status(503)
+          .json({ error: 'composio_not_configured', detail: 'notion_auth_config_id_missing' });
+        return;
+      }
       const session = await sessionFromRequest(req);
       if (!session) {
         res.status(401).json({ error: 'unauthorized' });
@@ -73,7 +80,7 @@ export function buildComposioRouter(depsIn: ComposioRouterDeps = {}) {
         nonce: generateNonce(),
         expiresAt,
       });
-      const redirectUri = `${API_PUBLIC_URL}/connections/composio/callback?state=${encodeURIComponent(
+      const redirectUri = `${WEB_PUBLIC_URL}/auth/connections/composio/callback?state=${encodeURIComponent(
         state,
       )}`;
 
@@ -82,6 +89,7 @@ export function buildComposioRouter(depsIn: ComposioRouterDeps = {}) {
       ).initiateConnection({
         user_id: workspaceId,
         app: 'notion',
+        auth_config_id: COMPOSIO_NOTION_AUTH_CONFIG_ID,
         redirect_uri: redirectUri,
       });
 
@@ -100,29 +108,39 @@ export function buildComposioRouter(depsIn: ComposioRouterDeps = {}) {
     }
   });
 
-  router.get('/composio/callback', async (req, res, next) => {
+  router.post('/composio/finalize', async (req, res, next) => {
     try {
       if (!OPEN42_INGEST_HMAC_SECRET) {
-        res.status(503).send('composio_not_configured');
+        res.status(503).json({ error: 'composio_not_configured' });
         return;
       }
       const composio = getComposio();
       if (!composio) {
-        res.status(503).send('composio_not_configured');
+        res.status(503).json({ error: 'composio_not_configured' });
         return;
       }
 
-      const state = typeof req.query.state === 'string' ? req.query.state : '';
+      const session = await sessionFromRequest(req);
+      if (!session) {
+        res.status(401).json({ error: 'unauthorized' });
+        return;
+      }
+
+      const state = typeof req.body?.state === 'string' ? req.body.state : '';
       const connectedAccountId =
-        typeof req.query.connected_account_id === 'string' ? req.query.connected_account_id : '';
+        typeof req.body?.connectedAccountId === 'string' ? req.body.connectedAccountId : '';
       if (!state || !connectedAccountId) {
-        res.status(400).send('missing query params');
+        res.status(400).json({ error: 'missing_params' });
         return;
       }
 
       const payload = verifyState(OPEN42_INGEST_HMAC_SECRET, state);
       if (!payload) {
-        res.status(400).send('invalid state');
+        res.status(400).json({ error: 'state_invalid' });
+        return;
+      }
+      if (payload.userId !== session.userId) {
+        res.status(403).json({ error: 'state_user_mismatch' });
         return;
       }
 
@@ -140,7 +158,12 @@ export function buildComposioRouter(depsIn: ComposioRouterDeps = {}) {
         return row;
       });
       if (!initState) {
-        res.status(400).send('state not found or already used');
+        // Already consumed or never existed. Treat as already-finalized
+        // when a connection exists for this workspace; otherwise expired.
+        const existing = await hasActiveNotionConnection(payload.workspaceId);
+        res
+          .status(existing ? 409 : 410)
+          .json({ error: existing ? 'already_connected' : 'state_expired' });
         return;
       }
       if (
@@ -149,21 +172,17 @@ export function buildComposioRouter(depsIn: ComposioRouterDeps = {}) {
         initState.kind !== 'notion-composio' ||
         initState.expiresAt.getTime() < Date.now()
       ) {
-        res.status(400).send('state metadata mismatch');
+        res.status(400).json({ error: 'state_metadata_mismatch' });
         return;
       }
       if (initState.composioPendingId && initState.composioPendingId !== connectedAccountId) {
-        res.status(400).send('connected_account_id mismatch');
+        res.status(400).json({ error: 'account_id_mismatch' });
         return;
       }
 
       const account = await (await composio).getConnection(connectedAccountId);
       if (account.status !== 'ACTIVE') {
-        res.status(400).send('account not active');
-        return;
-      }
-      if (account.user_id !== payload.workspaceId) {
-        res.status(400).send('user_id mismatch');
+        res.status(400).json({ error: 'account_not_active', status: account.status });
         return;
       }
 
@@ -178,14 +197,14 @@ export function buildComposioRouter(depsIn: ComposioRouterDeps = {}) {
         });
       } catch (err) {
         if (isUniqueViolation(err)) {
-          res.status(409).send('notion_connection_exists');
+          res.status(409).json({ error: 'already_connected' });
           return;
         }
         throw err;
       }
 
       void kick(payload.workspaceId).catch(() => undefined);
-      res.redirect(302, `${WEB_PUBLIC_URL}/auth/settings/connections?connected=notion`);
+      res.json({ ok: true, redirectTo: '/auth/home' });
     } catch (err) {
       next(err);
     }
@@ -201,20 +220,9 @@ async function sessionFromRequest(req: Request) {
 }
 
 async function ownerWorkspaceId(userId: string): Promise<string | null> {
-  const [user] = await db.select().from(schema.users).where(eq(schema.users.id, userId)).limit(1);
-  if (!user?.currentWorkspaceId) return null;
-  const [membership] = await db
-    .select()
-    .from(schema.memberships)
-    .where(
-      and(
-        eq(schema.memberships.userId, userId),
-        eq(schema.memberships.workspaceId, user.currentWorkspaceId),
-      ),
-    )
-    .limit(1);
-  if (!membership || membership.role !== 'owner') return null;
-  return user.currentWorkspaceId;
+  // Authorization claim comes from `memberships`, NOT `users.currentWorkspaceId`.
+  // See apps/api/src/auth/membership.ts (Codex ship-blocker #1).
+  return resolveOwnerWorkspaceId(userId);
 }
 
 async function hasActiveNotionConnection(workspaceId: string): Promise<boolean> {

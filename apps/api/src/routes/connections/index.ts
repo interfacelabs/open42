@@ -1,6 +1,7 @@
 import { Router, type Request } from 'express';
 import { and, eq, sql } from 'drizzle-orm';
 
+import { resolveOwnerWorkspaceId } from '../../auth/membership.js';
 import { validateSession } from '../../auth/sessions.js';
 import type { ComposioClient } from '../../composio/client.js';
 import { db, schema } from '../../db/client.js';
@@ -85,6 +86,9 @@ async function sessionFromRequest(req: Request) {
 }
 
 async function callerWorkspaceId(userId: string): Promise<string | null> {
-  const [user] = await db.select().from(schema.users).where(eq(schema.users.id, userId)).limit(1);
-  return user?.currentWorkspaceId ?? null;
+  // Authorization claim comes from `memberships`, NOT `users.currentWorkspaceId`.
+  // See apps/api/src/auth/membership.ts (Codex ship-blocker #1). P1 ships
+  // owner-only workspaces; once member roles can manage connections, switch
+  // to assertWorkspaceMembership against a route-supplied workspaceId.
+  return resolveOwnerWorkspaceId(userId);
 }

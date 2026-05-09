@@ -5,6 +5,7 @@ import { Value } from '@sinclair/typebox/value';
 import { and, desc, eq, sql } from 'drizzle-orm';
 import { Router, type Request } from 'express';
 
+import { assertWorkspaceMembership } from '../../auth/membership.js';
 import { validateSession } from '../../auth/sessions.js';
 import { db, schema } from '../../db/client.js';
 import { acquireWorkspaceLock, releaseLockWithoutAdvancing } from '../../ingest/locks.js';
@@ -163,9 +164,16 @@ async function requireWorkspace(
 ): Promise<AuthResult> {
   const session = await sessionFromRequest(req);
   if (!session) return { status: 401, error: 'unauthorized' };
-  const [user] = await db.select().from(schema.users).where(eq(schema.users.id, session.userId)).limit(1);
-  if (!user?.currentWorkspaceId || user.currentWorkspaceId !== workspaceId) {
+  // Authorization claim comes from `memberships`, NOT `users.currentWorkspaceId`.
+  // See apps/api/src/auth/membership.ts (Codex ship-blocker #1).
+  let role: 'owner' | 'member';
+  try {
+    ({ role } = await assertWorkspaceMembership(session.userId, workspaceId));
+  } catch {
     return { status: 404, error: 'not_found' };
+  }
+  if (ownerOnly && role !== 'owner') {
+    return { status: 403, error: 'forbidden' };
   }
   const [workspace] = await db
     .select()
@@ -173,21 +181,6 @@ async function requireWorkspace(
     .where(eq(schema.workspaces.id, workspaceId))
     .limit(1);
   if (!workspace) return { status: 404, error: 'not_found' };
-  if (ownerOnly) {
-    const [membership] = await db
-      .select()
-      .from(schema.memberships)
-      .where(
-        and(
-          eq(schema.memberships.userId, session.userId),
-          eq(schema.memberships.workspaceId, workspaceId),
-        ),
-      )
-      .limit(1);
-    if (!membership || membership.role !== 'owner') {
-      return { status: 403, error: 'forbidden' };
-    }
-  }
   return { workspace };
 }
 

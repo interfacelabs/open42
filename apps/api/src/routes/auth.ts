@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { eq } from 'drizzle-orm';
 
+import { resolveOwnerWorkspaceId } from '../auth/membership.js';
 import { createSession, invalidateSession } from '../auth/sessions.js';
 import {
   sendSupabaseMagicLink,
@@ -93,12 +94,11 @@ authRouter.post('/verify', async (req, res, next) => {
         return;
       }
       if (invite.status !== 'accepted') {
-        const [ownedWorkspace] = await db
-          .select({ id: schema.workspaces.id })
-          .from(schema.workspaces)
-          .where(eq(schema.workspaces.ownerUserId, user.id))
-          .limit(1);
-        if (ownedWorkspace) {
+        // Block invite acceptance if the user already owns a workspace.
+        // Resolve through `memberships` (Codex ship-blocker #1) — never
+        // lookup workspaces by owner_user_id directly from a route handler.
+        const ownedWorkspaceId = await resolveOwnerWorkspaceId(user.id);
+        if (ownedWorkspaceId) {
           res
             .status(409)
             .json({ error: 'invite_blocked', reason: 'user_already_has_workspace' });

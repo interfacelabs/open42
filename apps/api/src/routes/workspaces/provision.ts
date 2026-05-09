@@ -1,19 +1,25 @@
-import { and, desc, eq, or, sql } from 'drizzle-orm';
+import { and, desc, eq, sql } from 'drizzle-orm';
 import { Router, type Request } from 'express';
 
+import { resolveOwnerWorkspaceId } from '../../auth/membership.js';
 import { generateInviteLink as defaultGenerateInviteLink } from '../../auth/supabase.js';
 import { validateSession } from '../../auth/sessions.js';
 import { db, schema } from '../../db/client.js';
 import { renderInviteEmail } from '../../integrations/email-templates/invite.js';
 import { sendEmail as defaultSendEmail } from '../../integrations/resend.js';
-import { provisionTenant as defaultProvisionTenant } from '../../tenants/provision.js';
+import {
+  provisionTenant as defaultProvisionTenant,
+  safelyProvisionTenant as defaultSafelyProvisionTenant,
+} from '../../tenants/provision.js';
 
 const WORKSPACE_NAME_MAX = 80;
 const INVITE_LIMIT = 10;
 
 type WorkspacePlan = 'starter' | 'team' | 'business';
 
-type WorkspaceRuntime = 'pending' | 'ready' | 'failed';
+type WorkspaceRuntime = 'provisioning' | 'overdue' | 'ready' | 'failed';
+
+const PROVISIONING_OVERDUE_MS = 60 * 1000;
 
 interface CurrentWorkspace {
   id: string;
@@ -22,13 +28,23 @@ interface CurrentWorkspace {
   status: string;
   gbrainReady: boolean;
   runtime: WorkspaceRuntime;
+  lastError: string | null;
+  provisionAttempts: number;
+  provisioningStartedAt: Date;
   createdAt: Date;
 }
 
-export function deriveRuntime(input: { status: string; gbrainReady: boolean }): WorkspaceRuntime {
+export function deriveRuntime(input: {
+  status: string;
+  gbrainReady: boolean;
+  provisioningStartedAt: Date;
+  now?: Date;
+}): WorkspaceRuntime {
   if (input.status === 'failed') return 'failed';
   if (input.status === 'ready' && input.gbrainReady) return 'ready';
-  return 'pending';
+  const elapsed = (input.now ?? new Date()).getTime() - input.provisioningStartedAt.getTime();
+  if (elapsed > PROVISIONING_OVERDUE_MS) return 'overdue';
+  return 'provisioning';
 }
 
 interface CurrentPayload {
@@ -62,12 +78,13 @@ interface WorkspaceLifecycleRepo {
 
 export function buildWorkspaceProvisionRouter(deps: {
   provisionTenant?: typeof defaultProvisionTenant;
+  safelyProvisionTenant?: typeof defaultSafelyProvisionTenant;
   repo?: WorkspaceLifecycleRepo;
   sendEmail?: typeof defaultSendEmail;
   generateInviteLink?: typeof defaultGenerateInviteLink;
 } = {}) {
   const router = Router();
-  const provisionTenant = deps.provisionTenant ?? defaultProvisionTenant;
+  const safelyProvisionTenant = deps.safelyProvisionTenant ?? defaultSafelyProvisionTenant;
   const repo = deps.repo ?? createDrizzleWorkspaceLifecycleRepo();
   const sendEmail = deps.sendEmail ?? defaultSendEmail;
   const generateInviteLink = deps.generateInviteLink ?? defaultGenerateInviteLink;
@@ -102,11 +119,60 @@ export function buildWorkspaceProvisionRouter(deps: {
       const { payload, wasCreated } = await repo.saveWorkspaceName(session.userId, name);
       if (wasCreated && payload.workspace) {
         // Fire-and-forget: provisioning is slow (~30s), client polls /current.runtime for state.
-        void provisionTenant({ ownerUserId: session.userId }).catch((err) =>
-          console.error('[provision] async failure', err),
-        );
+        // safelyProvisionTenant captures failures into the workspaces row instead of
+        // swallowing the error — see /onboarding/retry-provision for the recovery path.
+        void safelyProvisionTenant({ ownerUserId: session.userId });
       }
       res.json(payload);
+    } catch (err) {
+      next(err);
+    }
+  });
+
+  router.post('/onboarding/retry-provision', async (req, res, next) => {
+    try {
+      const session = await requireSession(req, res);
+      if (!session) return;
+
+      // Authorization claim comes from `memberships` (role='owner'), NOT
+      // workspaces.owner_user_id directly. See apps/api/src/auth/membership.ts
+      // (Codex ship-blocker #1) — the helper JOINs through memberships and
+      // excludes soft-deleted workspaces.
+      const ownedWorkspaceId = await resolveOwnerWorkspaceId(session.userId);
+      if (!ownedWorkspaceId) {
+        res.status(409).json({ error: 'no_workspace' });
+        return;
+      }
+
+      const [workspace] = await db
+        .select({ id: schema.workspaces.id, status: schema.workspaces.status })
+        .from(schema.workspaces)
+        .where(eq(schema.workspaces.id, ownedWorkspaceId))
+        .limit(1);
+
+      if (!workspace) {
+        res.status(409).json({ error: 'no_workspace' });
+        return;
+      }
+      if (workspace.status === 'ready') {
+        res.json({ ok: true, status: 'ready' });
+        return;
+      }
+
+      await db
+        .update(schema.workspaces)
+        .set({
+          status: 'provisioning',
+          lastError: null,
+          provisioningStartedAt: new Date(),
+        })
+        .where(eq(schema.workspaces.id, workspace.id));
+
+      // Fire-and-forget — same async pattern as the initial provision, but
+      // safelyProvisionTenant captures errors into the workspaces row.
+      void safelyProvisionTenant({ ownerUserId: session.userId });
+
+      res.status(202).json({ ok: true, status: 'provisioning' });
     } catch (err) {
       next(err);
     }
@@ -218,16 +284,30 @@ function createDrizzleWorkspaceLifecycleRepo(): WorkspaceLifecycleRepo {
           .limit(1);
         if (!user) throw new Error('user_not_found');
 
-        if (user.currentWorkspaceId) {
+        // Authorization claim comes from `memberships` (role='owner'), NOT
+        // `users.currentWorkspaceId`. See apps/api/src/auth/membership.ts
+        // (Codex ship-blocker #1).
+        const [ownerRow] = await tx
+          .select({ workspaceId: schema.memberships.workspaceId })
+          .from(schema.memberships)
+          .innerJoin(
+            schema.workspaces,
+            eq(schema.workspaces.id, schema.memberships.workspaceId),
+          )
+          .where(
+            and(
+              eq(schema.memberships.userId, userId),
+              eq(schema.memberships.role, 'owner'),
+              sql`${schema.workspaces.deletedAt} IS NULL`,
+            ),
+          )
+          .limit(1);
+
+        if (ownerRow?.workspaceId) {
           await tx
             .update(schema.workspaces)
             .set({ name })
-            .where(
-              and(
-                eq(schema.workspaces.id, user.currentWorkspaceId),
-                eq(schema.workspaces.ownerUserId, userId),
-              ),
-            );
+            .where(eq(schema.workspaces.id, ownerRow.workspaceId));
           return false;
         }
 
@@ -355,8 +435,10 @@ async function currentPayload(userId: string): Promise<CurrentPayload | null> {
 }
 
 export async function currentWorkspaceForUser(userId: string): Promise<CurrentWorkspace | null> {
-  // Resolve via owner OR membership. Membership covers invite-accepted members
-  // who don't have a `users.currentWorkspaceId` write yet.
+  // Membership is the only authorization claim — see apps/api/src/auth/membership.ts
+  // (Codex ship-blocker #1). The owner row also gets a membership at creation
+  // time (saveWorkspaceName inserts both atomically), so the membership table
+  // is sufficient on its own.
   const [row] = await db
     .select({ workspace: schema.workspaces })
     .from(schema.workspaces)
@@ -368,7 +450,10 @@ export async function currentWorkspaceForUser(userId: string): Promise<CurrentWo
       ),
     )
     .where(
-      or(eq(schema.workspaces.ownerUserId, userId), eq(schema.memberships.userId, userId)),
+      and(
+        eq(schema.memberships.userId, userId),
+        sql`${schema.workspaces.deletedAt} IS NULL`,
+      ),
     )
     .limit(1);
   if (!row?.workspace) return null;
@@ -384,7 +469,14 @@ export async function currentWorkspaceForUser(userId: string): Promise<CurrentWo
     plan: workspace.plan,
     status: workspace.status,
     gbrainReady,
-    runtime: deriveRuntime({ status: workspace.status, gbrainReady }),
+    runtime: deriveRuntime({
+      status: workspace.status,
+      gbrainReady,
+      provisioningStartedAt: workspace.provisioningStartedAt,
+    }),
+    lastError: workspace.lastError,
+    provisionAttempts: workspace.provisionAttempts,
+    provisioningStartedAt: workspace.provisioningStartedAt,
     createdAt: workspace.createdAt,
   };
 }

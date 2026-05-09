@@ -5,6 +5,7 @@ import { and, eq, sql } from 'drizzle-orm';
 import { Router, type Request } from 'express';
 import multer from 'multer';
 
+import { resolveOwnerWorkspaceId } from '../../auth/membership.js';
 import { validateSession } from '../../auth/sessions.js';
 import { db, schema } from '../../db/client.js';
 
@@ -86,20 +87,9 @@ async function sessionFromRequest(req: Request) {
 }
 
 async function ownerWorkspaceId(userId: string): Promise<string | null> {
-  const [user] = await db.select().from(schema.users).where(eq(schema.users.id, userId)).limit(1);
-  if (!user?.currentWorkspaceId) return null;
-  const [membership] = await db
-    .select()
-    .from(schema.memberships)
-    .where(
-      and(
-        eq(schema.memberships.userId, userId),
-        eq(schema.memberships.workspaceId, user.currentWorkspaceId),
-      ),
-    )
-    .limit(1);
-  if (!membership || membership.role !== 'owner') return null;
-  return user.currentWorkspaceId;
+  // Authorization claim comes from `memberships`, NOT `users.currentWorkspaceId`.
+  // See apps/api/src/auth/membership.ts (Codex ship-blocker #1).
+  return resolveOwnerWorkspaceId(userId);
 }
 
 async function hasActiveNotionConnection(workspaceId: string): Promise<boolean> {

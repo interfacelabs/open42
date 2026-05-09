@@ -2,6 +2,7 @@ import Anthropic from '@anthropic-ai/sdk';
 import { eq } from 'drizzle-orm';
 import { Router, type Request } from 'express';
 
+import { resolveOwnerWorkspaceId } from '../auth/membership.js';
 import { validateSession } from '../auth/sessions.js';
 import { db, schema } from '../db/client.js';
 import { GbrainCitationChunk, GbrainClient } from '../gbrain/client.js';
@@ -130,17 +131,15 @@ async function sessionFromRequest(req: Request) {
 }
 
 async function workspaceForUser(userId: string) {
-  const [user] = await db
-    .select()
-    .from(schema.users)
-    .where(eq(schema.users.id, userId))
-    .limit(1);
-  if (!user?.currentWorkspaceId) return null;
+  // Authorization claim comes from `memberships`, NOT `users.currentWorkspaceId`.
+  // See apps/api/src/auth/membership.ts (Codex ship-blocker #1).
+  const workspaceId = await resolveOwnerWorkspaceId(userId);
+  if (!workspaceId) return null;
 
   const [workspace] = await db
     .select()
     .from(schema.workspaces)
-    .where(eq(schema.workspaces.id, user.currentWorkspaceId))
+    .where(eq(schema.workspaces.id, workspaceId))
     .limit(1);
   if (
     !(workspace?.gbrainBaseUrl || workspace?.flyPrivateIp) ||
