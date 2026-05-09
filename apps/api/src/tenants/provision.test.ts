@@ -4,7 +4,13 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { decryptSecret } from '../crypto/envelope.js';
 import type { TenantProvisionRepo } from './provision.js';
-import { classifyProvisioningError, provisionTenant, safelyProvisionTenant } from './provision.js';
+import {
+  DEFAULT_GBRAIN_GIT_REF,
+  classifyProvisioningError,
+  gbrainGitRef,
+  provisionTenant,
+  safelyProvisionTenant,
+} from './provision.js';
 
 describe('provisionTenant', () => {
   it('creates a Fly machine, registers gbrain OAuth, encrypts the secret, and stores workspace metadata', async () => {
@@ -296,6 +302,36 @@ describe('provisionTenant', () => {
       gbrainBaseUrl: 'http://[fdaa::2]:8080',
     });
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+});
+
+describe('gbrainGitRef', () => {
+  const SHA = '1bdba7423abf39210832ebcea0b4ca34a1cde689';
+
+  it('returns the codebase default when GBRAIN_GIT_REF is unset', () => {
+    expect(gbrainGitRef({}, 'production')).toBe(DEFAULT_GBRAIN_GIT_REF);
+  });
+
+  it('accepts a 40-char hex SHA in production', () => {
+    expect(gbrainGitRef({ GBRAIN_GIT_REF: SHA }, 'production')).toBe(SHA);
+  });
+
+  it('rejects a branch ref in production', () => {
+    expect(() =>
+      gbrainGitRef({ GBRAIN_GIT_REF: 'garrytan/v0.27.1-multimodal' }, 'production'),
+    ).toThrow(/40-char hex SHA/);
+  });
+
+  it('rejects a short SHA in production', () => {
+    expect(() => gbrainGitRef({ GBRAIN_GIT_REF: '1bdba74' }, 'production')).toThrow(
+      /40-char hex SHA/,
+    );
+  });
+
+  it('allows a branch ref outside production for local iteration', () => {
+    expect(
+      gbrainGitRef({ GBRAIN_GIT_REF: 'garrytan/v0.27.1-multimodal' }, 'development'),
+    ).toBe('garrytan/v0.27.1-multimodal');
   });
 });
 

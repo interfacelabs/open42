@@ -760,14 +760,30 @@ function tenantImage(env: TenantProvisionEnv, gbrainVersion: string): string {
   return env.GBRAIN_TENANT_IMAGE ?? `open42/gbrain-tenant:v${gbrainVersion}`;
 }
 
-function gbrainGitRef(env: TenantProvisionEnv): string {
+export const DEFAULT_GBRAIN_GIT_REF = '1bdba7423abf39210832ebcea0b4ca34a1cde689';
+const SHA_PATTERN = /^[0-9a-f]{40}$/i;
+
+export function gbrainGitRef(
+  env: TenantProvisionEnv,
+  nodeEnv: string | undefined = process.env.NODE_ENV,
+): string {
   // Pinned to an immutable commit on garrytan/gbrain branch
   // `garrytan/v0.27.1-multimodal`. Branches are mutable (a force-push would
   // silently land in the next image rebuild), so we pin to the SHA. Bump
   // deliberately as part of an Open42 release — see
   // ENGINEERING.md §gbrain version pinning. Mirrors the default in
   // infra/Dockerfile.gbrain-tenant.
-  return env.GBRAIN_GIT_REF ?? '1bdba7423abf39210832ebcea0b4ca34a1cde689';
+  const ref = env.GBRAIN_GIT_REF ?? DEFAULT_GBRAIN_GIT_REF;
+  // Production fail-loud: reject anything that isn't a 40-char SHA so a stray
+  // branch ref (mutable, force-pushable) can't sneak into a production image
+  // rebuild. Dev/test stays permissive — branch refs are useful when iterating
+  // on gbrain locally.
+  if (nodeEnv === 'production' && !SHA_PATTERN.test(ref)) {
+    throw new Error(
+      `GBRAIN_GIT_REF must be a 40-char hex SHA in production, got: ${ref}`,
+    );
+  }
+  return ref;
 }
 
 async function createDockerEnvFile(env: Record<string, string>): Promise<string> {
