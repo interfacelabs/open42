@@ -35,6 +35,9 @@ agents/openai.yaml.local
 .gstack-*
 gstack-*.local
 
+# --- Local dependency checkouts ---
+/gbrain/
+
 # --- Generic agent / context state ---
 .memory/
 memory/
