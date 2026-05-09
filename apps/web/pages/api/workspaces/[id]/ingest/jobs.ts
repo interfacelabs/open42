@@ -1,5 +1,7 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 
+import { apiUrl, baseProxyHeaders, sendBackend } from '../../../_lib/proxy-security';
+
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   if (req.method !== 'GET') {
     res.setHeader('Allow', 'GET');
@@ -13,25 +15,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   const backend = await fetch(
     `${apiUrl()}/workspaces/${encodeURIComponent(String(req.query.id))}/ingest/jobs${suffix}`,
     {
-      headers: {
-        Cookie: req.headers.cookie ?? '',
-        'User-Agent': req.headers['user-agent'] ?? '',
-      },
+      headers: baseProxyHeaders(req),
     },
   );
   await sendBackend(res, backend);
-}
-
-async function sendBackend(res: NextApiResponse, backend: Response) {
-  const text = await backend.text();
-  res.status(backend.status);
-  try {
-    res.json(JSON.parse(text));
-  } catch {
-    res.send(text);
-  }
-}
-
-function apiUrl() {
-  return (process.env.API_PUBLIC_URL ?? 'http://localhost:3001').replace(/\/+$/, '');
 }

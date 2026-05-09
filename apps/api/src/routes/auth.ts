@@ -77,6 +77,9 @@ authRouter.post('/verify', async (req, res, next) => {
       email: optionalString(req.body?.email),
       token: optionalString(req.body?.token),
     });
+    if (!inviteId) {
+      assertSigninAllowed(identity.email);
+    }
     const user = await upsertUser(identity);
 
     if (inviteId) {
@@ -93,7 +96,11 @@ authRouter.post('/verify', async (req, res, next) => {
         res.status(400).json({ error: 'invite_email_mismatch' });
         return;
       }
-      if (invite.status !== 'accepted') {
+      if (invite.status === 'revoked') {
+        res.status(410).json({ error: 'invite_revoked' });
+        return;
+      }
+      if (invite.status === 'pending') {
         // Block invite acceptance if the user already owns a workspace.
         // Resolve through `memberships` (Codex ship-blocker #1) — never
         // lookup workspaces by owner_user_id directly from a route handler.
@@ -134,6 +141,10 @@ authRouter.post('/verify', async (req, res, next) => {
     }
     if (err instanceof Error && err.message.startsWith('supabase_')) {
       res.status(400).json({ error: err.message });
+      return;
+    }
+    if (err instanceof Error && err.message === 'signin_not_allowed') {
+      res.status(403).json({ error: 'signin_not_allowed' });
       return;
     }
     if (err instanceof Error && err.message === 'email_already_linked') {

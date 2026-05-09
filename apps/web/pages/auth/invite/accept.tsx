@@ -167,12 +167,17 @@ export default function AcceptInvitePage() {
       return;
     }
 
-    // Strip the token from URL so refresh doesn't re-send it.
+    // Strip token material from URL so refresh, history, and referrers do not retain it.
     if (typeof window !== 'undefined') {
+      const clean = new URL(window.location.href);
+      for (const key of ['token_hash', 'tokenHash', 'access_token', 'refresh_token', 'type']) {
+        clean.searchParams.delete(key);
+      }
+      clean.hash = '';
       window.history.replaceState(
         null,
         '',
-        window.location.pathname + window.location.search,
+        clean.pathname + (clean.search ? clean.search : ''),
       );
     }
 

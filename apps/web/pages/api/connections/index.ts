@@ -1,5 +1,7 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 
+import { apiUrl, baseProxyHeaders, sendBackend } from '../_lib/proxy-security';
+
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   if (req.method !== 'GET') {
     res.setHeader('Allow', 'GET');
@@ -7,28 +9,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     return;
   }
   const backend = await fetch(`${apiUrl()}/connections`, {
-    headers: baseHeaders(req),
+    headers: baseProxyHeaders(req),
   });
   await sendBackend(res, backend);
-}
-
-function baseHeaders(req: NextApiRequest): HeadersInit {
-  return {
-    Cookie: req.headers.cookie ?? '',
-    'User-Agent': req.headers['user-agent'] ?? '',
-  };
-}
-
-async function sendBackend(res: NextApiResponse, backend: Response) {
-  const text = await backend.text();
-  res.status(backend.status);
-  try {
-    res.json(JSON.parse(text));
-  } catch {
-    res.send(text);
-  }
-}
-
-function apiUrl() {
-  return (process.env.API_PUBLIC_URL ?? 'http://localhost:3001').replace(/\/+$/, '');
 }

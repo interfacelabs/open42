@@ -1,22 +1,18 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 
+import { apiUrl, mutationProxyHeaders, rejectCrossSiteMutation } from './_lib/proxy-security';
+
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   if (req.method !== 'POST') {
     res.setHeader('Allow', 'POST');
     res.status(405).json({ error: 'method_not_allowed' });
     return;
   }
+  if (rejectCrossSiteMutation(req, res)) return;
 
   const backend = await fetch(`${apiUrl()}/chat`, {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Cookie: req.headers.cookie ?? '',
-      'User-Agent': req.headers['user-agent'] ?? '',
-      Origin: process.env.WEB_PUBLIC_URL ?? `http://${req.headers.host ?? 'localhost:3000'}`,
-      'Sec-Fetch-Site': 'same-origin',
-      'X-CSRF-Token': String(req.headers['x-csrf-token'] ?? ''),
-    },
+    headers: mutationProxyHeaders(req),
     body: JSON.stringify(req.body),
   });
 
@@ -48,7 +44,3 @@ export const config = {
     },
   },
 };
-
-function apiUrl() {
-  return (process.env.API_PUBLIC_URL ?? 'http://localhost:3001').replace(/\/+$/, '');
-}

@@ -5,19 +5,20 @@ import {
   mutationProxyHeaders,
   rejectCrossSiteMutation,
   sendBackend,
-} from '../_lib/proxy-security';
+} from '../../_lib/proxy-security';
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
-  if (req.method !== 'DELETE') {
-    res.setHeader('Allow', 'DELETE');
+  if (req.method !== 'POST') {
+    res.setHeader('Allow', 'POST');
     res.status(405).json({ error: 'method_not_allowed' });
     return;
   }
   if (rejectCrossSiteMutation(req, res)) return;
 
-  const backend = await fetch(`${apiUrl()}/connections/${encodeURIComponent(String(req.query.id))}`, {
-    method: 'DELETE',
-    headers: mutationProxyHeaders(req, { contentType: null }),
+  const backend = await fetch(`${apiUrl()}/workspaces/onboarding/retry-provision`, {
+    method: 'POST',
+    headers: mutationProxyHeaders(req),
+    body: JSON.stringify(req.body ?? {}),
   });
   await sendBackend(res, backend);
 }
