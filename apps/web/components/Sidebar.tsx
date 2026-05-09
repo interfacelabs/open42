@@ -1,5 +1,13 @@
 import Link from 'next/link';
-import { Brain, FileArchive, LogOut, MessageSquare, Settings, WandSparkles } from 'lucide-react';
+import {
+  Brain,
+  FileArchive,
+  KeyRound,
+  LogOut,
+  MessageSquare,
+  Settings,
+  WandSparkles,
+} from 'lucide-react';
 
 const nav = [
   { href: '/auth/home', label: 'Brain status', icon: Brain },
@@ -7,6 +15,7 @@ const nav = [
   { href: '/auth/chat', label: 'Chat', icon: MessageSquare },
   { href: '/auth/skills/refund-policy', label: 'Skills', icon: WandSparkles },
   { href: '/auth/settings/connections', label: 'Settings', icon: Settings },
+  { href: '/auth/settings/api-keys', label: 'API Keys', icon: KeyRound },
   { href: '/sign_out', label: 'Sign out', icon: LogOut },
 ];
 
