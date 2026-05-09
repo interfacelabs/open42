@@ -10,6 +10,9 @@ const state = vi.hoisted(() => ({
     flyPrivateIp: string | null;
     gbrainOauthClientId: string | null;
     gbrainOauthClientSecretCiphertext: Buffer | null;
+    lastError: string | null;
+    provisionAttempts: number;
+    provisioningStartedAt: Date;
     createdAt: Date;
   },
   whereCalls: [] as unknown[],
@@ -58,6 +61,9 @@ describe('currentWorkspaceForUser (membership-aware lookup)', () => {
       flyPrivateIp: null,
       gbrainOauthClientId: 'client-x',
       gbrainOauthClientSecretCiphertext: Buffer.from('secret'),
+      lastError: null,
+      provisionAttempts: 0,
+      provisioningStartedAt: new Date('2026-05-07T10:00:00Z'),
       createdAt: new Date('2026-05-07T10:00:00Z'),
     };
 
@@ -78,7 +84,7 @@ describe('currentWorkspaceForUser (membership-aware lookup)', () => {
     expect(ws).toBeNull();
   });
 
-  it("derives runtime: 'pending' when status='ready' but gbrain unconfigured", async () => {
+  it("falls back to runtime: 'provisioning' when status='ready' but gbrain unconfigured", async () => {
     state.workspaceRow = {
       id: 'workspace-a',
       name: 'Workspace A',
@@ -88,10 +94,13 @@ describe('currentWorkspaceForUser (membership-aware lookup)', () => {
       flyPrivateIp: null,
       gbrainOauthClientId: null,
       gbrainOauthClientSecretCiphertext: null,
+      lastError: null,
+      provisionAttempts: 0,
+      provisioningStartedAt: new Date(),
       createdAt: new Date('2026-05-07T10:00:00Z'),
     };
     const ws = await currentWorkspaceForUser('user-b');
-    expect(ws?.runtime).toBe('pending');
+    expect(ws?.runtime).toBe('provisioning');
     expect(ws?.gbrainReady).toBe(false);
   });
 });

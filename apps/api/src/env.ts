@@ -16,6 +16,9 @@ for (const file of ['.env.local', '.env']) {
 
 export const COMPOSIO_API_KEY = process.env.COMPOSIO_API_KEY ?? '';
 export const COMPOSIO_BASE_URL = process.env.COMPOSIO_BASE_URL || undefined;
+export const COMPOSIO_NOTION_AUTH_CONFIG_ID =
+  process.env.COMPOSIO_NOTION_AUTH_CONFIG_ID ?? '';
+export const COMPOSIO_WEBHOOK_SECRET = process.env.COMPOSIO_WEBHOOK_SECRET ?? '';
 export const OPEN42_INGEST_HMAC_SECRET = process.env.OPEN42_INGEST_HMAC_SECRET ?? '';
 export const API_PUBLIC_URL = (
   process.env.API_PUBLIC_URL ?? `http://localhost:${process.env.API_PORT ?? '3001'}`

@@ -7,6 +7,7 @@ describe('createFakeComposio', () => {
     const res = await fake.initiateConnection({
       user_id: 'workspace-1',
       app: 'notion',
+      auth_config_id: 'ac_test',
       redirect_uri: 'https://app/cb',
     });
     expect(res.redirect_url).toContain('composio.fake');
@@ -19,6 +20,7 @@ describe('createFakeComposio', () => {
     const init = await fake.initiateConnection({
       user_id: 'workspace-1',
       app: 'notion',
+      auth_config_id: 'ac_test',
       redirect_uri: 'https://app/cb',
     });
     activateFakeAccount(fake, init.pending_connected_account_id);

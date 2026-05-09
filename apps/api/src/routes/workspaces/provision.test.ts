@@ -8,6 +8,7 @@ import { buildWorkspaceProvisionRouter, deriveRuntime } from './provision.js';
 const mocks = vi.hoisted(() => ({
   validateSession: vi.fn(),
   provisionTenant: vi.fn(),
+  safelyProvisionTenant: vi.fn(),
   sendEmail: vi.fn(),
   generateInviteLink: vi.fn(),
 }));
@@ -18,12 +19,14 @@ vi.mock('../../auth/sessions.js', () => ({
 
 vi.mock('../../tenants/provision.js', () => ({
   provisionTenant: mocks.provisionTenant,
+  safelyProvisionTenant: mocks.safelyProvisionTenant,
 }));
 
 describe('workspace provision route', () => {
   beforeEach(() => {
     mocks.validateSession.mockReset();
     mocks.provisionTenant.mockReset();
+    mocks.safelyProvisionTenant.mockReset();
     mocks.sendEmail.mockReset();
     mocks.generateInviteLink.mockReset();
   });
@@ -39,7 +42,7 @@ describe('workspace provision route', () => {
 
     expect(res.status).toBe(401);
     expect(res.body).toEqual({ error: 'unauthorized' });
-    expect(mocks.provisionTenant).not.toHaveBeenCalled();
+    expect(mocks.safelyProvisionTenant).not.toHaveBeenCalled();
   });
 
   it('captures workspace name and invites during onboarding', async () => {
@@ -89,13 +92,13 @@ describe('workspace provision route', () => {
       .send({});
 
     expect(res.status).toBe(404);
-    expect(mocks.provisionTenant).not.toHaveBeenCalled();
+    expect(mocks.safelyProvisionTenant).not.toHaveBeenCalled();
   });
 
   describe('POST /workspaces/onboarding/workspace (idempotent)', () => {
     it('creates workspace + kicks off provisioning on first call', async () => {
       mocks.validateSession.mockResolvedValue({ userId: 'user-1' });
-      mocks.provisionTenant.mockResolvedValue({
+      mocks.safelyProvisionTenant.mockResolvedValue({
         workspaceId: 'workspace-1',
         flyMachineId: 'machine-1',
         flyPrivateIp: '127.0.0.1:18080',
@@ -108,7 +111,10 @@ describe('workspace provision route', () => {
           plan: null,
           status: 'provisioning',
           gbrainReady: false,
-          runtime: 'pending',
+          runtime: 'provisioning',
+          lastError: null,
+          provisionAttempts: 0,
+          provisioningStartedAt: new Date('2026-05-07T10:00:00Z'),
           createdAt: new Date('2026-05-07T10:00:00Z'),
         },
       });
@@ -121,7 +127,10 @@ describe('workspace provision route', () => {
             plan: null,
             status: 'provisioning',
             gbrainReady: false,
-            runtime: 'pending',
+            runtime: 'provisioning',
+            lastError: null,
+            provisionAttempts: 0,
+            provisioningStartedAt: new Date('2026-05-07T10:00:00Z'),
             createdAt: new Date('2026-05-07T10:00:00Z'),
           },
           invites: [],
@@ -139,8 +148,8 @@ describe('workspace provision route', () => {
 
       expect(res.status).toBe(200);
       await new Promise((r) => setImmediate(r));
-      expect(mocks.provisionTenant).toHaveBeenCalledTimes(1);
-      expect(mocks.provisionTenant).toHaveBeenCalledWith({ ownerUserId: 'user-1' });
+      expect(mocks.safelyProvisionTenant).toHaveBeenCalledTimes(1);
+      expect(mocks.safelyProvisionTenant).toHaveBeenCalledWith({ ownerUserId: 'user-1' });
     });
 
     it('returns existing workspace and does NOT re-provision when name matches', async () => {
@@ -156,7 +165,7 @@ describe('workspace provision route', () => {
 
       expect(res.status).toBe(200);
       await new Promise((r) => setImmediate(r));
-      expect(mocks.provisionTenant).not.toHaveBeenCalled();
+      expect(mocks.safelyProvisionTenant).not.toHaveBeenCalled();
     });
 
     it('renames existing workspace and does NOT re-provision when name differs', async () => {
@@ -171,7 +180,10 @@ describe('workspace provision route', () => {
             plan: 'team',
             status: 'provisioning',
             gbrainReady: false,
-            runtime: 'pending',
+            runtime: 'provisioning',
+            lastError: null,
+            provisionAttempts: 0,
+            provisioningStartedAt: new Date('2026-05-07T10:00:00Z'),
             createdAt: new Date('2026-05-07T10:00:00Z'),
           },
           invites: [],
@@ -190,7 +202,7 @@ describe('workspace provision route', () => {
       expect(res.status).toBe(200);
       expect(res.body.workspace.name).toBe('New Name');
       await new Promise((r) => setImmediate(r));
-      expect(mocks.provisionTenant).not.toHaveBeenCalled();
+      expect(mocks.safelyProvisionTenant).not.toHaveBeenCalled();
       expect(repo.saveWorkspaceName).toHaveBeenCalledWith('user-1', 'New Name');
     });
   });
@@ -292,7 +304,7 @@ describe('workspace provision route', () => {
   });
 
   describe('GET /workspaces/current runtime field', () => {
-    it("exposes runtime: 'pending' from the repo when status is 'provisioning'", async () => {
+    it("exposes runtime: 'provisioning' from the repo when status is 'provisioning'", async () => {
       mocks.validateSession.mockResolvedValue({ userId: 'user-1' });
       const repo = makeRepo({
         workspace: {
@@ -301,7 +313,10 @@ describe('workspace provision route', () => {
           plan: null,
           status: 'provisioning',
           gbrainReady: false,
-          runtime: 'pending',
+          runtime: 'provisioning',
+          lastError: null,
+          provisionAttempts: 0,
+          provisioningStartedAt: new Date('2026-05-07T10:00:00Z'),
           createdAt: new Date('2026-05-07T10:00:00Z'),
         },
       });
@@ -311,7 +326,7 @@ describe('workspace provision route', () => {
         .set('Cookie', 'open42_session=session-1');
 
       expect(res.status).toBe(200);
-      expect(res.body.workspace.runtime).toBe('pending');
+      expect(res.body.workspace.runtime).toBe('provisioning');
     });
 
     it("exposes runtime: 'ready' when status='ready' and gbrain is configured", async () => {
@@ -324,6 +339,9 @@ describe('workspace provision route', () => {
           status: 'ready',
           gbrainReady: true,
           runtime: 'ready',
+          lastError: null,
+          provisionAttempts: 0,
+          provisioningStartedAt: new Date('2026-05-07T10:00:00Z'),
           createdAt: new Date('2026-05-07T10:00:00Z'),
         },
       });
@@ -345,6 +363,9 @@ describe('workspace provision route', () => {
           status: 'failed',
           gbrainReady: false,
           runtime: 'failed',
+          lastError: 'docker_unavailable: cannot connect to docker daemon',
+          provisionAttempts: 1,
+          provisioningStartedAt: new Date('2026-05-07T10:00:00Z'),
           createdAt: new Date('2026-05-07T10:00:00Z'),
         },
       });
@@ -359,21 +380,71 @@ describe('workspace provision route', () => {
 });
 
 describe('deriveRuntime', () => {
-  it("returns 'pending' when status='provisioning'", () => {
-    expect(deriveRuntime({ status: 'provisioning', gbrainReady: false })).toBe('pending');
+  const fresh = new Date('2026-05-08T20:00:00Z');
+  const overdue = new Date('2026-05-08T19:58:00Z'); // 2 minutes before "now"
+  const now = new Date('2026-05-08T20:00:00Z');
+
+  it("returns 'provisioning' when fresh", () => {
+    expect(
+      deriveRuntime({
+        status: 'provisioning',
+        gbrainReady: false,
+        provisioningStartedAt: fresh,
+        now,
+      }),
+    ).toBe('provisioning');
+  });
+
+  it("returns 'overdue' once provisioning has run past the threshold", () => {
+    expect(
+      deriveRuntime({
+        status: 'provisioning',
+        gbrainReady: false,
+        provisioningStartedAt: overdue,
+        now,
+      }),
+    ).toBe('overdue');
   });
 
   it("returns 'ready' when status='ready' AND gbrainReady=true", () => {
-    expect(deriveRuntime({ status: 'ready', gbrainReady: true })).toBe('ready');
+    expect(
+      deriveRuntime({
+        status: 'ready',
+        gbrainReady: true,
+        provisioningStartedAt: fresh,
+        now,
+      }),
+    ).toBe('ready');
   });
 
-  it("returns 'failed' when status='failed'", () => {
-    expect(deriveRuntime({ status: 'failed', gbrainReady: false })).toBe('failed');
-    expect(deriveRuntime({ status: 'failed', gbrainReady: true })).toBe('failed');
+  it("returns 'failed' when status='failed' regardless of other inputs", () => {
+    expect(
+      deriveRuntime({
+        status: 'failed',
+        gbrainReady: false,
+        provisioningStartedAt: fresh,
+        now,
+      }),
+    ).toBe('failed');
+    expect(
+      deriveRuntime({
+        status: 'failed',
+        gbrainReady: true,
+        provisioningStartedAt: fresh,
+        now,
+      }),
+    ).toBe('failed');
   });
 
-  it("returns 'pending' when status='ready' but gbrain not configured", () => {
-    expect(deriveRuntime({ status: 'ready', gbrainReady: false })).toBe('pending');
+  it("falls back to 'provisioning' when status='ready' but gbrain not configured", () => {
+    expect(
+      deriveRuntime({
+        status: 'ready',
+        gbrainReady: false,
+        provisioningStartedAt: fresh,
+        now,
+      }),
+    ).toBe('provisioning');
   });
 });
 
@@ -394,7 +465,7 @@ function makeApp(repo = makeRepo()) {
 }
 
 type WorkspacePlan = 'starter' | 'team' | 'business';
-type WorkspaceRuntime = 'pending' | 'ready' | 'failed';
+type WorkspaceRuntime = 'provisioning' | 'overdue' | 'ready' | 'failed';
 
 interface MockWorkspace {
   id: string;
@@ -403,6 +474,9 @@ interface MockWorkspace {
   status: string;
   gbrainReady: boolean;
   runtime: WorkspaceRuntime;
+  lastError: string | null;
+  provisionAttempts: number;
+  provisioningStartedAt: Date;
   createdAt: Date;
 }
 
@@ -423,7 +497,10 @@ function makeRepo(currentOverride: Partial<MockCurrent> = {}) {
       plan: 'team',
       status: 'provisioning',
       gbrainReady: false,
-      runtime: 'pending',
+      runtime: 'provisioning',
+      lastError: null,
+      provisionAttempts: 0,
+      provisioningStartedAt: new Date('2026-05-07T10:00:00Z'),
       createdAt: new Date('2026-05-07T10:00:00Z'),
     },
     invites: [],

@@ -10,6 +10,7 @@ export interface ComposioConnection {
 export interface InitiateConnectionParams {
   user_id: string;
   app: string;
+  auth_config_id: string;
   redirect_uri: string;
 }
 
@@ -38,7 +39,11 @@ export interface ComposioClientDeps {
 
 interface ComposioSdk {
   connectedAccounts: {
-    initiate(p: Record<string, unknown>): Promise<unknown>;
+    link(
+      userId: string,
+      authConfigId: string,
+      options?: { callbackUrl?: string },
+    ): Promise<unknown>;
     get(id: string): Promise<unknown>;
     delete(id: string): Promise<unknown>;
   };
@@ -75,10 +80,8 @@ export async function createComposioClient(deps: ComposioClientDeps): Promise<Co
 
   return {
     async initiateConnection(p) {
-      const res = await sdk.connectedAccounts.initiate({
-        userId: p.user_id,
-        appName: p.app,
-        redirectUri: p.redirect_uri,
+      const res = await sdk.connectedAccounts.link(p.user_id, p.auth_config_id, {
+        callbackUrl: p.redirect_uri,
       });
       const redirect_url = stringField(res, 'redirectUrl') ?? stringField(res, 'redirect_url') ?? '';
       const pending_connected_account_id =
