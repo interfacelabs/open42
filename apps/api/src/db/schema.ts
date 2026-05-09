@@ -310,6 +310,35 @@ export const connectionInitStates = pgTable(
 );
 
 // =====================================================================
+// mcp_audit_log (per-tenant audit trail of every gbrain MCP tool call)
+// Stores STRUCTURAL metadata only — no request/response body content.
+// `request_hmac` is an HMAC-SHA256 fingerprint over the raw arguments
+// (rotatable, no plaintext recovery). See Codex review #6.
+// =====================================================================
+
+export const mcpAuditLog = pgTable(
+  'mcp_audit_log',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    workspaceId: uuid('workspace_id')
+      .notNull()
+      .references(() => workspaces.id, { onDelete: 'cascade' }),
+    callerUserId: uuid('caller_user_id').references(() => users.id, { onDelete: 'set null' }),
+    toolName: text('tool_name').notNull(),
+    requestHmac: bytea('request_hmac').notNull(),
+    requestId: text('request_id').notNull(),
+    status: integer('status').notNull(),
+    durationMs: integer('duration_ms').notNull(),
+    resultCount: integer('result_count'),
+    errorCode: text('error_code'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    workspaceCreatedIdx: index('mcp_audit_workspace_created_idx').on(t.workspaceId, t.createdAt),
+  }),
+);
+
+// =====================================================================
 // Inferred types — re-export for use elsewhere in the API.
 // =====================================================================
 
@@ -326,3 +355,5 @@ export type Connection = typeof connections.$inferSelect;
 export type NewConnection = typeof connections.$inferInsert;
 export type ConnectionInitState = typeof connectionInitStates.$inferSelect;
 export type NewConnectionInitState = typeof connectionInitStates.$inferInsert;
+export type McpAuditLog = typeof mcpAuditLog.$inferSelect;
+export type NewMcpAuditLog = typeof mcpAuditLog.$inferInsert;

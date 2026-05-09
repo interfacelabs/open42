@@ -29,12 +29,15 @@ chatRouter.post('/', async (req, res, next) => {
       return;
     }
 
-    const gbrain = new GbrainClient({
-      workspaceId: workspace.id,
-      baseUrl: workspace.gbrainBaseUrl,
-      oauthClientId: workspace.gbrainOauthClientId,
-      oauthClientSecretCiphertext: workspace.gbrainOauthClientSecretCiphertext,
-    });
+    const gbrain = new GbrainClient(
+      {
+        workspaceId: workspace.id,
+        baseUrl: workspace.gbrainBaseUrl,
+        oauthClientId: workspace.gbrainOauthClientId,
+        oauthClientSecretCiphertext: workspace.gbrainOauthClientSecretCiphertext,
+      },
+      { callerUserId: session.userId },
+    );
     const retrieval = await gbrain.query({ query, limit: 8, detail: 'chunks' });
     const chunks = normalizeChunks(retrieval.chunks ?? retrieval.results ?? []);
     const citations = chunks.map((chunk, index) => ({
