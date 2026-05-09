@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 
+import { recordMcpCall } from '../audit/mcp.js';
 import { decryptSecret } from '../crypto/envelope.js';
 
 type Fetch = typeof fetch;
@@ -15,6 +16,13 @@ export interface GbrainWorkspaceConfig {
 export interface GbrainClientDeps {
   fetch?: Fetch;
   now?: () => number;
+  /**
+   * Identifier of the user whose request triggered this gbrain call.
+   * `null` (or unset) flags a system-driven call (scheduler, ingest worker,
+   * provisioning) — those still write to `mcp_audit_log` but with
+   * `caller_user_id IS NULL`. See Codex review #6.
+   */
+  callerUserId?: string | null;
 }
 
 export interface TokenCacheEntry {
@@ -45,14 +53,38 @@ export function clearGbrainTokenCache(): void {
   tokenCache.clear();
 }
 
+/**
+ * Structured error from a gbrain HTTP/MCP call.
+ *
+ * IMPORTANT (Codex review #2): do NOT add fields that carry upstream response
+ * bodies, request arguments, or tool inputs. gbrain is upstream code we do
+ * not audit and may echo arbitrary tool args back in error payloads — those
+ * must never reach our persistent application logs. Fields here are limited to:
+ *   - `status`     — HTTP status of the upstream call
+ *   - `code`       — JSON-RPC error code if surfaced by gbrain
+ *   - `bodyLength` — size of the upstream response body in bytes (triage only)
+ * The full message string is intentionally short and never includes upstream
+ * body text. Anything richer belongs in a debug-only path that does NOT log.
+ */
+export interface GbrainErrorMeta {
+  /** JSON-RPC error code if surfaced by gbrain. */
+  code?: number | string;
+  /** Length of the upstream response body — kept for triage, NOT the body itself. */
+  bodyLength?: number;
+}
+
 export class GbrainHttpError extends Error {
+  readonly code?: number | string;
+  readonly bodyLength?: number;
   constructor(
     message: string,
     readonly status?: number,
-    readonly details?: unknown,
+    meta: GbrainErrorMeta = {},
   ) {
     super(message);
     this.name = 'GbrainHttpError';
+    this.code = meta.code;
+    this.bodyLength = meta.bodyLength;
   }
 }
 
@@ -60,6 +92,7 @@ export class GbrainClient {
   private readonly fetchImpl: Fetch;
   private readonly now: () => number;
   private readonly baseUrl: string;
+  private readonly callerUserId: string | null;
 
   constructor(
     private readonly workspace: GbrainWorkspaceConfig,
@@ -68,6 +101,7 @@ export class GbrainClient {
     this.fetchImpl = deps.fetch ?? fetch;
     this.now = deps.now ?? Date.now;
     this.baseUrl = workspace.baseUrl.replace(/\/+$/, '');
+    this.callerUserId = deps.callerUserId ?? null;
   }
 
   async putPage(slug: string, content: string): Promise<unknown> {
@@ -114,7 +148,8 @@ export class GbrainClient {
     const response = await this.fetchImpl(`${this.baseUrl}/health`, {
       headers: { Authorization: `Bearer ${await this.getAccessToken()}` },
     });
-    return this.readJsonResponse(response, 'get_health');
+    const { payload } = await this.readJsonResponse(response, 'get_health');
+    return payload;
   }
 
   async getStats(): Promise<unknown> {
@@ -122,41 +157,81 @@ export class GbrainClient {
   }
 
   async callTool<T = unknown>(name: string, args: Record<string, unknown>): Promise<T> {
-    const response = await this.fetchImpl(`${this.baseUrl}/mcp`, {
-      method: 'POST',
-      headers: {
-        Accept: 'application/json, text/event-stream',
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${await this.getAccessToken()}`,
-      },
-      body: JSON.stringify({
-        jsonrpc: '2.0',
-        id: randomUUID(),
-        method: 'tools/call',
-        params: { name, arguments: args },
-      }),
-    });
+    const requestId = randomUUID();
+    const startedAt = Date.now();
+    let status = 0;
+    let resultCount: number | null = null;
+    let errorCode: string | null = null;
+    try {
+      const response = await this.fetchImpl(`${this.baseUrl}/mcp`, {
+        method: 'POST',
+        headers: {
+          Accept: 'application/json, text/event-stream',
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${await this.getAccessToken()}`,
+        },
+        body: JSON.stringify({
+          jsonrpc: '2.0',
+          id: requestId,
+          method: 'tools/call',
+          params: { name, arguments: args },
+        }),
+      });
+      status = response.status;
 
-    const payload = await this.readJsonResponse(response, name);
-    if (payload.error) {
-      throw new GbrainHttpError(`gbrain ${name} failed`, response.status, payload.error);
-    }
-
-    const result = payload.result ?? payload;
-    if (result?.isError) {
-      throw new GbrainHttpError(`gbrain ${name} returned an error`, response.status, result);
-    }
-
-    const text = result?.content?.[0]?.text;
-    if (typeof text === 'string') {
-      try {
-        return JSON.parse(text) as T;
-      } catch {
-        return text as T;
+      const { payload, bodyLength } = await this.readJsonResponse(response, name);
+      if (payload.error) {
+        const rawCode = rawErrorCode(payload.error);
+        errorCode = rawCode !== undefined ? String(rawCode) : null;
+        throw new GbrainHttpError(`gbrain ${name} failed`, response.status, {
+          code: rawCode,
+          bodyLength,
+        });
       }
-    }
 
-    return result as T;
+      const result = payload.result ?? payload;
+      if (result?.isError) {
+        const rawCode = rawErrorCode(result);
+        errorCode = rawCode !== undefined ? String(rawCode) : 'tool_error';
+        throw new GbrainHttpError(`gbrain ${name} returned an error`, response.status, {
+          code: rawCode,
+          bodyLength,
+        });
+      }
+
+      const text = result?.content?.[0]?.text;
+      let parsed: unknown = result;
+      if (typeof text === 'string') {
+        try {
+          parsed = JSON.parse(text);
+        } catch {
+          parsed = text;
+        }
+      }
+      resultCount = extractResultCount(parsed);
+      return parsed as T;
+    } catch (err) {
+      if (status === 0 && err instanceof GbrainHttpError && typeof err.status === 'number') {
+        status = err.status;
+      }
+      if (errorCode === null) {
+        errorCode = err instanceof Error ? err.name : 'unknown_error';
+      }
+      throw err;
+    } finally {
+      // Fire-and-forget: never await, never throw, never block the user.
+      void recordMcpCall({
+        workspaceId: this.workspace.workspaceId,
+        callerUserId: this.callerUserId,
+        toolName: name,
+        requestArgs: args,
+        requestId,
+        status,
+        durationMs: Date.now() - startedAt,
+        resultCount,
+        errorCode,
+      });
+    }
   }
 
   async getAccessToken(): Promise<string> {
@@ -178,9 +253,14 @@ export class GbrainClient {
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       body,
     });
-    const token = await this.readJsonResponse(response, 'token');
+    const { payload: token, bodyLength: tokenBodyLength } = await this.readJsonResponse(
+      response,
+      'token',
+    );
     if (typeof token.access_token !== 'string') {
-      throw new GbrainHttpError('gbrain token response missing access_token', response.status, token);
+      throw new GbrainHttpError('gbrain token response missing access_token', response.status, {
+        bodyLength: tokenBodyLength,
+      });
     }
 
     const expiresIn = Number(token.expires_in ?? 3600);
@@ -202,14 +282,46 @@ export class GbrainClient {
     });
   }
 
-  private async readJsonResponse(response: Response, operation: string): Promise<any> {
+  private async readJsonResponse(
+    response: Response,
+    operation: string,
+  ): Promise<{ payload: any; bodyLength: number }> {
     const text = await response.text();
+    const bodyLength = text.length;
     const payload = parseMcpHttpPayload(text);
     if (!response.ok) {
-      throw new GbrainHttpError(`gbrain ${operation} HTTP ${response.status}`, response.status, payload);
+      throw new GbrainHttpError(
+        `gbrain ${operation} HTTP ${response.status}`,
+        response.status,
+        { bodyLength },
+      );
     }
-    return payload;
+    return { payload, bodyLength };
   }
+}
+
+/**
+ * Best-effort row count from a gbrain response. Returns null when the shape
+ * doesn't carry a list — audit row records `resultCount IS NULL`, which the
+ * column already nullable supports. Never throws.
+ */
+function extractResultCount(value: unknown): number | null {
+  if (!value || typeof value !== 'object') return null;
+  const obj = value as Record<string, unknown>;
+  for (const key of ['chunks', 'results', 'items', 'pages', 'versions'] as const) {
+    const arr = obj[key];
+    if (Array.isArray(arr)) return arr.length;
+  }
+  return null;
+}
+
+function rawErrorCode(value: unknown): number | string | undefined {
+  if (!value || typeof value !== 'object') return undefined;
+  const obj = value as Record<string, unknown>;
+  if (typeof obj.code === 'number' || typeof obj.code === 'string') return obj.code;
+  if (typeof obj.error_code === 'string') return obj.error_code;
+  if (typeof obj.errorCode === 'string') return obj.errorCode;
+  return undefined;
 }
 
 export function parseMcpHttpPayload(text: string): any {
@@ -243,12 +355,18 @@ export async function registerGbrainOAuthClient(
       token_endpoint_auth_method: 'client_secret_post',
     }),
   });
-  const payload = (await response.json()) as Partial<{
-    client_id: string;
-    client_secret: string;
-  }>;
+  const text = await response.text();
+  const bodyLength = text.length;
+  let payload: Partial<{ client_id: string; client_secret: string }> = {};
+  try {
+    payload = text ? (JSON.parse(text) as Partial<{ client_id: string; client_secret: string }>) : {};
+  } catch {
+    // Leave payload empty — body content must NOT be attached to the error.
+  }
   if (!response.ok || typeof payload.client_id !== 'string' || typeof payload.client_secret !== 'string') {
-    throw new GbrainHttpError('gbrain OAuth client registration failed', response.status, payload);
+    throw new GbrainHttpError('gbrain OAuth client registration failed', response.status, {
+      bodyLength,
+    });
   }
   return { client_id: payload.client_id, client_secret: payload.client_secret };
 }

@@ -727,7 +727,13 @@ function tenantImage(env: TenantProvisionEnv, gbrainVersion: string): string {
 }
 
 function gbrainGitRef(env: TenantProvisionEnv): string {
-  return env.GBRAIN_GIT_REF ?? 'garrytan/v0.27.1-multimodal';
+  // Pinned to an immutable commit on garrytan/gbrain branch
+  // `garrytan/v0.27.1-multimodal`. Branches are mutable (a force-push would
+  // silently land in the next image rebuild), so we pin to the SHA. Bump
+  // deliberately as part of an Open42 release — see
+  // ENGINEERING.md §gbrain version pinning. Mirrors the default in
+  // infra/Dockerfile.gbrain-tenant.
+  return env.GBRAIN_GIT_REF ?? '1bdba7423abf39210832ebcea0b4ca34a1cde689';
 }
 
 function tenantVolumeName(ownerUserId: string): string {

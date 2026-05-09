@@ -152,8 +152,41 @@ describe('GbrainClient', () => {
     await expect(client.query({ query: 'refund' })).rejects.toMatchObject({
       name: 'GbrainHttpError',
       status: 200,
-      details: { code: -32000, message: 'tool failed' },
+      code: -32000,
     });
+  });
+
+  it('does not retain the upstream response body on the error instance', async () => {
+    // Codex review #2: gbrain may echo tool args back in error payloads. The
+    // error class must NOT carry the body — it would otherwise land in our
+    // persistent app logs verbatim.
+    const secret = 'SECRET CUSTOMER PII string';
+    const client = clientWithFetch(async (url: string | URL | Request) => {
+      if (String(url).endsWith('/token')) return json({ access_token: 'token_no_leak', expires_in: 3600 });
+      return json({ error: { code: -32000, message: secret, details: { args: { query: secret } } } });
+    });
+
+    let captured: unknown = null;
+    try {
+      await client.query({ query: 'refund' });
+    } catch (err) {
+      captured = err;
+    }
+    expect(captured).toBeInstanceOf(GbrainHttpError);
+    const err = captured as GbrainHttpError & Record<string, unknown>;
+    // The error must NOT carry the upstream body in any field.
+    expect(err.details).toBeUndefined();
+    expect((err as unknown as { body?: unknown }).body).toBeUndefined();
+    // Pino-style serialization: include enumerables + standard Error props.
+    const serialized = JSON.stringify({
+      name: err.name,
+      message: err.message,
+      stack: err.stack,
+      ...(err as Record<string, unknown>),
+    });
+    expect(serialized).not.toContain(secret);
+    // bodyLength is OK to keep — it's a number.
+    expect(typeof err.bodyLength).toBe('number');
   });
 
   it('throws when an MCP tool result reports isError', async () => {
@@ -165,7 +198,7 @@ describe('GbrainClient', () => {
     await expect(client.query({ query: 'refund' })).rejects.toThrow('gbrain query returned an error');
   });
 
-  it('throws with parsed details on HTTP failures', async () => {
+  it('attaches status and bodyLength (not body) on HTTP failures', async () => {
     const client = clientWithFetch(async (url: string | URL | Request) => {
       if (String(url).endsWith('/token')) return json({ access_token: 'token_http_error', expires_in: 3600 });
       return json({ message: 'downstream unavailable' }, 503);
@@ -174,8 +207,18 @@ describe('GbrainClient', () => {
     await expect(client.query({ query: 'refund' })).rejects.toMatchObject({
       name: 'GbrainHttpError',
       status: 503,
-      details: { message: 'downstream unavailable' },
     });
+    // Body is intentionally not attached — see GbrainHttpError docstring.
+    let captured: unknown = null;
+    try {
+      await client.query({ query: 'refund' });
+    } catch (err) {
+      captured = err;
+    }
+    const err = captured as GbrainHttpError & Record<string, unknown>;
+    expect(err.details).toBeUndefined();
+    expect(typeof err.bodyLength).toBe('number');
+    expect((err.bodyLength as number) > 0).toBe(true);
   });
 
   it('rejects missing secrets and invalid token responses', async () => {

@@ -1,7 +1,12 @@
 FROM alpine:latest
 
 ARG GBRAIN_VERSION=0.27.1
-ARG GBRAIN_GIT_REF=garrytan/v0.27.1-multimodal
+# Pinned to an immutable commit on garrytan/gbrain branch
+# `garrytan/v0.27.1-multimodal`. Bumping is a deliberate Open42-release event —
+# see ENGINEERING.md §gbrain version pinning. Override at build time only for
+# local development on a feature branch (e.g. when contributing back to
+# gbrain). Production images MUST build from a SHA.
+ARG GBRAIN_GIT_REF=1bdba7423abf39210832ebcea0b4ca34a1cde689
 
 RUN apk add --no-cache \
   bash \
@@ -20,9 +25,13 @@ ENV PATH=/usr/local/bun/bin:$PATH
 
 RUN curl -fsSL https://bun.sh/install | bash
 
+# Clone-then-checkout-by-ref: --depth 1 --branch only resolves branches/tags,
+# not arbitrary SHAs. We accept the larger clone in exchange for an immutable
+# pin that survives upstream force-pushes.
 RUN apk add --no-cache --virtual .build-deps git \
-  && git clone --depth 1 --branch "${GBRAIN_GIT_REF}" https://github.com/garrytan/gbrain.git /opt/gbrain \
+  && git clone https://github.com/garrytan/gbrain.git /opt/gbrain \
   && cd /opt/gbrain \
+  && git checkout "${GBRAIN_GIT_REF}" \
   && bun install \
   && chmod +x /opt/gbrain/src/cli.ts \
   && ln -sf /opt/gbrain/src/cli.ts /usr/local/bin/gbrain \

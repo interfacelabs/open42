@@ -3,6 +3,7 @@ import { Readable } from 'node:stream';
 import express, { Router, type Request, type Response as ExpressResponse } from 'express';
 import pino from 'pino';
 
+import { sanitizeErrorForLog } from '../../middleware/error-sanitize.js';
 import { verifyProxyToken as defaultVerifyProxyToken } from '../../proxy/token.js';
 
 const RAW_BODY_LIMIT = '8mb';
@@ -102,7 +103,10 @@ export function buildProviderProxy(
         body,
       });
     } catch (err) {
-      logger.error({ err, workspaceId: auth.workspaceId, route: req.path }, 'proxy_fetch_failed');
+      logger.error(
+        { err: sanitizeErrorForLog(err), workspaceId: auth.workspaceId, route: req.path },
+        'proxy_fetch_failed',
+      );
       res.status(502).json({ error: 'upstream_unavailable' });
       return;
     }

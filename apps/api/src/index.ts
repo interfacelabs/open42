@@ -6,6 +6,7 @@ import cookieParser from 'cookie-parser';
 import pino from 'pino';
 
 import { csrfMiddleware } from './middleware/csrf.js';
+import { PINO_ERROR_REDACT_PATHS, sanitizeErrorForLog } from './middleware/error-sanitize.js';
 import {
   COMPOSIO_API_KEY,
   COMPOSIO_BASE_URL,
@@ -35,6 +36,12 @@ import { runWorkspaceCycle, type OrchestratorDeps, type RunCycleOptions } from '
 
 const logger = pino({
   level: process.env.LOG_LEVEL ?? 'info',
+  // Defense-in-depth against accidental error-body leaks. The primary
+  // sanitization happens via `sanitizeErrorForLog` (used in this file's error
+  // handler and exported for use elsewhere). These redact paths catch any
+  // future caller that forgets and passes a raw error or request body
+  // straight to the logger. See middleware/error-sanitize.ts.
+  redact: { paths: [...PINO_ERROR_REDACT_PATHS], remove: true },
   transport:
     process.env.NODE_ENV !== 'production'
       ? { target: 'pino-pretty', options: { colorize: true } }
@@ -74,7 +81,7 @@ void (async () => {
     connectionRouteDeps.composio = composio;
     scheduler = startScheduler(orchestratorDeps);
   } catch (err) {
-    logger.error({ err }, 'ingest_scheduler_boot_failed');
+    logger.error({ err: sanitizeErrorForLog(err) }, 'ingest_scheduler_boot_failed');
   }
 })();
 
@@ -129,7 +136,10 @@ app.use((_req, res) => {
   res.status(404).json({ error: 'not_found' });
 });
 
-// Error handler
+// Error handler. Codex review #2: never log raw `err` — gbrain (or any
+// upstream) may echo tool args inside error payloads, which Pino's default
+// serializer would walk verbatim into our persistent logs. `sanitizeErrorForLog`
+// allow-lists name/message/code/status/bodyLength only.
 app.use(
   (
     err: Error,
@@ -137,7 +147,7 @@ app.use(
     res: express.Response,
     _next: express.NextFunction,
   ) => {
-    logger.error({ err }, 'unhandled_error');
+    logger.error({ err: sanitizeErrorForLog(err) }, 'unhandled_error');
     res.status(500).json({ error: 'internal_error' });
   },
 );

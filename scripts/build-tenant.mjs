@@ -13,7 +13,9 @@ for (const file of ['.env.local', '.env']) {
 }
 
 const version = process.env.GBRAIN_VERSION ?? '0.27.1';
-const ref = process.env.GBRAIN_GIT_REF ?? 'garrytan/v0.27.1-multimodal';
+// Immutable SHA pin — mirrors infra/Dockerfile.gbrain-tenant.
+// See ENGINEERING.md §gbrain version pinning before changing.
+const ref = process.env.GBRAIN_GIT_REF ?? '1bdba7423abf39210832ebcea0b4ca34a1cde689';
 const image = process.env.GBRAIN_TENANT_IMAGE ?? `open42/gbrain-tenant:v${version}`;
 const platform = process.env.GBRAIN_TENANT_PLATFORM ?? 'linux/amd64';
 const child = spawn(
