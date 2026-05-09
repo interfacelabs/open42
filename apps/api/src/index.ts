@@ -28,6 +28,7 @@ import { buildNotionZipRouter } from './routes/connections/notion-zip.js';
 import { buildComposioRouter } from './routes/connections/composio.js';
 import { buildConnectionsRouter } from './routes/connections/index.js';
 import { buildAnthropicProxy, buildOpenAIProxy } from './routes/proxy/index.js';
+import { workspaceCredentialsRouter } from './routes/workspaces/credentials.js';
 import { buildIngestRouter } from './routes/workspaces/ingest.js';
 import { buildWorkspaceProvisionRouter } from './routes/workspaces/provision.js';
 import { buildHealthzRouter } from './routes/healthz.js';
@@ -119,6 +120,7 @@ app.use('/connections', buildConnectionsRouter(connectionRouteDeps));
 app.use('/connections', buildComposioRouter({ kick: kickWorkspaceIngest }));
 app.use('/connections/notion-zip', buildNotionZipRouter({ kick: kickWorkspaceIngest }));
 app.use('/workspaces', buildWorkspaceProvisionRouter());
+app.use('/workspaces/credentials', workspaceCredentialsRouter);
 app.use(
   '/workspaces',
   buildIngestRouter({

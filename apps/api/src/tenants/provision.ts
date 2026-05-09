@@ -248,6 +248,30 @@ async function provisionTenantResources(options: {
   };
 }
 
+/**
+ * BYOK and the tenant container env: WHY THE PROXY TOKEN IS THE ONLY KEY
+ * THE TENANT EVER SEES.
+ *
+ * The tenant container's OPENAI_API_KEY / ANTHROPIC_API_KEY env vars hold
+ * the per-tenant *proxy token* — never a real provider key. The proxy
+ * resolves the real key at request time via auth/llm-keys.ts:resolveLlmKey,
+ * which prefers the workspace's BYOK credential and falls back to the
+ * server's shared env key.
+ *
+ * Consequences:
+ *   1. Setting / rotating / deleting a BYOK key never requires restarting
+ *      the tenant container. The proxy picks up the change on the next call.
+ *   2. The tenant never has access to the real provider key, even if gbrain
+ *      is fully compromised. A leaked tenant container yields the proxy
+ *      token, which is rate-limited and audited per workspace.
+ *   3. We do NOT inject OPENAI_API_KEY=<real key> when BYOK is set. Don't
+ *      add that path back in a future "optimization" — it would defeat the
+ *      whole boundary.
+ *
+ * If you're touching tenant provisioning and find yourself thinking "I'll
+ * just inject the real key into the container", stop and read this comment
+ * again.
+ */
 async function createFlyTenant(options: {
   env: TenantProvisionEnv;
   gbrainVersion: string;
