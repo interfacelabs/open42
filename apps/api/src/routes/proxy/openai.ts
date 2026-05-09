@@ -5,9 +5,11 @@ import {
 } from './shared.js';
 
 const OPENAI_ALLOWED_ROUTES: ProviderProxyRoute[] = [
-  { method: 'POST', path: '/v1/embeddings' },
-  { method: 'POST', path: '/v1/chat/completions' },
-  { method: 'GET', path: '/v1/models' },
+  { method: 'POST', path: '/v1/embeddings', scope: 'embed' },
+  { method: 'POST', path: '/v1/chat/completions', scope: 'chat' },
+  // /v1/models has no body; we treat it as 'chat' scope for resolver lookup
+  // because there's no separate "models" scope. Any non-null key works here.
+  { method: 'GET', path: '/v1/models', scope: 'chat' },
 ];
 
 export function buildOpenAIProxy(deps: ProviderProxyDeps = {}) {

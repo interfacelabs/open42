@@ -4,6 +4,15 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { buildAnthropicProxy, buildOpenAIProxy } from './index.js';
 
+/**
+ * Stub resolver that mimics the env-fallback path of the real `resolveLlmKey`.
+ * We use this in tests that previously asserted the env key was forwarded
+ * upstream, to keep that assertion meaningful without depending on the DB.
+ */
+function sharedResolver(apiKey: string) {
+  return vi.fn(async () => ({ apiKey, source: 'shared' as const, model: null }));
+}
+
 describe('LLM egress proxy routes', () => {
   const logger = {
     info: vi.fn(),
@@ -39,6 +48,7 @@ describe('LLM egress proxy routes', () => {
         now: () => 1000,
         verifyProxyToken: async (token) =>
           token === 'tnt_workspace_abc' ? { workspaceId: 'workspace-abc' } : null,
+        resolveLlmKey: sharedResolver('upstream-openai'),
       }),
     );
 
@@ -76,6 +86,7 @@ describe('LLM egress proxy routes', () => {
       workspaceId: 'workspace-abc',
       route: '/v1/chat/completions',
       status: 200,
+      keySource: 'shared',
       durationMs: 0,
     });
   });
@@ -91,6 +102,7 @@ describe('LLM egress proxy routes', () => {
         logger,
         verifyProxyToken: async (token) =>
           token === 'tnt_workspace_xyz' ? { workspaceId: 'workspace-xyz' } : null,
+        resolveLlmKey: sharedResolver('upstream-anthropic'),
       }),
     );
 
@@ -117,6 +129,7 @@ describe('LLM egress proxy routes', () => {
         fetch: fetchMock as typeof fetch,
         logger,
         verifyProxyToken: async () => ({ workspaceId: 'workspace-abc' }),
+        resolveLlmKey: sharedResolver('upstream-openai'),
       }),
     );
 
@@ -137,6 +150,7 @@ describe('LLM egress proxy routes', () => {
         fetch: fetchMock as typeof fetch,
         logger,
         verifyProxyToken: async () => ({ workspaceId: 'workspace-abc' }),
+        resolveLlmKey: sharedResolver('upstream-openai'),
       }),
     );
 
@@ -172,7 +186,7 @@ describe('LLM egress proxy routes', () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
-  it('returns 503 instead of crashing when the shared upstream key is unset', async () => {
+  it('returns 503 when the resolver finds neither a tenant key nor an env fallback', async () => {
     const fetchMock = vi.fn();
     const app = express().use(
       buildOpenAIProxy({
@@ -180,6 +194,7 @@ describe('LLM egress proxy routes', () => {
         fetch: fetchMock as typeof fetch,
         logger,
         verifyProxyToken: async () => ({ workspaceId: 'workspace-abc' }),
+        resolveLlmKey: vi.fn(async () => null),
       }),
     );
 
@@ -193,6 +208,113 @@ describe('LLM egress proxy routes', () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
+  it('uses the tenant BYOK key over the shared env fallback when both exist', async () => {
+    const fetchMock = vi.fn(async (_url: string | URL | Request, _init?: RequestInit) =>
+      new Response('{"ok":true}', { status: 200 }),
+    );
+    const resolveLlmKey = vi.fn(async () => ({
+      apiKey: 'tenant-real-key',
+      source: 'tenant' as const,
+      model: 'gpt-5-1',
+    }));
+    const app = express().use(
+      buildOpenAIProxy({
+        env: { OPENAI_API_KEY: 'upstream-openai-shared' } as NodeJS.ProcessEnv,
+        fetch: fetchMock as typeof fetch,
+        logger,
+        now: () => 0,
+        verifyProxyToken: async () => ({ workspaceId: 'workspace-abc' }),
+        resolveLlmKey,
+      }),
+    );
+
+    const res = await request(app)
+      .post('/v1/chat/completions')
+      .set('Authorization', 'Bearer tnt_workspace_abc')
+      .send('{}');
+
+    expect(res.status).toBe(200);
+    expect(resolveLlmKey).toHaveBeenCalledWith(
+      { workspaceId: 'workspace-abc', provider: 'openai', scope: 'chat' },
+      expect.any(Object),
+    );
+    const [, init] = fetchMock.mock.calls[0] ?? [];
+    const headers = init?.headers as Headers;
+    expect(headers.get('authorization')).toBe('Bearer tenant-real-key');
+    expect(headers.get('authorization')).not.toContain('upstream-openai-shared');
+    expect(logger.info).toHaveBeenCalledWith(
+      expect.objectContaining({
+        workspaceId: 'workspace-abc',
+        keySource: 'tenant',
+      }),
+    );
+  });
+
+  it('falls back to the shared env key when the resolver reports source=shared', async () => {
+    const fetchMock = vi.fn(async (_url: string | URL | Request, _init?: RequestInit) =>
+      new Response('ok', { status: 200 }),
+    );
+    const resolveLlmKey = vi.fn(async () => ({
+      apiKey: 'env-shared-key',
+      source: 'shared' as const,
+      model: null,
+    }));
+    const app = express().use(
+      buildAnthropicProxy({
+        env: { ANTHROPIC_API_KEY: 'env-shared-key' } as NodeJS.ProcessEnv,
+        fetch: fetchMock as typeof fetch,
+        logger,
+        now: () => 0,
+        verifyProxyToken: async () => ({ workspaceId: 'workspace-xyz' }),
+        resolveLlmKey,
+      }),
+    );
+
+    const res = await request(app)
+      .post('/v1/messages')
+      .set('x-api-key', 'tnt_workspace_xyz')
+      .send('{}');
+
+    expect(res.status).toBe(200);
+    expect(resolveLlmKey).toHaveBeenCalledWith(
+      { workspaceId: 'workspace-xyz', provider: 'anthropic', scope: 'chat' },
+      expect.any(Object),
+    );
+    const [, init] = fetchMock.mock.calls[0] ?? [];
+    const headers = init?.headers as Headers;
+    expect(headers.get('x-api-key')).toBe('env-shared-key');
+    expect(logger.info).toHaveBeenCalledWith(
+      expect.objectContaining({
+        workspaceId: 'workspace-xyz',
+        keySource: 'shared',
+      }),
+    );
+  });
+
+  it('returns 503 without calling upstream when the resolver returns null', async () => {
+    const fetchMock = vi.fn();
+    const resolveLlmKey = vi.fn(async () => null);
+    const app = express().use(
+      buildOpenAIProxy({
+        env: { OPENAI_API_KEY: 'env-shared-key' } as NodeJS.ProcessEnv,
+        fetch: fetchMock as typeof fetch,
+        logger,
+        verifyProxyToken: async () => ({ workspaceId: 'workspace-abc' }),
+        resolveLlmKey,
+      }),
+    );
+
+    const res = await request(app)
+      .post('/v1/chat/completions')
+      .set('Authorization', 'Bearer tnt_workspace_abc')
+      .send('{}');
+
+    expect(res.status).toBe(503);
+    expect(res.body).toEqual({ error: 'upstream_key_unconfigured' });
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(resolveLlmKey).toHaveBeenCalledTimes(1);
+  });
+
   it('rate limits repeated failed tenant auth attempts', async () => {
     const verifyProxyToken = vi.fn(async () => null);
     const app = express().use(
@@ -202,6 +324,7 @@ describe('LLM egress proxy routes', () => {
         logger,
         now: () => 0,
         verifyProxyToken,
+        resolveLlmKey: sharedResolver('upstream-openai'),
       }),
     );
 
@@ -236,6 +359,7 @@ describe('LLM egress proxy routes', () => {
         ) as unknown as typeof fetch,
         logger,
         verifyProxyToken: async () => ({ workspaceId: 'workspace-abc' }),
+        resolveLlmKey: sharedResolver('upstream-openai'),
       }),
     );
 

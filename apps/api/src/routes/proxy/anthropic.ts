@@ -5,8 +5,8 @@ import {
 } from './shared.js';
 
 const ANTHROPIC_ALLOWED_ROUTES: ProviderProxyRoute[] = [
-  { method: 'POST', path: '/v1/messages' },
-  { method: 'POST', path: '/v1/messages/count_tokens' },
+  { method: 'POST', path: '/v1/messages', scope: 'chat' },
+  { method: 'POST', path: '/v1/messages/count_tokens', scope: 'chat' },
 ];
 
 export function buildAnthropicProxy(deps: ProviderProxyDeps = {}) {

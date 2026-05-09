@@ -3,6 +3,11 @@ import { Readable } from 'node:stream';
 import express, { Router, type Request, type Response as ExpressResponse } from 'express';
 import pino from 'pino';
 
+import {
+  resolveLlmKey as defaultResolveLlmKey,
+  type LlmScope,
+} from '../../auth/llm-keys.js';
+import { decryptSecret as defaultDecryptSecret } from '../../crypto/envelope.js';
 import { sanitizeErrorForLog } from '../../middleware/error-sanitize.js';
 import { verifyProxyToken as defaultVerifyProxyToken } from '../../proxy/token.js';
 
@@ -29,6 +34,12 @@ export type ProxyMethod = 'GET' | 'POST';
 export interface ProviderProxyRoute {
   method: ProxyMethod;
   path: string;
+  /**
+   * Resolver scope for this route. We map the OpenAI `/v1/models` GET to
+   * 'chat' as a deliberate simplification — there is no separate "models"
+   * scope in the BYOK contract; any non-null resolved key is fine for it.
+   */
+  scope: LlmScope;
 }
 
 export interface ProviderProxyConfig {
@@ -45,6 +56,8 @@ export interface ProviderProxyDeps {
   logger?: Pick<pino.Logger, 'info' | 'error'>;
   now?: () => number;
   verifyProxyToken?: VerifyProxyToken;
+  resolveLlmKey?: typeof defaultResolveLlmKey;
+  decrypt?: typeof defaultDecryptSecret;
 }
 
 export function buildProviderProxy(
@@ -59,11 +72,17 @@ export function buildProviderProxy(
   const logger =
     deps.logger ??
     pino({ name: `proxy/${config.name}`, level: process.env.LOG_LEVEL ?? 'info' });
+  const resolveLlmKey = deps.resolveLlmKey ?? defaultResolveLlmKey;
+  const decrypt = deps.decrypt ?? defaultDecryptSecret;
   const failedAuth = new Map<string, { count: number; resetAt: number }>();
 
   router.use(express.raw({ type: '*/*', limit: RAW_BODY_LIMIT }));
 
-  const handler = async (req: Request, res: ExpressResponse): Promise<void> => {
+  const handler = async (
+    req: Request,
+    res: ExpressResponse,
+    scope: LlmScope,
+  ): Promise<void> => {
     const startedAt = now();
     const ip = requestIp(req);
     const limited = retryAfterIfLimited(failedAuth, ip, now());
@@ -86,16 +105,29 @@ export function buildProviderProxy(
     }
     failedAuth.delete(ip);
 
-    // TODO(E2): replace this env lookup with resolveLlmKey({ workspaceId, provider, scope })
-    // from `auth/llm-keys.js`. Returns null when neither tenant key nor env fallback
-    // is set; map to 503 'upstream_key_unconfigured' (already the existing path).
-    const upstreamApiKey = env[config.apiKeyEnvName]?.trim();
-    if (!upstreamApiKey) {
+    // BYOK lookup: tenant credential takes precedence; env shared key is the
+    // fallback. Resolver returns null when neither exists — map to 503 so the
+    // caller sees the same "configure a key" signal regardless of tier.
+    let resolved: Awaited<ReturnType<typeof resolveLlmKey>>;
+    try {
+      resolved = await resolveLlmKey(
+        { workspaceId: auth.workspaceId, provider: config.name, scope },
+        { env, logger, decrypt },
+      );
+    } catch (err) {
+      logger.error(
+        { err: sanitizeErrorForLog(err), workspaceId: auth.workspaceId, route: req.path },
+        'proxy_resolve_key_failed',
+      );
+      res.status(503).json({ error: 'upstream_key_unconfigured' });
+      return;
+    }
+    if (!resolved) {
       res.status(503).json({ error: 'upstream_key_unconfigured' });
       return;
     }
 
-    const upstreamHeaders = buildUpstreamHeaders(req, config, upstreamApiKey);
+    const upstreamHeaders = buildUpstreamHeaders(req, config, resolved.apiKey);
     const body = requestBody(req);
     let upstream: globalThis.Response;
     try {
@@ -119,6 +151,7 @@ export function buildProviderProxy(
       workspaceId: auth.workspaceId,
       route: req.path,
       status: upstream.status,
+      keySource: resolved.source,
       startedAt,
       now,
       res,
@@ -145,8 +178,9 @@ export function buildProviderProxy(
   const allowedPaths = new Set<string>();
   for (const route of config.allowedRoutes) {
     allowedPaths.add(route.path);
-    if (route.method === 'GET') router.get(route.path, handler);
-    else if (route.method === 'POST') router.post(route.path, handler);
+    const scoped = (req: Request, res: ExpressResponse) => handler(req, res, route.scope);
+    if (route.method === 'GET') router.get(route.path, scoped);
+    else if (route.method === 'POST') router.post(route.path, scoped);
   }
 
   // Method on an allowlisted path but not the allowed verb → 405. Path not
@@ -282,6 +316,7 @@ function logOnResponseClose(
     workspaceId: string;
     route: string;
     status: number;
+    keySource: 'tenant' | 'shared';
     startedAt: number;
     now: () => number;
     res: ExpressResponse;
@@ -295,6 +330,7 @@ function logOnResponseClose(
       workspaceId: input.workspaceId,
       route: input.route,
       status: input.status,
+      keySource: input.keySource,
       durationMs: input.now() - input.startedAt,
     });
   };
