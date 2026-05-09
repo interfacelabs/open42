@@ -26,6 +26,7 @@ import { chatRouter } from './routes/chat.js';
 import { buildNotionZipRouter } from './routes/connections/notion-zip.js';
 import { buildComposioRouter } from './routes/connections/composio.js';
 import { buildConnectionsRouter } from './routes/connections/index.js';
+import { buildAnthropicProxy, buildOpenAIProxy } from './routes/proxy/index.js';
 import { buildIngestRouter } from './routes/workspaces/ingest.js';
 import { buildWorkspaceProvisionRouter } from './routes/workspaces/provision.js';
 import { buildHealthzRouter } from './routes/healthz.js';
@@ -91,6 +92,8 @@ app.use(
     credentials: true,
   }),
 );
+app.use('/proxy/openai', buildOpenAIProxy());
+app.use('/proxy/anthropic', buildAnthropicProxy());
 app.use(express.json({ limit: '1mb' }));
 app.use(cookieParser());
 app.use(

@@ -2,13 +2,20 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { decryptSecret } from '../crypto/envelope.js';
 import type { TenantProvisionRepo } from './provision.js';
-import { provisionTenant } from './provision.js';
+import {
+  classifyProvisioningError,
+  provisionTenant,
+  safelyProvisionTenant,
+} from './provision.js';
 
 describe('provisionTenant', () => {
   it('creates a Fly machine, registers gbrain OAuth, encrypts the secret, and stores workspace metadata', async () => {
     process.env.OPEN42_KEK = '2'.repeat(64);
     const stored: any[] = [];
     const repo: TenantProvisionRepo = {
+      async reserveWorkspaceForOwner() {
+        return { id: 'workspace-1' };
+      },
       async createWorkspace(input) {
         stored.push(input);
         return { id: 'workspace-1' };
@@ -70,11 +77,23 @@ describe('provisionTenant', () => {
       gbrainVersion: '0.27.1',
     });
     expect(decryptSecret(stored[0].gbrainOauthClientSecretCiphertext)).toBe('secret-1');
+    expect(stored[0].proxyTokenHash).toBeInstanceOf(Buffer);
+    expect(stored[0].proxyTokenHash).toHaveLength(32);
     const volumeRequest = flyRequests.find((request) => request.href.endsWith('/volumes'));
     expect(volumeRequest?.body.name).toBe('open42_gbrain_user_12345678');
     const machineRequest = flyRequests.find((request) => request.href.endsWith('/machines'));
     expect(machineRequest?.body.config.mounts).toEqual([{ path: '/data', volume: 'volume-1' }]);
     expect(machineRequest?.body.config.env).not.toHaveProperty('GBRAIN_DATABASE_URL');
+    expect(machineRequest?.body.config.env.OPENAI_API_KEY).toMatch(/^tnt_workspace-1_[0-9a-f]{32}$/);
+    expect(machineRequest?.body.config.env.OPENAI_BASE_URL).toBe(
+      'http://open42-api.flycast/proxy/openai/v1',
+    );
+    expect(machineRequest?.body.config.env.ANTHROPIC_API_KEY).toBe(
+      machineRequest?.body.config.env.OPENAI_API_KEY,
+    );
+    expect(machineRequest?.body.config.env.ANTHROPIC_BASE_URL).toBe(
+      'http://open42-api.flycast/proxy/anthropic',
+    );
   });
 
   it('creates a local Docker gbrain tenant when Fly is not configured', async () => {
@@ -82,6 +101,9 @@ describe('provisionTenant', () => {
     const stored: any[] = [];
     const commands: Array<{ file: string; args: string[] }> = [];
     const repo: TenantProvisionRepo = {
+      async reserveWorkspaceForOwner() {
+        return { id: 'workspace-local' };
+      },
       async createWorkspace(input) {
         stored.push(input);
         return { id: 'workspace-local' };
@@ -113,6 +135,9 @@ describe('provisionTenant', () => {
           if (args[0] === 'image' && args[1] === 'inspect') {
             throw new Error('image missing');
           }
+          if (args[0] === 'pull') {
+            throw new Error('manifest unknown'); // force the build fallback
+          }
           return { stdout: '', stderr: '' };
         },
         env: {
@@ -141,6 +166,11 @@ describe('provisionTenant', () => {
         command.args.some((arg) => arg.startsWith('GBRAIN_DATABASE_URL=')),
       ),
     ).toBe(false);
+    const dockerRun = commands.find((command) => command.args[0] === 'run');
+    expect(dockerRun?.args).toContainEqual(expect.stringMatching(/^OPENAI_API_KEY=tnt_workspace-local_[0-9a-f]{32}$/));
+    expect(dockerRun?.args).toContainEqual(expect.stringMatching(/^OPENAI_BASE_URL=http:\/\/.+\/proxy\/openai\/v1$/));
+    expect(dockerRun?.args).toContainEqual(expect.stringMatching(/^ANTHROPIC_API_KEY=tnt_workspace-local_[0-9a-f]{32}$/));
+    expect(dockerRun?.args).toContainEqual(expect.stringMatching(/^ANTHROPIC_BASE_URL=http:\/\/.+\/proxy\/anthropic$/));
     expect(stored[0]).toMatchObject({
       flyMachineId: 'open42-gbrain-user-loc',
       flyPrivateIp: '127.0.0.1:19001',
@@ -148,12 +178,17 @@ describe('provisionTenant', () => {
       gbrainOauthClientId: 'client-local',
     });
     expect(decryptSecret(stored[0].gbrainOauthClientSecretCiphertext)).toBe('secret-local');
+    expect(stored[0].proxyTokenHash).toBeInstanceOf(Buffer);
+    expect(stored[0].proxyTokenHash).toHaveLength(32);
   });
 
   it('defaults to local Docker in development even when Fly credentials are present', async () => {
     process.env.OPEN42_KEK = '4'.repeat(64);
     const stored: any[] = [];
     const repo: TenantProvisionRepo = {
+      async reserveWorkspaceForOwner() {
+        return { id: 'workspace-local-with-fly-env' };
+      },
       async createWorkspace(input) {
         stored.push(input);
         return { id: 'workspace-local-with-fly-env' };
@@ -236,6 +271,57 @@ describe('provisionTenant', () => {
       gbrainBaseUrl: 'http://[fdaa::2]:8080',
     });
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+});
+
+describe('classifyProvisioningError', () => {
+  it.each([
+    ['Cannot connect to the Docker daemon at unix://', 'docker_unavailable'],
+    ['ENOENT: no such file or directory, posix_spawnp /usr/bin/docker', 'docker_unavailable'],
+    ['docker build returned exit code 1', 'image_build_failed'],
+    ['docker run --name open42 failed', 'container_start_failed'],
+    ['gbrain tenant did not become healthy: 503', 'gbrain_health_timeout'],
+    ['failed to register OAuth client', 'oauth_registration_failed'],
+    ['gbrain version mismatch: expected 0.27.1', 'gbrain_version_mismatch'],
+    ['Fly API returned 500', 'fly_api_failed'],
+    ['some unexpected non-matching message', 'provisioning_failed'],
+  ])('classifies %j as %s', (msg, expected) => {
+    expect(classifyProvisioningError(new Error(msg))).toBe(expected);
+  });
+});
+
+describe('safelyProvisionTenant', () => {
+  it('marks workspace failed and returns the classified error code on exception', async () => {
+    const calls: Array<{ ownerUserId: string; errorCode: string }> = [];
+    const repo: TenantProvisionRepo = {
+      async reserveWorkspaceForOwner() {
+        return { id: 'workspace-error' };
+      },
+      async createWorkspace() {
+        throw new Error('not reached');
+      },
+      async markWorkspaceFailedForOwner(ownerUserId, errorCode) {
+        calls.push({ ownerUserId, errorCode });
+      },
+    };
+    const result = await safelyProvisionTenant({
+      ownerUserId: 'user-9',
+      repo,
+      env: {
+        TENANT_PROVISIONER: 'local-docker',
+        GBRAIN_VERSION: '0.27.1',
+      },
+      runCommand: async () => {
+        throw new Error('Cannot connect to the Docker daemon at unix:///var/run/docker.sock');
+      },
+      allocatePort: async () => 18080,
+      sleep: async () => undefined,
+      fetch: (async () => new Response('{}')) as unknown as typeof fetch,
+    });
+    expect(result).toEqual({ error: 'docker_unavailable' });
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.ownerUserId).toBe('user-9');
+    expect(calls[0]?.errorCode.startsWith('docker_unavailable:')).toBe(true);
   });
 });
 
