@@ -10,6 +10,7 @@ import { PINO_ERROR_REDACT_PATHS, sanitizeErrorForLog } from './middleware/error
 import {
   COMPOSIO_API_KEY,
   COMPOSIO_BASE_URL,
+  COMPOSIO_WEBHOOK_SECRET,
   API_PUBLIC_URL,
   WEB_PUBLIC_URL,
 } from './env.js';
@@ -33,6 +34,7 @@ import { buildIngestRouter } from './routes/workspaces/ingest.js';
 import { buildWorkspaceProvisionRouter } from './routes/workspaces/provision.js';
 import { buildHealthzRouter } from './routes/healthz.js';
 import { refundPolicySkillRouter } from './routes/skills/refund-policy.js';
+import { buildComposioWebhookRouter } from './routes/webhooks/composio.js';
 import { runWorkspaceCycle, type OrchestratorDeps, type RunCycleOptions } from './ingest/orchestrator.js';
 
 const logger = pino({
@@ -102,6 +104,15 @@ app.use(
 );
 app.use('/proxy/openai', buildOpenAIProxy());
 app.use('/proxy/anthropic', buildAnthropicProxy());
+// Webhook router declares its own express.raw — must mount before express.json
+// so the HMAC verification sees the unparsed bytes Composio actually signed.
+app.use(
+  '/webhooks/composio',
+  buildComposioWebhookRouter({
+    secret: COMPOSIO_WEBHOOK_SECRET,
+    kick: kickWorkspaceIngest,
+  }),
+);
 app.use(express.json({ limit: '1mb' }));
 app.use(cookieParser());
 app.use(
