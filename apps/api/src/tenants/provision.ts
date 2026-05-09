@@ -554,15 +554,29 @@ function createDrizzleTenantRepo(): TenantProvisionRepo {
     async reserveWorkspaceForOwner(ownerUserId, gbrainVersion) {
       const { db: defaultDb, schema } = await import('../db/client.js');
       return defaultDb.transaction(async (tx) => {
-        const [user] = await tx
-          .select({ currentWorkspaceId: schema.users.currentWorkspaceId })
-          .from(schema.users)
-          .where(eq(schema.users.id, ownerUserId))
+        // Resolve the existing workspace via memberships (NOT users.currentWorkspaceId).
+        // currentWorkspaceId is a UI hint — it can be stale or, in adversarial
+        // scenarios, point at a workspace the user no longer / never owned.
+        // Source of truth: the memberships row for role='owner' against a
+        // non-deleted workspace. See ENGINEERING.md §"Tenant resolution".
+        const [existing] = await tx
+          .select({ workspaceId: schema.memberships.workspaceId })
+          .from(schema.memberships)
+          .innerJoin(
+            schema.workspaces,
+            eq(schema.memberships.workspaceId, schema.workspaces.id),
+          )
+          .where(
+            and(
+              eq(schema.memberships.userId, ownerUserId),
+              eq(schema.memberships.role, 'owner'),
+              sql`${schema.workspaces.deletedAt} IS NULL`,
+            ),
+          )
           .limit(1);
-        if (!user) throw new Error('user_not_found');
 
-        if (user.currentWorkspaceId) {
-          return { id: user.currentWorkspaceId };
+        if (existing) {
+          return { id: existing.workspaceId };
         }
 
         const [workspace] = await tx
