@@ -46,7 +46,10 @@ describe('GbrainClient', () => {
         workspaceId: 'workspace-1',
         baseUrl: 'http://brain.internal/',
         oauthClientId: 'client_1',
-        oauthClientSecretCiphertext: encryptSecret('secret_1'),
+        oauthClientSecretCiphertext: encryptSecret('secret_1', {
+          workspaceId: 'workspace-1',
+          purpose: 'gbrain_oauth_secret',
+        }),
       },
       { fetch: fetchMock as typeof fetch },
     );

@@ -196,7 +196,10 @@ export class GbrainClient {
     if (!ciphertext) {
       throw new GbrainHttpError('workspace is missing encrypted gbrain client secret');
     }
-    return decryptSecret(ciphertext);
+    return decryptSecret(ciphertext, {
+      workspaceId: this.workspace.workspaceId,
+      purpose: 'gbrain_oauth_secret',
+    });
   }
 
   private async readJsonResponse(response: Response, operation: string): Promise<any> {

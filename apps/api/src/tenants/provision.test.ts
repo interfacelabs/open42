@@ -76,7 +76,12 @@ describe('provisionTenant', () => {
       gbrainOauthClientId: 'client-1',
       gbrainVersion: '0.27.1',
     });
-    expect(decryptSecret(stored[0].gbrainOauthClientSecretCiphertext)).toBe('secret-1');
+    expect(
+      decryptSecret(stored[0].gbrainOauthClientSecretCiphertext, {
+        workspaceId: 'workspace-1',
+        purpose: 'gbrain_oauth_secret',
+      }),
+    ).toBe('secret-1');
     expect(stored[0].proxyTokenHash).toBeInstanceOf(Buffer);
     expect(stored[0].proxyTokenHash).toHaveLength(32);
     const volumeRequest = flyRequests.find((request) => request.href.endsWith('/volumes'));
@@ -177,7 +182,12 @@ describe('provisionTenant', () => {
       gbrainBaseUrl: 'http://127.0.0.1:19001',
       gbrainOauthClientId: 'client-local',
     });
-    expect(decryptSecret(stored[0].gbrainOauthClientSecretCiphertext)).toBe('secret-local');
+    expect(
+      decryptSecret(stored[0].gbrainOauthClientSecretCiphertext, {
+        workspaceId: 'workspace-local',
+        purpose: 'gbrain_oauth_secret',
+      }),
+    ).toBe('secret-local');
     expect(stored[0].proxyTokenHash).toBeInstanceOf(Buffer);
     expect(stored[0].proxyTokenHash).toHaveLength(32);
   });

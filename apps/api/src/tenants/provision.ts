@@ -224,7 +224,10 @@ async function provisionTenantResources(options: {
     options.gbrainVersion,
   );
 
-  const encryptedSecret = encryptSecret(oauth.client_secret);
+  const encryptedSecret = encryptSecret(oauth.client_secret, {
+    workspaceId: workspaceReservation.id,
+    purpose: 'gbrain_oauth_secret',
+  });
   const workspace = await options.repo.createWorkspace({
     id: workspaceReservation.id,
     ownerUserId: options.ownerUserId,
