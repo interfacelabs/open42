@@ -77,6 +77,14 @@ export async function resolveLlmKey(
   const env = deps.env ?? process.env;
   const logger = deps.logger;
 
+  // Defense-in-depth: Anthropic exposes no embeddings API. The credentials
+  // route blocks (anthropic, embed) at write time, but a stray DB row from a
+  // future migration / manual edit / out-of-band path must not be served
+  // either. Return null before the lookup so we never decrypt or expose it.
+  if (input.provider === 'anthropic' && input.scope === 'embed') {
+    return null;
+  }
+
   // 1. Tenant BYOK lookup.
   const [row] = await db
     .select({
@@ -117,13 +125,9 @@ export async function resolveLlmKey(
     }
   }
 
-  // 2. Shared env fallback. Anthropic has no embeddings API, so we return
-  //    null for (anthropic, embed) regardless of ANTHROPIC_API_KEY. A future
-  //    embeddings provider switch (e.g. Voyage) would slot in here.
-  if (input.provider === 'anthropic' && input.scope === 'embed') {
-    return null;
-  }
-
+  // 2. Shared env fallback. (anthropic, embed) is already blocked above —
+  //    the early-return doubles as the "no Anthropic embeddings API" guard.
+  //    A future embeddings provider (e.g. Voyage) would slot in here.
   const envName = input.provider === 'openai' ? 'OPENAI_API_KEY' : 'ANTHROPIC_API_KEY';
   const apiKey = env[envName]?.trim();
   if (!apiKey) return null;

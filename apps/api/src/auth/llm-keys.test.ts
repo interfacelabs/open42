@@ -98,6 +98,30 @@ describe('resolveLlmKey', () => {
     expect(result).toBeNull();
   });
 
+  it('returns null for (anthropic, embed) even when a stray DB row exists (defense-in-depth)', async () => {
+    // The credentials route blocks this combo at write time, but the resolver
+    // must also refuse to serve such a row in case it landed via migration,
+    // manual psql, or a future code path that bypasses the route.
+    const decrypt = vi.fn(() => 'should-never-be-returned');
+    const db = fakeSelectingDb({
+      secretCiphertext: Buffer.from('would-decrypt-fine'),
+      model: null,
+    });
+
+    const result = await resolveLlmKey(
+      {
+        workspaceId: '4a4a4a4a-4444-4444-8444-444444444444',
+        provider: 'anthropic',
+        scope: 'embed',
+      },
+      { db, decrypt, env: { ANTHROPIC_API_KEY: 'sk-not-usable-for-embeddings' } },
+    );
+
+    expect(result).toBeNull();
+    // Decrypt MUST NOT have been called — the early-return precedes the lookup.
+    expect(decrypt).not.toHaveBeenCalled();
+  });
+
   it('returns null and logs (no body content) when decryption throws', async () => {
     const decrypt = vi.fn(() => {
       throw new Error('envelope authentication failed: bad tag');

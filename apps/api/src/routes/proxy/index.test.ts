@@ -315,6 +315,52 @@ describe('LLM egress proxy routes', () => {
     expect(resolveLlmKey).toHaveBeenCalledTimes(1);
   });
 
+  it('returns 503 (not 500, no stack leak) when the resolver throws', async () => {
+    // Resolver throws on truly exceptional state (corrupted ciphertext beyond
+    // E1's defensive logging, programmer error in deps, etc.). The proxy must
+    // map this to 503 with no body details — the upstream key is effectively
+    // unconfigured from the caller's perspective.
+    const fetchMock = vi.fn();
+    const resolveLlmKey = vi.fn(async () => {
+      throw new Error('UNEXPECTED INTERNAL DETAIL with secret-shaped /sk-1234567890abcdef/ payload');
+    });
+    const app = express().use(
+      buildOpenAIProxy({
+        env: { OPENAI_API_KEY: 'env-shared-key' } as NodeJS.ProcessEnv,
+        fetch: fetchMock as typeof fetch,
+        logger,
+        verifyProxyToken: async () => ({ workspaceId: 'workspace-abc' }),
+        resolveLlmKey,
+      }),
+    );
+
+    const res = await request(app)
+      .post('/v1/chat/completions')
+      .set('Authorization', 'Bearer tnt_workspace_abc')
+      .send('{}');
+
+    expect(res.status).toBe(503);
+    expect(res.body).toEqual({ error: 'upstream_key_unconfigured' });
+    // No upstream call.
+    expect(fetchMock).not.toHaveBeenCalled();
+    // The CLIENT response body MUST NOT echo the resolver's error message —
+    // that's the security-relevant assertion. (The internal log keeps a
+    // sanitized message so ops can debug; that's what Lane C's sanitizer is
+    // for — body/cause/stack stripped, name + truncated message retained.)
+    expect(JSON.stringify(res.body)).not.toMatch(/UNEXPECTED INTERNAL DETAIL|sk-1234567890abcdef/);
+    // The error WAS logged via sanitizer-wrapped path. Verify the structured
+    // log doesn't include `cause`, `stack`, `details`, or `body` (Codex C's
+    // contract) even though the message is retained.
+    expect(logger.error).toHaveBeenCalled();
+    for (const [payload] of logger.error.mock.calls) {
+      const serialized = JSON.stringify(payload);
+      expect(serialized).not.toContain('"stack"');
+      expect(serialized).not.toContain('"cause"');
+      expect(serialized).not.toContain('"details"');
+      expect(serialized).not.toContain('"body"');
+    }
+  });
+
   it('rate limits repeated failed tenant auth attempts', async () => {
     const verifyProxyToken = vi.fn(async () => null);
     const app = express().use(

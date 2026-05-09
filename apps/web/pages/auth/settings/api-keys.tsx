@@ -68,6 +68,7 @@ export default function ApiKeysSettingsPage() {
   }, [error, router]);
 
   const credentials = data?.credentials ?? [];
+  const isForbidden = (error as { status?: number } | undefined)?.status === 403;
 
   return (
     <>
@@ -90,22 +91,35 @@ export default function ApiKeysSettingsPage() {
               </p>
             </header>
 
-            <section className="mt-10">
-              <h2 className="text-sm font-medium uppercase tracking-[0.04em] text-text-subtle">
-                Configured keys
-              </h2>
-              <CredentialsList
-                credentials={credentials}
-                onRemoved={() => mutate()}
-              />
-            </section>
+            {isForbidden ? (
+              <div
+                role="alert"
+                className="mt-8 rounded-lg border border-input bg-secondary px-4 py-3 text-sm text-text-body"
+                data-testid="api-keys-forbidden"
+              >
+                Only workspace owners can manage API keys. Ask the owner of
+                this workspace to add or rotate a provider key.
+              </div>
+            ) : (
+              <>
+                <section className="mt-10">
+                  <h2 className="text-sm font-medium uppercase tracking-[0.04em] text-text-subtle">
+                    Configured keys
+                  </h2>
+                  <CredentialsList
+                    credentials={credentials}
+                    onRemoved={() => mutate()}
+                  />
+                </section>
 
-            <section className="mt-12">
-              <h2 className="text-sm font-medium uppercase tracking-[0.04em] text-text-subtle">
-                Add a key
-              </h2>
-              <AddKeyForm onSaved={() => mutate()} />
-            </section>
+                <section className="mt-12">
+                  <h2 className="text-sm font-medium uppercase tracking-[0.04em] text-text-subtle">
+                    Add a key
+                  </h2>
+                  <AddKeyForm onSaved={() => mutate()} />
+                </section>
+              </>
+            )}
           </div>
         </div>
       </main>

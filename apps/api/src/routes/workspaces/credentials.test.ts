@@ -98,6 +98,65 @@ describe('workspace credentials route — auth gates', () => {
     expect(res.status).toBe(403);
     expect(res.body).toEqual({ error: 'no_workspace' });
   });
+
+  it('POST returns 401 with no session and never calls upsertLlmKey', async () => {
+    mocks.validateSession.mockResolvedValue(null);
+    const app = buildApp();
+
+    const res = await request(app)
+      .post('/workspaces/credentials')
+      .send({ provider: 'openai', scope: 'chat', apiKey: 'sk-xxxx' });
+
+    expect(res.status).toBe(401);
+    expect(res.body).toEqual({ error: 'unauthorized' });
+    expect(mocks.resolveOwnerWorkspaceId).not.toHaveBeenCalled();
+    expect(mocks.upsertLlmKey).not.toHaveBeenCalled();
+  });
+
+  it('POST returns 403 with a session but no owned workspace', async () => {
+    mocks.validateSession.mockResolvedValue({ userId: USER_ID });
+    mocks.resolveOwnerWorkspaceId.mockResolvedValue(null);
+    const app = buildApp();
+
+    const res = await authedRequest(app, 'post').send({
+      provider: 'openai',
+      scope: 'chat',
+      apiKey: 'sk-xxxx',
+    });
+
+    expect(res.status).toBe(403);
+    expect(res.body).toEqual({ error: 'no_workspace' });
+    expect(mocks.upsertLlmKey).not.toHaveBeenCalled();
+  });
+
+  it('DELETE returns 401 with no session and never calls deleteLlmKey', async () => {
+    mocks.validateSession.mockResolvedValue(null);
+    const app = buildApp();
+
+    const res = await request(app)
+      .delete('/workspaces/credentials')
+      .send({ provider: 'openai', scope: 'chat' });
+
+    expect(res.status).toBe(401);
+    expect(res.body).toEqual({ error: 'unauthorized' });
+    expect(mocks.resolveOwnerWorkspaceId).not.toHaveBeenCalled();
+    expect(mocks.deleteLlmKey).not.toHaveBeenCalled();
+  });
+
+  it('DELETE returns 403 with a session but no owned workspace', async () => {
+    mocks.validateSession.mockResolvedValue({ userId: USER_ID });
+    mocks.resolveOwnerWorkspaceId.mockResolvedValue(null);
+    const app = buildApp();
+
+    const res = await authedRequest(app, 'delete').send({
+      provider: 'openai',
+      scope: 'chat',
+    });
+
+    expect(res.status).toBe(403);
+    expect(res.body).toEqual({ error: 'no_workspace' });
+    expect(mocks.deleteLlmKey).not.toHaveBeenCalled();
+  });
 });
 
 describe('POST /workspaces/credentials', () => {
