@@ -213,7 +213,7 @@ describeDb('resolveLlmKey + upsertLlmKey + deleteLlmKey (round-trip)', () => {
       .insert(dbMod.schema.workspaces)
       .values({
         ownerUserId: user.id,
-        gbrainVersion: process.env.GBRAIN_VERSION ?? '0.27.1',
+        gbrainVersion: process.env.GBRAIN_VERSION ?? '0.31.3',
         status: 'ready',
       })
       .returning({ id: dbMod.schema.workspaces.id });

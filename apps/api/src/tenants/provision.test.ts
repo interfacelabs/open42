@@ -47,7 +47,7 @@ describe('provisionTenant', () => {
         return json({ access_token: 'token-1', expires_in: 3600 });
       }
       if (href === 'http://[fdaa::1]:8080/health') {
-        return json({ status: 'ok', version: '0.27.1' });
+        return json({ status: 'ok', version: '0.31.3' });
       }
       throw new Error(`unexpected URL ${href}`);
     });
@@ -61,7 +61,7 @@ describe('provisionTenant', () => {
           TENANT_PROVISIONER: 'fly',
           FLY_API_TOKEN: 'fly-token',
           FLY_TENANTS_APP_NAME: 'open42-tenants',
-          GBRAIN_VERSION: '0.27.1',
+          GBRAIN_VERSION: '0.31.3',
         },
       }),
     ).resolves.toEqual({
@@ -78,7 +78,7 @@ describe('provisionTenant', () => {
       flyPrivateIp: 'fdaa::1',
       gbrainBaseUrl: 'http://[fdaa::1]:8080',
       gbrainOauthClientId: 'client-1',
-      gbrainVersion: '0.27.1',
+      gbrainVersion: '0.31.3',
     });
     expect(
       decryptSecret(stored[0].gbrainOauthClientSecretCiphertext, {
@@ -124,7 +124,7 @@ describe('provisionTenant', () => {
     const fetchMock = vi.fn(async (url: string | URL | Request) => {
       const href = String(url);
       if (href === 'http://127.0.0.1:19001/health') {
-        return json({ status: 'ok', version: '0.27.1' });
+        return json({ status: 'ok', version: '0.31.3' });
       }
       if (href === 'http://127.0.0.1:19001/register') {
         return json({ client_id: 'client-local', client_secret: 'secret-local' });
@@ -159,7 +159,7 @@ describe('provisionTenant', () => {
         env: {
           TENANT_PROVISIONER: 'local-docker',
           GBRAIN_POSTGRES_PASSWORD: 'local-password',
-          GBRAIN_VERSION: '0.27.1',
+          GBRAIN_VERSION: '0.31.3',
         },
       }),
     ).resolves.toEqual({
@@ -228,7 +228,7 @@ describe('provisionTenant', () => {
     const fetchMock = vi.fn(async (url: string | URL | Request) => {
       const href = String(url);
       if (href === 'http://127.0.0.1:19002/health') {
-        return json({ status: 'ok', version: '0.27.1' });
+        return json({ status: 'ok', version: '0.31.3' });
       }
       if (href === 'http://127.0.0.1:19002/register') {
         return json({ client_id: 'client-local-fly-env', client_secret: 'secret-local-fly-env' });
@@ -250,7 +250,7 @@ describe('provisionTenant', () => {
         env: {
           FLY_API_TOKEN: 'fly-token',
           FLY_TENANTS_APP_NAME: 'open42-tenants',
-          GBRAIN_VERSION: '0.27.1',
+          GBRAIN_VERSION: '0.31.3',
         },
       }),
     ).resolves.toMatchObject({
@@ -292,7 +292,7 @@ describe('provisionTenant', () => {
           TENANT_PROVISIONER: 'fly',
           FLY_API_TOKEN: 'fly-token',
           FLY_TENANTS_APP_NAME: 'open42-tenants',
-          GBRAIN_VERSION: '0.27.1',
+          GBRAIN_VERSION: '0.31.3',
         },
       }),
     ).resolves.toEqual({
@@ -306,7 +306,7 @@ describe('provisionTenant', () => {
 });
 
 describe('gbrainGitRef', () => {
-  const SHA = '1bdba7423abf39210832ebcea0b4ca34a1cde689';
+  const SHA = '9c60b3a068849f695034d82eb6c2b99287f9a054';
 
   it('returns the codebase default when GBRAIN_GIT_REF is unset', () => {
     expect(gbrainGitRef({}, 'production')).toBe(DEFAULT_GBRAIN_GIT_REF);
@@ -318,20 +318,20 @@ describe('gbrainGitRef', () => {
 
   it('rejects a branch ref in production', () => {
     expect(() =>
-      gbrainGitRef({ GBRAIN_GIT_REF: 'garrytan/v0.27.1-multimodal' }, 'production'),
+      gbrainGitRef({ GBRAIN_GIT_REF: 'garrytan/v0.31.3-multimodal' }, 'production'),
     ).toThrow(/40-char hex SHA/);
   });
 
   it('rejects a short SHA in production', () => {
-    expect(() => gbrainGitRef({ GBRAIN_GIT_REF: '1bdba74' }, 'production')).toThrow(
+    expect(() => gbrainGitRef({ GBRAIN_GIT_REF: '9c60b3a' }, 'production')).toThrow(
       /40-char hex SHA/,
     );
   });
 
   it('allows a branch ref outside production for local iteration', () => {
     expect(
-      gbrainGitRef({ GBRAIN_GIT_REF: 'garrytan/v0.27.1-multimodal' }, 'development'),
-    ).toBe('garrytan/v0.27.1-multimodal');
+      gbrainGitRef({ GBRAIN_GIT_REF: 'garrytan/v0.31.3-multimodal' }, 'development'),
+    ).toBe('garrytan/v0.31.3-multimodal');
   });
 });
 
@@ -343,7 +343,7 @@ describe('classifyProvisioningError', () => {
     ['docker run --name open42 failed', 'container_start_failed'],
     ['gbrain tenant did not become healthy: 503', 'gbrain_health_timeout'],
     ['failed to register OAuth client', 'oauth_registration_failed'],
-    ['gbrain version mismatch: expected 0.27.1', 'gbrain_version_mismatch'],
+    ['gbrain version mismatch: expected 0.31.3', 'gbrain_version_mismatch'],
     ['Fly API returned 500', 'fly_api_failed'],
     ['some unexpected non-matching message', 'provisioning_failed'],
   ])('classifies %j as %s', (msg, expected) => {
@@ -370,7 +370,7 @@ describe('safelyProvisionTenant', () => {
       repo,
       env: {
         TENANT_PROVISIONER: 'local-docker',
-        GBRAIN_VERSION: '0.27.1',
+        GBRAIN_VERSION: '0.31.3',
       },
       runCommand: async () => {
         throw new Error('Cannot connect to the Docker daemon at unix:///var/run/docker.sock');

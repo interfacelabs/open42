@@ -2,14 +2,16 @@
  * Skillify meta-prompt — the system prompt that turns a chat thread into a
  * `SKILL.md` draft.
  *
- * VERBATIM COPY of `gbrain/skills/skillify/SKILL.md` (gbrain v0.27.1, MIT
- * License, Copyright (c) 2026 Garry Tan). Open42 ships gbrain-derived
- * content under the same license. Source:
+ * Frozen against `gbrain/skills/skillify/SKILL.md` at gbrain v0.27.1, MIT
+ * License, Copyright (c) 2026 Garry Tan. Source:
  * https://github.com/garrytan/gbrain/blob/main/skills/skillify/SKILL.md
  *
- * Open42 keeps this content byte-for-byte aligned with the upstream skill so
- * future gbrain releases can be diff-rebased here without translation. When
- * upstream changes, bump SKILLIFY_SOURCE_VERSION and re-paste the body.
+ * NOTE: Open42 currently pins gbrain v0.31.3 but holds the skillify prompt
+ * at the v0.27.1 baseline. Upstream v0.28.4 added a cross-modal eval quality
+ * gate (#674) that hasn't been pulled forward — refreshing the body is a
+ * separate, deliberate decision (the new gate has product implications for
+ * Open42's hosted skill-generation surface and needs review before adoption).
+ * When the prompt is refreshed, bump `upstreamVersion` and re-paste the body.
  *
  * Items 8 (`gbrain check-resolvable`) and 9 (E2E test against a fixture
  * brain) are gbrain-CLI affordances that don't apply to Open42's hosted

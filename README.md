@@ -55,7 +55,7 @@ Anything marked **required** must be set or the app will fail loudly.
 | `OPEN42_KEK` | 32-byte master key | Generate: `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"` |
 | `API_PORT` / `API_PUBLIC_URL` / `NEXT_PUBLIC_API_PUBLIC_URL` | API host wiring | Server code reads `API_PUBLIC_URL`; browser code can only see `NEXT_PUBLIC_*` |
 | `WEB_PUBLIC_URL` / `NEXT_PUBLIC_OPEN42_APP_URL` | Web host wiring | Used for CORS origin allowlist + invite link rendering |
-| `GBRAIN_VERSION` | Pin gbrain (currently `0.27.1`) | Bumping is a deliberate Open42 release event |
+| `GBRAIN_VERSION` | Pin gbrain (currently `0.31.3`) | Bumping is a deliberate Open42 release event |
 | `GBRAIN_GIT_REF` | Immutable SHA on `garrytan/gbrain` | Default pin matches `GBRAIN_VERSION`; production MUST build from a SHA |
 
 ### Auth — required for sign-in
@@ -97,7 +97,7 @@ Pick one provisioner via `TENANT_PROVISIONER`:
 **`local-docker` (default for dev)** — builds `infra/Dockerfile.gbrain-tenant` and starts one container per first-time user.
 | Var | What |
 |-----|------|
-| `GBRAIN_TENANT_IMAGE` | e.g. `open42/gbrain-tenant:v0.27.1` |
+| `GBRAIN_TENANT_IMAGE` | e.g. `open42/gbrain-tenant:v0.31.3` |
 | `GBRAIN_TENANT_PLATFORM` | `linux/amd64` for parity with Fly |
 | `GBRAIN_LOCAL_PORT_START` | First port to allocate (default 18080) |
 | `GBRAIN_POSTGRES_USER` / `GBRAIN_POSTGRES_DB` / `GBRAIN_POSTGRES_PASSWORD` | Optional tenant Postgres creds |

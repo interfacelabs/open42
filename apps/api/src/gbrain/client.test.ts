@@ -93,7 +93,7 @@ describe('GbrainClient', () => {
       if (href.endsWith('/token')) return json({ access_token: 'token_wrappers', expires_in: 120 });
       if (href.endsWith('/health')) {
         expect(init?.headers).toMatchObject({ Authorization: 'Bearer token_wrappers' });
-        return json({ status: 'ok', version: '0.27.1' });
+        return json({ status: 'ok', version: '0.31.3' });
       }
       if (href.endsWith('/mcp')) {
         const body = JSON.parse(String(init?.body));
@@ -130,7 +130,7 @@ describe('GbrainClient', () => {
     await expect(client.listPages({ limit: 5 })).resolves.toEqual({ ok: 'list_pages' });
     await expect(client.submitJob('sync', { path: '/tmp/import' })).resolves.toEqual({ job_id: 42 });
     await expect(client.getJobProgress('42')).resolves.toBe('queued');
-    await expect(client.getHealth()).resolves.toEqual({ status: 'ok', version: '0.27.1' });
+    await expect(client.getHealth()).resolves.toEqual({ status: 'ok', version: '0.31.3' });
     await expect(client.getStats()).resolves.toEqual({ ok: 'get_stats' });
     expect(calls).toEqual([
       'put_page',

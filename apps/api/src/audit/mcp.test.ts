@@ -136,7 +136,7 @@ describe.skipIf(!hasDb)('recordMcpCall (Postgres round-trip)', () => {
     `);
     await db.execute(sql`
       INSERT INTO workspaces (id, owner_user_id, gbrain_version)
-      VALUES (${workspaceId}, ${ownerUserId}, ${'0.27.1'})
+      VALUES (${workspaceId}, ${ownerUserId}, ${'0.31.3'})
     `);
   });
 

@@ -34,10 +34,10 @@ const args = new Set(process.argv.slice(2));
 const skipBuild = args.has('--no-build');
 const skipFly = args.has('--no-fly');
 
-const version = process.env.GBRAIN_VERSION ?? '0.27.1';
+const version = process.env.GBRAIN_VERSION ?? '0.31.3';
 // Immutable SHA pin — mirrors infra/Dockerfile.gbrain-tenant.
 // See ENGINEERING.md §gbrain version pinning before changing.
-const ref = process.env.GBRAIN_GIT_REF ?? '1bdba7423abf39210832ebcea0b4ca34a1cde689';
+const ref = process.env.GBRAIN_GIT_REF ?? '9c60b3a068849f695034d82eb6c2b99287f9a054';
 const image = process.env.GBRAIN_TENANT_IMAGE ?? `open42/gbrain-tenant:v${version}`;
 const platform = process.env.GBRAIN_TENANT_PLATFORM ?? 'linux/amd64';
 const flyApp = process.env.FLY_TENANTS_APP_NAME ?? 'open42-tenants';

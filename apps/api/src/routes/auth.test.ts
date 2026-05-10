@@ -75,7 +75,7 @@ describeDb('auth routes', () => {
       .values({
         ownerUserId,
         name,
-        gbrainVersion: process.env.GBRAIN_VERSION ?? '0.27.1',
+        gbrainVersion: process.env.GBRAIN_VERSION ?? '0.31.3',
         status: 'provisioning',
       })
       .returning();

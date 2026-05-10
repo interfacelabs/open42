@@ -338,7 +338,7 @@ function createDrizzleWorkspaceLifecycleRepo(): WorkspaceLifecycleRepo {
           .values({
             ownerUserId: userId,
             name,
-            gbrainVersion: process.env.GBRAIN_VERSION ?? '0.27.1',
+            gbrainVersion: process.env.GBRAIN_VERSION ?? '0.31.3',
             status: 'provisioning',
           })
           .returning({ id: schema.workspaces.id });

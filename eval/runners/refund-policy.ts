@@ -52,7 +52,7 @@ async function main() {
     if (!bundle) {
       bundle = await generateRefundPolicySkill({
         workspaceId: fixture.id,
-        gbrainVersion: '0.27.1',
+        gbrainVersion: '0.31.3',
         now: new Date('2026-05-06T12:00:00.000Z'),
         gbrain: fixtureGbrain(fixture),
       });

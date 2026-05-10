@@ -144,7 +144,7 @@ export async function provisionTenant(
   const env = options.env ?? process.env;
   const fetchImpl = options.fetch ?? fetch;
   const repo = options.repo ?? createDrizzleTenantRepo();
-  const gbrainVersion = required(env.GBRAIN_VERSION ?? '0.27.1', 'GBRAIN_VERSION');
+  const gbrainVersion = required(env.GBRAIN_VERSION ?? '0.31.3', 'GBRAIN_VERSION');
   const provider = selectProvisioner(env);
 
   const provision = async (): Promise<ProvisionTenantResult> => {
@@ -760,16 +760,16 @@ function tenantImage(env: TenantProvisionEnv, gbrainVersion: string): string {
   return env.GBRAIN_TENANT_IMAGE ?? `open42/gbrain-tenant:v${gbrainVersion}`;
 }
 
-export const DEFAULT_GBRAIN_GIT_REF = '1bdba7423abf39210832ebcea0b4ca34a1cde689';
+export const DEFAULT_GBRAIN_GIT_REF = '9c60b3a068849f695034d82eb6c2b99287f9a054';
 const SHA_PATTERN = /^[0-9a-f]{40}$/i;
 
 export function gbrainGitRef(
   env: TenantProvisionEnv,
   nodeEnv: string | undefined = process.env.NODE_ENV,
 ): string {
-  // Pinned to an immutable commit on garrytan/gbrain branch
-  // `garrytan/v0.27.1-multimodal`. Branches are mutable (a force-push would
-  // silently land in the next image rebuild), so we pin to the SHA. Bump
+  // Pinned to the immutable v0.31.3 release commit on garrytan/gbrain master.
+  // Branches are mutable (a force-push would silently land in the next image
+  // rebuild), so we pin to the SHA. Bump
   // deliberately as part of an Open42 release — see
   // ENGINEERING.md §gbrain version pinning. Mirrors the default in
   // infra/Dockerfile.gbrain-tenant.
