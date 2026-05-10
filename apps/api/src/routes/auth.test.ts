@@ -165,7 +165,7 @@ describeDb('auth routes', () => {
         .send({ tokenHash: 'xyz', type: 'invite', inviteId: invite.id });
 
       expect(res.status).toBe(200);
-      expect(res.body.redirectTo).toBe('/auth/home');
+      expect(res.body.redirectTo).toBe('/');
 
       const [invitee] = await dbMod.db
         .select()
@@ -326,7 +326,7 @@ describeDb('auth routes', () => {
         .send({ tokenHash: 'xyz', type: 'invite', inviteId: invite.id });
 
       expect(res.status).toBe(200);
-      expect(res.body.redirectTo).toBe('/auth/home');
+      expect(res.body.redirectTo).toBe('/');
 
       // Already-accepted invites are idempotent — only the inviter's seeded
       // owner membership exists; no second insert for the invitee.

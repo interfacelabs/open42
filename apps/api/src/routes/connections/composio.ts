@@ -1,7 +1,10 @@
 import { Router, type Request } from 'express';
 import { and, eq, sql } from 'drizzle-orm';
 
-import { resolveOwnerWorkspaceId } from '../../auth/membership.js';
+import {
+  getWorkspaceReadiness,
+  resolveOwnerWorkspaceId,
+} from '../../auth/membership.js';
 import { validateSession } from '../../auth/sessions.js';
 import type { ComposioClient } from '../../composio/client.js';
 import { createComposioClient } from '../../composio/client.js';
@@ -64,6 +67,18 @@ export function buildComposioRouter(depsIn: ComposioRouterDeps = {}) {
       const workspaceId = await ownerWorkspaceId(session.userId);
       if (!workspaceId) {
         res.status(403).json({ error: 'no_workspace' });
+        return;
+      }
+      // Reject the request if the tenant runtime isn't ready yet — otherwise
+      // we'd hand back an OAuth redirect that, after callback, tries to ingest
+      // against a gbrain that doesn't exist yet. 425 Too Early lets the client
+      // retry once the runtime flips ready.
+      const readiness = await getWorkspaceReadiness(workspaceId);
+      if (!readiness || readiness.status !== 'ready' || !readiness.gbrainReady) {
+        res.status(425).json({
+          error: 'workspace_not_ready',
+          status: readiness?.status ?? 'unknown',
+        });
         return;
       }
       // TODO(P1.5): this pre-check is best-effort UX only; the partial unique index
@@ -204,7 +219,7 @@ export function buildComposioRouter(depsIn: ComposioRouterDeps = {}) {
       }
 
       void kick(payload.workspaceId).catch(() => undefined);
-      res.json({ ok: true, redirectTo: '/auth/home' });
+      res.json({ ok: true, redirectTo: '/' });
     } catch (err) {
       next(err);
     }

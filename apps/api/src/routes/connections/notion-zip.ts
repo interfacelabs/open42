@@ -5,7 +5,10 @@ import { and, eq, sql } from 'drizzle-orm';
 import { Router, type Request } from 'express';
 import multer from 'multer';
 
-import { resolveOwnerWorkspaceId } from '../../auth/membership.js';
+import {
+  getWorkspaceReadiness,
+  resolveOwnerWorkspaceId,
+} from '../../auth/membership.js';
 import { validateSession } from '../../auth/sessions.js';
 import { db, schema } from '../../db/client.js';
 
@@ -41,6 +44,19 @@ export function buildNotionZipRouter(deps: { kick: (workspaceId: string) => Prom
 
       const filename = req.file.originalname || 'notion-export.zip';
       const zipPath = req.file.path;
+
+      // Reject if the tenant runtime isn't ready — the connector immediately
+      // kicks an ingest job against gbrain, which would fail or silently
+      // queue against a runtime that doesn't exist yet. Drop the temp file.
+      const readiness = await getWorkspaceReadiness(workspaceId);
+      if (!readiness || readiness.status !== 'ready' || !readiness.gbrainReady) {
+        await rm(zipPath, { force: true }).catch(() => undefined);
+        res.status(425).json({
+          error: 'workspace_not_ready',
+          status: readiness?.status ?? 'unknown',
+        });
+        return;
+      }
 
       if (await hasActiveNotionConnection(workspaceId)) {
         await rm(zipPath, { force: true }).catch(() => undefined);

@@ -23,6 +23,9 @@ import { makeConnectorRegistry } from './connectors/registry.js';
 import { buildGbrainForWorkspace } from './gbrain/factory.js';
 import { startScheduler, type SchedulerHandle } from './ingest/orchestrator.js';
 import { sweepStaleCycles } from './ingest/staging.js';
+import { closeAllRedisConnections } from './queue/connection.js';
+import { closeProvisionQueue } from './queue/provision-queue.js';
+import { startProvisionWorker, stopProvisionWorker } from './queue/provision-worker.js';
 import { authRouter } from './routes/auth.js';
 import { chatRouter } from './routes/chat.js';
 import { buildNotionZipRouter } from './routes/connections/notion-zip.js';
@@ -167,10 +170,38 @@ app.use(
   },
 );
 
-app.listen(port, () => {
+const server = app.listen(port, () => {
   logger.info(`open42-api listening on :${port}`);
   void sweepStaleCycles(60 * 60 * 1000);
+  // Start the BullMQ worker that processes tenant-provision jobs. BullMQ
+  // handles stalled-job recovery natively — if this process dies mid-job,
+  // another worker (or this same process on restart) picks the job back
+  // up after the stalled-interval timeout. No DB sweep required.
+  startProvisionWorker();
 });
+
+// Graceful shutdown — drain in-flight jobs, close Redis sockets, then exit.
+// Without this a SIGTERM (Conductor restart, deploy, ctrl-C) would kill
+// active provisioning jobs mid-flight; BullMQ would still recover them, but
+// at the cost of an extra ~30s stall before the next worker picks up.
+let shuttingDown = false;
+async function gracefulShutdown(signal: string): Promise<void> {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  logger.info({ signal }, 'shutdown_initiated');
+  // Stop accepting new HTTP requests first so in-flight ones can finish.
+  await new Promise<void>((resolve) => server.close(() => resolve()));
+  if (scheduler) {
+    await scheduler.stop();
+  }
+  await stopProvisionWorker();
+  await closeProvisionQueue();
+  await closeAllRedisConnections();
+  logger.info('shutdown_complete');
+  process.exit(0);
+}
+process.on('SIGTERM', () => void gracefulShutdown('SIGTERM'));
+process.on('SIGINT', () => void gracefulShutdown('SIGINT'));
 
 function portFromUrl(value?: string): string | null {
   if (!value) return null;

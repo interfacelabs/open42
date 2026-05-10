@@ -132,7 +132,7 @@ authRouter.post('/verify', async (req, res, next) => {
     setSessionCookies(res, session);
     res.json({
       ok: true,
-      redirectTo: inviteId ? '/auth/home' : '/auth/onboard',
+      redirectTo: inviteId ? '/' : '/auth/onboard',
     });
   } catch (err) {
     if (inviteId && err instanceof Error && isOtpExpiredError(err)) {

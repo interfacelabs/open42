@@ -27,3 +27,5 @@ export const WEB_PUBLIC_URL = (process.env.WEB_PUBLIC_URL ?? 'http://localhost:3
   /\/+$/,
   '',
 );
+export const REDIS_URL =
+  process.env.REDIS_URL ?? `redis://localhost:${process.env.REDIS_HOST_PORT ?? '63799'}`;

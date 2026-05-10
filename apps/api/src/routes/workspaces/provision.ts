@@ -8,6 +8,10 @@ import { db, schema } from '../../db/client.js';
 import { renderInviteEmail } from '../../integrations/email-templates/invite.js';
 import { sendEmail as defaultSendEmail } from '../../integrations/resend.js';
 import {
+  enqueueProvisionJob as defaultEnqueueProvisionJob,
+  removeAndEnqueueProvisionJob as defaultRetryProvisionJob,
+} from '../../queue/provision-queue.js';
+import {
   provisionTenant as defaultProvisionTenant,
   safelyProvisionTenant as defaultSafelyProvisionTenant,
 } from '../../tenants/provision.js';
@@ -96,16 +100,24 @@ export function buildWorkspaceProvisionRouter(
   deps: {
     provisionTenant?: typeof defaultProvisionTenant;
     safelyProvisionTenant?: typeof defaultSafelyProvisionTenant;
+    enqueueProvisionJob?: typeof defaultEnqueueProvisionJob;
+    retryProvisionJob?: typeof defaultRetryProvisionJob;
     repo?: WorkspaceLifecycleRepo;
     sendEmail?: typeof defaultSendEmail;
     generateInviteLink?: typeof defaultGenerateInviteLink;
   } = {},
 ) {
   const router = Router();
+  // Tests can still inject `safelyProvisionTenant` to bypass the queue.
   const safelyProvisionTenant = deps.safelyProvisionTenant ?? defaultSafelyProvisionTenant;
+  const enqueueProvisionJob = deps.enqueueProvisionJob ?? defaultEnqueueProvisionJob;
+  const retryProvisionJob = deps.retryProvisionJob ?? defaultRetryProvisionJob;
   const repo = deps.repo ?? createDrizzleWorkspaceLifecycleRepo();
   const sendEmail = deps.sendEmail ?? defaultSendEmail;
   const generateInviteLink = deps.generateInviteLink ?? defaultGenerateInviteLink;
+  // Allow tests that already inject `safelyProvisionTenant` to keep working
+  // — if they do, we treat that as "skip the queue, run inline".
+  const useInlineProvision = deps.safelyProvisionTenant != null;
 
   router.get('/current', async (req, res, next) => {
     try {
@@ -136,10 +148,18 @@ export function buildWorkspaceProvisionRouter(
       }
       const { payload, wasCreated } = await repo.saveWorkspaceName(session.userId, name);
       if (wasCreated && payload.workspace) {
-        // Fire-and-forget: provisioning is slow (~30s), client polls /current.runtime for state.
-        // safelyProvisionTenant captures failures into the workspaces row instead of
-        // swallowing the error — see /onboarding/retry-provision for the recovery path.
-        void safelyProvisionTenant({ ownerUserId: session.userId });
+        // Provisioning runs as a BullMQ job (Redis-backed). The job survives
+        // process death — if the API restarts mid-provision, BullMQ's
+        // stalled-job recovery picks it up. Fire-and-forget over an in-process
+        // Promise (the previous design) lost work on every crash.
+        if (useInlineProvision) {
+          void safelyProvisionTenant({ ownerUserId: session.userId });
+        } else {
+          await enqueueProvisionJob({
+            workspaceId: payload.workspace.id,
+            ownerUserId: session.userId,
+          });
+        }
       }
       res.json(sanitizeCurrentPayload(payload));
     } catch (err) {
@@ -190,9 +210,18 @@ export function buildWorkspaceProvisionRouter(
         })
         .where(eq(schema.workspaces.id, workspace.id));
 
-      // Fire-and-forget — same async pattern as the initial provision, but
-      // safelyProvisionTenant captures errors into the workspaces row.
-      void safelyProvisionTenant({ ownerUserId: session.userId });
+      // Drop any prior job (terminal or active) and enqueue a fresh one. The
+      // worker resets `provisioning_started_at` on its first attempt as well
+      // — that's belt-and-suspenders for the rare race where the user clicks
+      // retry while a final retry is already mid-flight.
+      if (useInlineProvision) {
+        void safelyProvisionTenant({ ownerUserId: session.userId });
+      } else {
+        await retryProvisionJob({
+          workspaceId: workspace.id,
+          ownerUserId: session.userId,
+        });
+      }
 
       res.status(202).json({ ok: true, status: 'provisioning' });
     } catch (err) {

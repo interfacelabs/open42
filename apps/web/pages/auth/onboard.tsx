@@ -4,18 +4,22 @@ import { FormEvent, ReactNode, useCallback, useEffect, useMemo, useState } from 
 import { motion } from 'motion/react';
 import useSWR from 'swr';
 
+import { ConnectSourcesStep } from '@/components/onboarding/ConnectSourcesStep';
 import { EditorialPane } from '@/components/onboarding/EditorialPane';
 import { EnvelopeStage } from '@/components/onboarding/EnvelopeStage';
 import { Nameplate } from '@/components/onboarding/Nameplate';
+import { BrainSpinUp } from '@/components/onboarding/illustrations/BrainSpinUp';
+import { EmptyShelf } from '@/components/onboarding/illustrations/EmptyShelf';
 import {
   CurrentPayload,
   OnboardStep,
+  WorkspaceRuntime,
   deriveOnboardStep,
 } from '@/lib/onboarding/derive';
 import { EASE_STANDARD } from '@/lib/motion';
 
 interface OnboardCurrentPayload extends CurrentPayload {
-  workspace: { id: string; name: string; runtime: 'pending' | 'ready' | 'failed' } | null;
+  workspace: { id: string; name: string; runtime: WorkspaceRuntime } | null;
   invites: Array<{ id: string; email: string; status: string }>;
   user: { id: string; email: string };
 }
@@ -41,9 +45,14 @@ const parseLines = (text: string): string[] =>
 export default function OnboardPage() {
   const router = useRouter();
   const urlStep = typeof router.query.step === 'string' ? router.query.step : null;
+  // On the provisioning step we need to poll until runtime flips to 'ready'.
+  // SWR's refreshInterval is read on every render, so we can flip it from a
+  // local state that updates as the derived step changes.
+  const [pollMs, setPollMs] = useState(0);
   const { data: current, error, mutate, isLoading } = useSWR<OnboardCurrentPayload>(
     '/api/workspaces/current',
     fetcher,
+    { refreshInterval: pollMs },
   );
 
   // Lifted so the editorial pane reacts live to the form as the user types.
@@ -70,6 +79,27 @@ export default function OnboardPage() {
 
   const inviteLines = useMemo(() => parseLines(inviteText), [inviteText]);
 
+  // Poll on the provisioning step; idle otherwise.
+  useEffect(() => {
+    setPollMs(step === 'provisioning' ? 1500 : 0);
+  }, [step]);
+
+  // When the runtime flips ready while we're on the provisioning step,
+  // hand off to the next step (connect a source). When derive returns null
+  // (onboarding fully complete — workspace ready + at least one connection),
+  // hand off to the dashboard at /.
+  const runtime = current?.workspace?.runtime;
+  useEffect(() => {
+    if (!current) return;
+    if (step === 'provisioning' && runtime === 'ready') {
+      void router.replace('/auth/onboard?step=connect');
+      return;
+    }
+    if (step === null) {
+      void router.replace('/');
+    }
+  }, [current, step, runtime, router]);
+
   return (
     <>
       <Head>
@@ -81,7 +111,11 @@ export default function OnboardPage() {
             <TopBar step={step} workspaceName={topbarWorkspaceName} />
 
             <div className="mt-12 flex flex-1 items-start md:mt-16 md:items-center">
-              <div className="w-full max-w-[460px]">
+              <div
+                className={`w-full ${
+                  step === 'connect' ? 'max-w-[560px]' : 'max-w-[460px]'
+                }`}
+              >
                 {isLoading || !current ? (
                   <p className="font-mono text-xs text-text-subtle" aria-live="polite">
                     {error && (error as { status?: number }).status !== 401
@@ -94,7 +128,14 @@ export default function OnboardPage() {
                     setName={setWorkspaceName}
                     mutate={mutate}
                   />
-                ) : (
+                ) : step === 'provisioning' ? (
+                  <ProvisioningStep current={current} mutate={mutate} />
+                ) : step === 'connect' ? (
+                  <ConnectSourcesStep
+                    runtime={current.workspace?.runtime ?? 'provisioning'}
+                    mutate={mutate}
+                  />
+                ) : step === 'invite' ? (
                   <InviteStep
                     current={current}
                     text={inviteText}
@@ -102,6 +143,12 @@ export default function OnboardPage() {
                     lines={inviteLines}
                     mutate={mutate}
                   />
+                ) : (
+                  // Onboarding complete — the redirect-effect above will push
+                  // to /. Render a stub while the navigation lands.
+                  <p className="font-mono text-xs text-text-subtle" aria-live="polite">
+                    {'All set\u2026'}
+                  </p>
                 )}
               </div>
             </div>
@@ -118,6 +165,32 @@ export default function OnboardPage() {
               }
               attribution="— OPEN42 OPERATING PRINCIPLE №2"
               illustration={<EnvelopeStage lines={inviteLines} isValid={isValidEmail} />}
+            />
+          ) : step === 'provisioning' ? (
+            <EditorialPane
+              quote={
+                <>
+                  A brain isn&rsquo;t built in a day.
+                  <br />
+                  <em>But almost.</em>
+                </>
+              }
+              attribution="— OPEN42 OPERATING PRINCIPLE №3"
+              illustration={
+                <BrainSpinUp failed={current?.workspace?.runtime === 'failed'} />
+              }
+            />
+          ) : step === 'connect' ? (
+            <EditorialPane
+              quote={
+                <>
+                  A library is just a building.
+                  <br />
+                  <em>The books are what matter.</em>
+                </>
+              }
+              attribution="— OPEN42 OPERATING PRINCIPLE №4"
+              illustration={<EmptyShelf />}
             />
           ) : (
             <EditorialPane
@@ -162,13 +235,24 @@ function TopBar({
 type DotState = 'active' | 'done' | 'pending';
 
 function ProgressIndicator({ step }: { step: OnboardStep | null }) {
-  const dots: [DotState, DotState, DotState] = useMemo(() => {
-    if (step === 'workspace') return ['active', 'pending', 'pending'];
-    if (step === 'invite') return ['done', 'active', 'pending'];
-    return ['pending', 'pending', 'pending'];
+  const dots: [DotState, DotState, DotState, DotState] = useMemo(() => {
+    if (step === 'workspace') return ['active', 'pending', 'pending', 'pending'];
+    if (step === 'invite') return ['done', 'active', 'pending', 'pending'];
+    if (step === 'provisioning') return ['done', 'done', 'active', 'pending'];
+    if (step === 'connect') return ['done', 'done', 'done', 'active'];
+    return ['pending', 'pending', 'pending', 'pending'];
   }, [step]);
 
-  const label = step === 'workspace' ? 'Workspace' : step === 'invite' ? 'Invite' : '';
+  const label =
+    step === 'workspace'
+      ? 'Workspace'
+      : step === 'invite'
+        ? 'Invite'
+        : step === 'provisioning'
+          ? 'Spinning up'
+          : step === 'connect'
+            ? 'Connect a source'
+            : '';
 
   return (
     <div className="flex items-center gap-2.5 font-mono text-[11px] text-text-subtle">
@@ -179,6 +263,8 @@ function ProgressIndicator({ step }: { step: OnboardStep | null }) {
         <Dot state={dots[1]} />
         <Connector state={lineState(dots[1], dots[2])} />
         <Dot state={dots[2]} />
+        <Connector state={lineState(dots[2], dots[3])} />
+        <Dot state={dots[3]} />
       </div>
     </div>
   );
@@ -382,7 +468,7 @@ function InviteStep({
         setWarning(`couldn\u2019t email ${failed} of ${sent + failed}`);
         await new Promise((resolve) => setTimeout(resolve, 600));
       }
-      await router.push('/auth/home');
+      await router.push('/auth/onboard?step=provisioning');
     } catch {
       setError('network_error');
       setSubmitting(false);
@@ -390,7 +476,7 @@ function InviteStep({
   }, [submitting, validEmails, mutate, router]);
 
   const skip = useCallback(() => {
-    void router.push('/auth/home');
+    void router.push('/auth/onboard?step=provisioning');
   }, [router]);
 
   const runtime = current.workspace?.runtime ?? 'pending';
@@ -533,6 +619,148 @@ function InviteStep({
         ) : null}
       </form>
       <PulsingNote>{runtimeLabel}</PulsingNote>
+    </motion.div>
+  );
+}
+
+function ProvisioningStep({
+  current,
+  mutate,
+}: {
+  current: OnboardCurrentPayload;
+  mutate: () => Promise<unknown>;
+}) {
+  const [retrying, setRetrying] = useState(false);
+  const [retryError, setRetryError] = useState<string | null>(null);
+
+  const runtime: WorkspaceRuntime = current.workspace?.runtime ?? 'provisioning';
+  const failed = runtime === 'failed';
+  const overdue = runtime === 'overdue';
+
+  const headline = failed ? (
+    <>
+      Provisioning <em className="font-newsreader font-normal italic">hit a snag.</em>
+    </>
+  ) : (
+    <>
+      Spinning up{' '}
+      <em className="font-newsreader font-normal italic">your brain.</em>
+    </>
+  );
+
+  const subline = failed
+    ? 'We couldn\u2019t finish setting up your private runtime. Your data is safe — retry below.'
+    : overdue
+      ? 'Taking a little longer than usual. Hold tight — you can keep this tab open or come back later.'
+      : 'We\u2019re building you a private runtime. This usually takes 30\u201360 seconds. You can leave this tab open or check back in a minute.';
+
+  const onRetry = useCallback(async () => {
+    if (retrying) return;
+    setRetrying(true);
+    setRetryError(null);
+    try {
+      const response = await fetch('/api/workspaces/onboarding/retry-provision', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...csrfHeaders() },
+      });
+      if (!response.ok && response.status !== 202) {
+        const payload = await response.json().catch(() => ({}));
+        setRetryError(payload.error ?? 'retry_failed');
+        setRetrying(false);
+        return;
+      }
+      await mutate();
+      setRetrying(false);
+    } catch {
+      setRetryError('network_error');
+      setRetrying(false);
+    }
+  }, [retrying, mutate]);
+
+  return (
+    <motion.div
+      key="provisioning"
+      initial={{ opacity: 0, y: 4 }}
+      animate={{
+        opacity: 1,
+        y: 0,
+        transition: { duration: 0.2, ease: EASE_STANDARD },
+      }}
+    >
+      <p className="font-mono text-[11px] uppercase tracking-[0.06em] text-text-subtle">
+        {failed ? 'PROVISIONING FAILED' : overdue ? 'STILL WORKING' : 'PROVISIONING'}
+      </p>
+      <h1 className="mt-3 text-[38px] font-medium leading-[1.06] tracking-[-0.025em] text-text-primary">
+        {headline}
+      </h1>
+      <p className="mt-3.5 max-w-[42ch] text-sm leading-body text-text-body">{subline}</p>
+
+      <div className="mt-7 max-w-[460px] rounded-2xl border border-[#e5e5e5] bg-white p-[18px_22px]">
+        <div className="flex items-center gap-2.5">
+          <span
+            className={`h-[7px] w-[7px] rounded-full ${
+              failed ? 'bg-destructive' : 'bg-accent'
+            }`}
+            style={
+              failed
+                ? undefined
+                : { animation: 'pulse 1.6s ease-in-out infinite' }
+            }
+            aria-hidden="true"
+          />
+          <span className="text-sm font-medium text-text-primary">
+            {failed
+              ? 'Runtime failed'
+              : overdue
+                ? 'Almost there\u2026'
+                : 'Provisioning runtime\u2026'}
+          </span>
+        </div>
+        <div className="relative mt-4 h-1.5 overflow-hidden rounded-full bg-accent-soft">
+          {failed ? (
+            <div className="absolute inset-0 bg-destructive/30" aria-hidden="true" />
+          ) : (
+            <>
+              <div
+                className="h-full rounded-full bg-accent"
+                style={{ width: '100%' }}
+                aria-hidden="true"
+              />
+              <div
+                className="pointer-events-none absolute left-0 top-0 h-full w-[60px] bg-gradient-to-r from-transparent via-white/65 to-transparent"
+                style={{ animation: 'shimmer 1.6s linear infinite' }}
+                aria-hidden="true"
+              />
+            </>
+          )}
+        </div>
+      </div>
+
+      {failed || overdue ? (
+        <div className="mt-6 flex items-center gap-3">
+          <button
+            type="button"
+            onClick={() => void onRetry()}
+            disabled={retrying}
+            className={
+              failed
+                ? 'inline-flex h-11 items-center justify-center rounded-xl bg-accent px-5 text-[15px] font-medium tracking-[-0.01em] text-white transition-[filter,transform] duration-140 hover:brightness-110 active:translate-y-px disabled:cursor-not-allowed disabled:opacity-60'
+                : 'inline-flex h-11 items-center justify-center rounded-xl border border-input bg-white px-5 text-[14px] font-medium tracking-[-0.01em] text-text-primary transition-[border-color,background-color] duration-140 hover:border-accent hover:text-accent disabled:cursor-not-allowed disabled:opacity-60'
+            }
+          >
+            {retrying
+              ? 'Retrying\u2026'
+              : failed
+                ? 'Retry provisioning'
+                : 'Restart provisioning'}
+          </button>
+          {retryError ? (
+            <span role="alert" className="text-[13px] font-medium text-destructive">
+              {humanizeError(retryError)}
+            </span>
+          ) : null}
+        </div>
+      ) : null}
     </motion.div>
   );
 }

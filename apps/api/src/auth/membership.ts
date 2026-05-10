@@ -46,6 +46,47 @@ export async function resolveOwnerWorkspaceId(userId: string): Promise<string | 
 }
 
 /**
+ * Returns whether a workspace's runtime is fully provisioned and usable —
+ * i.e. status='ready' AND the gbrain credentials needed to talk to the
+ * tenant runtime are populated. Use this before any action that depends
+ * on the per-tenant gbrain (creating connections, kicking ingest, etc.)
+ * so the action fails fast instead of being queued against a runtime
+ * that isn't there yet.
+ *
+ * Returns null when the workspace doesn't exist or is soft-deleted. The
+ * shape mirrors the readiness derivation in workspaces/provision.ts so
+ * the same definition of "ready" is enforced across the API.
+ */
+export async function getWorkspaceReadiness(
+  workspaceId: string,
+): Promise<{ status: string; gbrainReady: boolean } | null> {
+  const [row] = await db
+    .select({
+      status: schema.workspaces.status,
+      gbrainBaseUrl: schema.workspaces.gbrainBaseUrl,
+      flyPrivateIp: schema.workspaces.flyPrivateIp,
+      gbrainOauthClientId: schema.workspaces.gbrainOauthClientId,
+      gbrainOauthClientSecretCiphertext:
+        schema.workspaces.gbrainOauthClientSecretCiphertext,
+    })
+    .from(schema.workspaces)
+    .where(
+      and(
+        eq(schema.workspaces.id, workspaceId),
+        isNull(schema.workspaces.deletedAt),
+      ),
+    )
+    .limit(1);
+  if (!row) return null;
+  const gbrainReady = Boolean(
+    (row.gbrainBaseUrl || row.flyPrivateIp) &&
+      row.gbrainOauthClientId &&
+      row.gbrainOauthClientSecretCiphertext,
+  );
+  return { status: row.status, gbrainReady };
+}
+
+/**
  * Asserts the user has a membership row for the given workspaceId on a
  * non-deleted workspace. Returns the role on success; throws an Error with
  * message `'workspace_membership_required'` otherwise.

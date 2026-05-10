@@ -75,7 +75,19 @@ export default function SignInPage() {
     return () => window.clearInterval(id);
   }, [resendIn]);
 
-  const codeStatus: 'idle' | 'sent' = state.status === 'sent' ? 'sent' : 'idle';
+  // The OTP form should stay visible across the whole "code-entry phase":
+  //   - sent           → user is typing
+  //   - verifying      → request in flight ("Checking your code…")
+  //   - error/sent     → verify failed, show error inline
+  // Otherwise we render the email form. The previous version flipped back to
+  // the email form during verify, which flashed the wrong UI for ~2s and
+  // stranded the user on the email form when verify failed.
+  const codeStatus: 'idle' | 'sent' =
+    state.status === 'sent' ||
+    state.status === 'verifying' ||
+    (state.status === 'error' && state.previous === 'sent')
+      ? 'sent'
+      : 'idle';
 
   const submitEmail = useCallback(
     async (event?: FormEvent<HTMLFormElement>) => {

@@ -60,7 +60,7 @@ export function Sidebar() {
   return (
     <aside className="flex h-screen w-60 shrink-0 flex-col border-r border-border bg-white">
       <Link
-        href="/auth/home"
+        href="/"
         className="px-4 pb-2 pt-5 font-mono text-sm text-text-subtle transition-colors hover:text-text-primary"
       >
         open42
@@ -69,8 +69,8 @@ export function Sidebar() {
       <nav className="flex-1 overflow-auto px-2 pb-4 pt-3 text-sm">
         <Section label="Ask">
           <Item
-            href="/auth/home"
-            active={isActive('/auth/home')}
+            href="/"
+            active={isActive('/')}
             icon={<MessageSquarePlus size={14} strokeWidth={1.5} />}
           >
             New thread

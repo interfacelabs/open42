@@ -488,6 +488,11 @@ export function startScheduler(deps: OrchestratorDeps): SchedulerHandle {
     if (stopped) return;
     try {
       await tick();
+    } catch (err) {
+      // Never let a tick failure crash the API process. Log and reschedule —
+      // a transient DB hiccup (network blip, schema mid-migration) shouldn't
+      // take down ingest, auth, and every other route.
+      console.error('ingest_tick_failed', errorMessage(err));
     } finally {
       if (!stopped) {
         timer = setTimeout(() => {

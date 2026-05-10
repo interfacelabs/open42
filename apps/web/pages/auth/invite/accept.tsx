@@ -196,7 +196,7 @@ export default function AcceptInvitePage() {
         const body = await res.json().catch(() => ({}));
         if (res.ok) {
           setState({ kind: 'redirecting' });
-          await router.replace(body.redirectTo ?? '/auth/home');
+          await router.replace(body.redirectTo ?? '/');
           return;
         }
         if (body?.error === 'invite_expired') setState({ kind: 'expired' });

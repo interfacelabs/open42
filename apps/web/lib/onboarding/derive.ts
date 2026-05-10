@@ -1,31 +1,62 @@
-export type OnboardStep = 'workspace' | 'invite';
+export type OnboardStep = 'workspace' | 'invite' | 'provisioning' | 'connect';
+
+export type WorkspaceRuntime = 'provisioning' | 'overdue' | 'ready' | 'failed';
 
 export interface CurrentPayload {
-  workspace: { id: string; name: string; runtime: 'pending' | 'ready' | 'failed' } | null;
+  workspace: { id: string; name: string; runtime: WorkspaceRuntime } | null;
   connections: Array<unknown>;
   lastJob: { status: string } | null;
 }
 
+/**
+ * Pick the onboarding step the user should see right now.
+ *
+ * - Honor an explicit `urlStep` (back-button, deep link, post-redirect handoff)
+ *   so the URL is the source of truth for the rendered step.
+ * - When no urlStep is set, fall through to the next undone step based on real
+ *   state: workspace exists? runtime ready? at least one connection?
+ * - Returns `null` when onboarding is fully complete — callers redirect to `/`.
+ */
 export function deriveOnboardStep(
   current: CurrentPayload,
   urlStep: string | null,
-): OnboardStep {
+): OnboardStep | null {
   if (!current.workspace) return 'workspace';
   if (urlStep === 'workspace') return 'workspace';
-  return 'invite';
+  if (urlStep === 'invite') return 'invite';
+  if (urlStep === 'provisioning') return 'provisioning';
+  if (urlStep === 'connect') return 'connect';
+  // No explicit step — derive from state.
+  if (current.workspace.runtime !== 'ready') return 'provisioning';
+  if (current.connections.length === 0) return 'connect';
+  return null;
 }
 
-export type HomeState =
+export type DashboardState =
+  | { kind: 'redirect-sign-in' }
   | { kind: 'redirect-onboard' }
-  | { kind: 'empty' }
   | { kind: 'ingesting' }
   | { kind: 'ready'; hasError: boolean };
 
-export function deriveHomeState(current: CurrentPayload): HomeState {
+/**
+ * State for the authenticated dashboard at `/`.
+ *
+ * The dashboard never shows the "connect a source" empty hero anymore — that
+ * UI lives in `/auth/onboard?step=connect`. By the time the user lands here,
+ * either they've connected something or they explicitly skipped, and either
+ * way the calm chat dashboard is the right surface.
+ */
+export function deriveDashboardState(current: CurrentPayload): DashboardState {
   if (!current.workspace) return { kind: 'redirect-onboard' };
-  if (current.connections.length === 0 && !current.lastJob) return { kind: 'empty' };
+  if (current.workspace.runtime !== 'ready') return { kind: 'redirect-onboard' };
   const status = current.lastJob?.status;
   if (status === 'queued' || status === 'running') return { kind: 'ingesting' };
   if (status === 'failed') return { kind: 'ready', hasError: true };
   return { kind: 'ready', hasError: false };
 }
+
+// Keep the old name as a deprecated alias so older callers/tests don't break
+// before they migrate. Returns the same shape as deriveDashboardState minus
+// the empty case (which no longer exists post-onboarding refactor).
+export type HomeState = DashboardState;
+export const deriveHomeState = deriveDashboardState;

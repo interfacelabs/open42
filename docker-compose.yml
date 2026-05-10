@@ -1,10 +1,10 @@
 # =====================================================================
-# Open42 dev infra — Postgres with pgvector for the metadata DB.
+# Open42 dev infra — Postgres + Redis for the metadata DB and job queue.
 # (gbrain tenants run their own embedded Postgres + pgvector inside each tenant.)
 #
-# Default host port is 54338 (deliberately NOT 5432) so it doesn't
-# collide with a local system Postgres. Override with POSTGRES_HOST_PORT
-# in .env if you want a different one.
+# Postgres default host port is 54338 (deliberately NOT 5432) so it doesn't
+# collide with a local system Postgres. Override with POSTGRES_HOST_PORT.
+# Redis default host port is 63799 (deliberately NOT 6379) for the same reason.
 # =====================================================================
 services:
   postgres:
@@ -25,5 +25,23 @@ services:
       timeout: 3s
       retries: 5
 
+  redis:
+    image: redis:7-alpine
+    container_name: open42-redis
+    restart: unless-stopped
+    ports:
+      - '${REDIS_HOST_PORT:-63799}:6379'
+    # appendonly: durability — jobs survive Redis restart so an enqueued
+    # provision survives a host reboot.
+    command: ['redis-server', '--appendonly', 'yes']
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
 volumes:
   postgres_data:
+  redis_data:

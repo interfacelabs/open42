@@ -74,8 +74,8 @@ const COPY: Record<CallbackState['kind'], StateCopy> = {
       </>
     ),
     attribution: '— A NOTE TO THE READER',
-    primaryCta: { label: 'Try again \u2192', href: '/auth/home' },
-    secondaryCta: { label: 'Skip for now', href: '/auth/home?skip=1' },
+    primaryCta: { label: 'Try again \u2192', href: '/' },
+    secondaryCta: { label: 'Skip for now', href: '/' },
   },
   expired: {
     heading: (
@@ -98,7 +98,7 @@ const COPY: Record<CallbackState['kind'], StateCopy> = {
       </>
     ),
     attribution: '— A NOTE TO THE READER',
-    primaryCta: { label: 'Start over \u2192', href: '/auth/home' },
+    primaryCta: { label: 'Start over \u2192', href: '/' },
   },
   inactive: {
     heading: (
@@ -117,8 +117,8 @@ const COPY: Record<CallbackState['kind'], StateCopy> = {
     ),
     quote: <>Try once more.</>,
     attribution: '— A NOTE TO THE READER',
-    primaryCta: { label: 'Try again \u2192', href: '/auth/home' },
-    secondaryCta: { label: 'Skip for now', href: '/auth/home?skip=1' },
+    primaryCta: { label: 'Try again \u2192', href: '/' },
+    secondaryCta: { label: 'Skip for now', href: '/' },
   },
   verify_failed: {
     heading: (
@@ -141,8 +141,8 @@ const COPY: Record<CallbackState['kind'], StateCopy> = {
       </>
     ),
     attribution: '— A NOTE TO THE READER',
-    primaryCta: { label: 'Start over \u2192', href: '/auth/home' },
-    secondaryCta: { label: 'Skip for now', href: '/auth/home?skip=1' },
+    primaryCta: { label: 'Start over \u2192', href: '/' },
+    secondaryCta: { label: 'Skip for now', href: '/' },
   },
   server_error: {
     heading: (
@@ -162,8 +162,8 @@ const COPY: Record<CallbackState['kind'], StateCopy> = {
       </>
     ),
     attribution: '— A NOTE TO THE READER',
-    primaryCta: { label: 'Try again \u2192', href: '/auth/home' },
-    secondaryCta: { label: 'Skip for now', href: '/auth/home?skip=1' },
+    primaryCta: { label: 'Try again \u2192', href: '/' },
+    secondaryCta: { label: 'Skip for now', href: '/' },
   },
 };
 
@@ -204,7 +204,7 @@ export default function ComposioCallbackPage() {
         const body = await res.json().catch(() => ({}));
         if (res.ok || body?.error === 'already_connected') {
           setState({ kind: 'redirecting' });
-          const target = typeof body?.redirectTo === 'string' ? body.redirectTo : '/auth/home';
+          const target = typeof body?.redirectTo === 'string' ? body.redirectTo : '/';
           await router.replace(target);
           return;
         }

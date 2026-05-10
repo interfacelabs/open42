@@ -155,3 +155,44 @@
 .env-anim-out {
   animation: env-anim-out 0.25s cubic-bezier(0.7, 0, 0.84, 0) forwards;
 }
+
+/* Provisioning step — concentric rings + sweeping arc + center glow.
+   SVG note: transform on a child element rotates/scales around the SVG
+   origin (0,0). The arc paths set `transform-origin` inline so rotation
+   pivots around the diagram center. Rings only animate opacity. */
+@keyframes brain-pulse {
+  0%,
+  100% {
+    opacity: 0.18;
+  }
+  50% {
+    opacity: 0.6;
+  }
+}
+@keyframes brain-rotate {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+@keyframes brain-glow {
+  0%,
+  100% {
+    opacity: 0.55;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+/* Shimmer sweep for indeterminate progress bars. */
+@keyframes shimmer {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(560px);
+  }
+}
