@@ -8,6 +8,11 @@ export interface CsrfOptions {
   csrfCookieName?: string;
 }
 
+// Unauthenticated entry points: paths that start a fresh auth flow and never
+// read the session cookie. A stale session cookie left over from a prior login
+// must not gate them on a token the client cannot have.
+const UNAUTH_ENTRY_PATHS = new Set(['/auth/signin', '/auth/verify']);
+
 export function csrfMiddleware(options: CsrfOptions) {
   const sessionCookieName = options.sessionCookieName ?? 'open42_session';
   const csrfCookieName = options.csrfCookieName ?? 'open42_csrf';
@@ -27,6 +32,8 @@ export function csrfMiddleware(options: CsrfOptions) {
       res.status(403).json({ error: 'csrf_fetch_site_rejected' });
       return;
     }
+
+    if (UNAUTH_ENTRY_PATHS.has(req.path)) return next();
 
     const hasSession = Boolean(req.cookies?.[sessionCookieName]);
     if (!hasSession) return next();
