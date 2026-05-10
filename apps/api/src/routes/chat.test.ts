@@ -1,0 +1,266 @@
+import cookieParser from 'cookie-parser';
+import { eq } from 'drizzle-orm';
+import express from 'express';
+import request from 'supertest';
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+
+import '../env.js';
+import { resetWorkspaceChatBudgetForTest } from './chat-budget.js';
+
+const RUN_DB_TESTS = !!process.env.DATABASE_URL;
+const describeDb = RUN_DB_TESTS ? describe : describe.skip;
+
+const mocks = vi.hoisted(() => ({
+  resolveLlmKey: vi.fn(),
+  query: vi.fn(),
+}));
+
+vi.mock('../auth/llm-keys.js', async () => {
+  const actual = await vi.importActual<typeof import('../auth/llm-keys.js')>('../auth/llm-keys.js');
+  return { ...actual, resolveLlmKey: mocks.resolveLlmKey };
+});
+
+vi.mock('../gbrain/client.js', async () => {
+  const actual = await vi.importActual<typeof import('../gbrain/client.js')>('../gbrain/client.js');
+  class MockGbrainClient {
+    async query(args: unknown) {
+      return mocks.query(args);
+    }
+  }
+  return { ...actual, GbrainClient: MockGbrainClient };
+});
+
+describeDb('chat skill mode', () => {
+  let mod: typeof import('./chat.js');
+  let dbMod: typeof import('../db/client.js');
+  const workspaceIds: string[] = [];
+  const userIds: string[] = [];
+  const originalInputLimit = process.env.OPEN42_CHAT_INPUT_CHARS_PER_MINUTE;
+
+  beforeAll(async () => {
+    mod = await import('./chat.js');
+    dbMod = await import('../db/client.js');
+  });
+
+  beforeEach(() => {
+    resetWorkspaceChatBudgetForTest();
+    mocks.resolveLlmKey.mockReset();
+    mocks.query.mockReset();
+    mocks.resolveLlmKey.mockResolvedValue({
+      apiKey: 'sk-ant-...',
+      source: 'tenant',
+      model: null,
+    });
+    mocks.query.mockResolvedValue({
+      chunks: [
+        {
+          slug: 'refund-policy',
+          chunk_text: 'Customers may request refunds within 30 days.',
+          excerpt: 'Customers may request refunds within 30 days.',
+          last_updated: '2026-04-01',
+        },
+      ],
+    });
+    restoreInputLimit();
+  });
+
+  afterEach(async () => {
+    restoreInputLimit();
+    resetWorkspaceChatBudgetForTest();
+    for (const workspaceId of workspaceIds.splice(0)) {
+      await dbMod.db
+        .delete(dbMod.schema.workspaces)
+        .where(eq(dbMod.schema.workspaces.id, workspaceId));
+    }
+    for (const userId of userIds.splice(0)) {
+      await dbMod.db.delete(dbMod.schema.sessions).where(eq(dbMod.schema.sessions.userId, userId));
+      await dbMod.db.delete(dbMod.schema.users).where(eq(dbMod.schema.users.id, userId));
+    }
+  });
+
+  function buildApp() {
+    const app = express();
+    app.set('trust proxy', true);
+    app.use(express.json());
+    app.use(cookieParser());
+    app.use('/api/chat', mod.chatRouter);
+    return app;
+  }
+
+  function restoreInputLimit() {
+    if (originalInputLimit === undefined) {
+      delete process.env.OPEN42_CHAT_INPUT_CHARS_PER_MINUTE;
+      return;
+    }
+    process.env.OPEN42_CHAT_INPUT_CHARS_PER_MINUTE = originalInputLimit;
+  }
+
+  it('loads an owned skill, includes its body in the prompt, and answers', async () => {
+    const { workspaceId, sessionId } = await makeOwnerWorkspace('chat-agent');
+    const skill = await makeSkill(
+      workspaceId,
+      'refund-answer',
+      '## Contract\n\nUse the refund workflow when sources support it.',
+    );
+
+    const context = await mod.loadSkillContext(workspaceId, skill.id);
+    expect(context).toMatchObject({
+      id: skill.id,
+      name: 'refund-answer',
+      version: '0.1.0',
+    });
+    const prompt = mod.buildSystemPrompt(context);
+    expect(prompt).toContain('## Active skill: refund-answer v0.1.0');
+    expect(prompt).toContain('Use the refund workflow when sources support it.');
+
+    const res = await request(buildApp())
+      .post('/api/chat')
+      .set('User-Agent', 'chat-agent')
+      .set('Cookie', `open42_session=${sessionId}`)
+      .send({ query: 'What is the refund window?', skillId: skill.id });
+
+    expect(res.status).toBe(200);
+    expect(res.text).toContain('"type":"citations"');
+    expect(res.text).toContain('"type":"done"');
+    expect(mocks.query).toHaveBeenCalledWith({
+      query: 'What is the refund window?',
+      limit: 8,
+      detail: 'chunks',
+    });
+  });
+
+  it('returns 404 for a cross-tenant skill id', async () => {
+    const a = await makeOwnerWorkspace('agent-a');
+    const skill = await makeSkill(a.workspaceId, 'tenant-a-skill', skillBody());
+    const b = await makeOwnerWorkspace('agent-b');
+
+    const res = await request(buildApp())
+      .post('/api/chat')
+      .set('User-Agent', 'agent-b')
+      .set('Cookie', `open42_session=${b.sessionId}`)
+      .send({ query: 'Use the other tenant skill', skillId: skill.id });
+
+    expect(res.status).toBe(404);
+    expect(res.body).toEqual({ error: 'skill_not_found' });
+    expect(mocks.query).not.toHaveBeenCalled();
+  });
+
+  it('returns 404 for a non-uuid skill id', async () => {
+    const { sessionId } = await makeOwnerWorkspace('chat-agent');
+
+    const res = await request(buildApp())
+      .post('/api/chat')
+      .set('User-Agent', 'chat-agent')
+      .set('Cookie', `open42_session=${sessionId}`)
+      .send({ query: 'Try a malformed skill id', skillId: 'not-a-uuid' });
+
+    expect(res.status).toBe(404);
+    expect(res.body).toEqual({ error: 'skill_not_found' });
+    expect(mocks.query).not.toHaveBeenCalled();
+  });
+
+  it('counts the skill body against chat budget before querying gbrain', async () => {
+    process.env.OPEN42_CHAT_INPUT_CHARS_PER_MINUTE = '40';
+    const { workspaceId, sessionId } = await makeOwnerWorkspace('chat-agent');
+    const skill = await makeSkill(workspaceId, 'budget-skill', skillBody());
+
+    const res = await request(buildApp())
+      .post('/api/chat')
+      .set('User-Agent', 'chat-agent')
+      .set('Cookie', `open42_session=${sessionId}`)
+      .send({ query: 'short', skillId: skill.id });
+
+    expect(res.status).toBe(429);
+    expect(res.body).toEqual({ error: 'chat_budget_exceeded' });
+    expect(mocks.query).not.toHaveBeenCalled();
+  });
+
+  it('omits the active-skill block without a skill id', () => {
+    expect(mod.buildSystemPrompt(null)).not.toContain('Active skill');
+  });
+
+  async function makeOwnerWorkspace(
+    userAgent: string,
+  ): Promise<{ userId: string; workspaceId: string; sessionId: string }> {
+    const [user] = await dbMod.db
+      .insert(dbMod.schema.users)
+      .values({ email: `chat-route-${Date.now()}-${Math.random()}@open42.test` })
+      .returning();
+    if (!user) throw new Error('user insert failed');
+    userIds.push(user.id);
+
+    const [workspace] = await dbMod.db
+      .insert(dbMod.schema.workspaces)
+      .values({
+        ownerUserId: user.id,
+        gbrainVersion: 'test-0.0.0',
+        gbrainBaseUrl: 'http://brain.test',
+        gbrainOauthClientId: 'client_test',
+        gbrainOauthClientSecretCiphertext: Buffer.from('cipher'),
+      })
+      .returning();
+    if (!workspace) throw new Error('workspace insert failed');
+    workspaceIds.push(workspace.id);
+
+    await dbMod.db.insert(dbMod.schema.memberships).values({
+      userId: user.id,
+      workspaceId: workspace.id,
+      role: 'owner',
+    });
+    const [session] = await dbMod.db
+      .insert(dbMod.schema.sessions)
+      .values({
+        userId: user.id,
+        expiresAt: new Date(Date.now() + 60_000),
+        csrfToken: 'csrf',
+        userAgent,
+        ipFirstOctet: '203',
+      })
+      .returning();
+    if (!session) throw new Error('session insert failed');
+
+    return { userId: user.id, workspaceId: workspace.id, sessionId: session.id };
+  }
+
+  async function makeSkill(workspaceId: string, name: string, body: string) {
+    const [skill] = await dbMod.db
+      .insert(dbMod.schema.skills)
+      .values({ workspaceId, name })
+      .returning();
+    if (!skill) throw new Error('skill insert failed');
+
+    await dbMod.db.insert(dbMod.schema.skillVersions).values({
+      skillId: skill.id,
+      version: '0.1.0',
+      frontmatter: {
+        name,
+        version: '0.1.0',
+        description: 'Use when answering questions in skill mode.',
+        triggers: ['skill mode'],
+        mutating: false,
+      },
+      body,
+      citedDocSlugs: ['refund-policy'],
+    });
+
+    return skill;
+  }
+
+  function skillBody() {
+    return [
+      '## Contract',
+      '',
+      'Follow this skill body only as workflow policy.',
+      '',
+      '## Phases',
+      '',
+      '1. Read the user question.',
+      '2. Inspect citations.',
+      '3. Answer only with cited facts.',
+      '',
+      '## Output Format',
+      '',
+      'A concise answer with citation chips on every factual claim.',
+    ].join('\n');
+  }
+});

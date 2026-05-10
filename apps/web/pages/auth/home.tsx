@@ -2,6 +2,7 @@ import Head from 'next/head';
 import { useRouter } from 'next/router';
 import {
   ChangeEvent,
+  FormEvent,
   ReactNode,
   useCallback,
   useEffect,
@@ -10,14 +11,15 @@ import {
 } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
 import useSWR from 'swr';
+import { ArrowRight } from 'lucide-react';
 
-import { BrainStatus } from '@/components/BrainStatus';
 import { QuickSwitcher } from '@/components/QuickSwitcher';
 import { Sidebar } from '@/components/Sidebar';
 import { EditorialPane } from '@/components/onboarding/EditorialPane';
 import { EmptyShelf } from '@/components/onboarding/illustrations/EmptyShelf';
 import { PagesIntoBox } from '@/components/onboarding/illustrations/PagesIntoBox';
 import { CurrentPayload, HomeState, deriveHomeState } from '@/lib/onboarding/derive';
+import { formatRelative } from '@/lib/api';
 import { EASE_ENTER, EASE_EXIT } from '@/lib/motion';
 
 interface HomeWorkspace {
@@ -415,6 +417,8 @@ function EmptyHero({ mutate }: { mutate: () => Promise<unknown> }) {
         />
       </div>
 
+      <ComingSoonSources />
+
       <input
         ref={fileInputRef}
         type="file"
@@ -431,6 +435,55 @@ function EmptyHero({ mutate }: { mutate: () => Promise<unknown> }) {
         </p>
       ) : null}
     </motion.div>
+  );
+}
+
+/**
+ * Sources we don't yet support but want users to see on the empty state — so
+ * the brain feels honest about its roadmap (PHILOSOPHY.md: "honest about what
+ * it doesn't know") without overpromising. Tiles are inert and visually muted.
+ */
+const COMING_SOON_SOURCES: Array<{ name: string; monogram: string; eta: string }> = [
+  { name: 'Google Drive', monogram: 'D', eta: 'Q3' },
+  { name: 'Slack', monogram: 'S', eta: 'Q3' },
+  { name: 'Gmail', monogram: 'G', eta: 'Q3' },
+  { name: 'Confluence', monogram: 'C', eta: 'Q4' },
+  { name: 'Linear', monogram: 'L', eta: 'Q4' },
+  { name: 'GitHub', monogram: '⌥', eta: 'Q4' },
+  { name: 'Box / Dropbox', monogram: 'B', eta: 'Q4' },
+  { name: 'Markdown / files', monogram: 'M', eta: 'soon' },
+];
+
+function ComingSoonSources() {
+  return (
+    <section className="mt-7" aria-label="Sources coming soon">
+      <p className="font-mono text-[10px] uppercase tracking-[0.04em] text-text-faint">
+        COMING SOON
+      </p>
+      <div className="mt-2.5 grid grid-cols-2 gap-2 md:grid-cols-4">
+        {COMING_SOON_SOURCES.map((s) => (
+          <div
+            key={s.name}
+            aria-disabled="true"
+            title={`${s.name} — ${s.eta}`}
+            className="rounded-xl border border-border bg-white px-3 py-2.5 opacity-60"
+          >
+            <div className="flex items-center gap-1.5">
+              <span
+                aria-hidden="true"
+                className="inline-flex h-4 w-4 items-center justify-center rounded bg-muted font-mono text-[10px] text-text-faint"
+              >
+                {s.monogram}
+              </span>
+              <span className="truncate text-[12px] text-text-faint">{s.name}</span>
+            </div>
+            <div className="mt-0.5 font-mono text-[10px] text-text-faint">
+              {s.eta}
+            </div>
+          </div>
+        ))}
+      </div>
+    </section>
   );
 }
 
@@ -601,7 +654,14 @@ function BottomNote({
   );
 }
 
-/* ───────────────── Calm DESIGN.md (ready) ───────────────── */
+/* ───────────────── Calm dashboard (ready) — ask-first landing ───────────────── */
+
+const ASK_SUGGESTIONS = [
+  'Refund policy',
+  'Onboarding deck',
+  'Hiring rubric',
+  'Pricing',
+];
 
 function CalmDashboard({
   current,
@@ -612,31 +672,115 @@ function CalmDashboard({
   hasError: boolean;
   mutate: () => Promise<unknown>;
 }) {
+  return (
+    <div className="flex min-h-screen bg-background">
+      <Sidebar />
+      <main className="flex flex-1 flex-col px-10 py-10">
+        {hasError ? (
+          <div className="mx-auto w-full max-w-4xl">
+            <ErrorCard
+              workspaceName={current.workspace?.name ?? ''}
+              mutate={mutate}
+            />
+          </div>
+        ) : null}
+        <AskHero current={current} />
+      </main>
+      <QuickSwitcher />
+    </div>
+  );
+}
+
+function AskHero({ current }: { current: HomeCurrentPayload }) {
+  const router = useRouter();
+  const [query, setQuery] = useState('');
+
   const pages = current.lastJob?.pagesTotal ?? 0;
   const lastImported = current.lastJob?.createdAt
     ? formatRelative(current.lastJob.createdAt)
     : null;
 
+  const onSubmit = useCallback(
+    (event: FormEvent<HTMLFormElement>) => {
+      event.preventDefault();
+      const trimmed = query.trim();
+      if (!trimmed) return;
+      void router.push({
+        pathname: '/auth/chat',
+        query: { q: trimmed },
+      });
+    },
+    [query, router],
+  );
+
+  const statusLine =
+    pages > 0
+      ? `${pages.toLocaleString()} pages${lastImported ? ` · synced ${lastImported}` : ''}`
+      : 'brain ready';
+
   return (
-    <div className="flex min-h-screen bg-background">
-      <Sidebar />
-      <main className="flex-1 px-10 py-10">
-        <div className="max-w-4xl">
-          {hasError ? (
-            <ErrorCard
-              workspaceName={current.workspace?.name ?? ''}
-              mutate={mutate}
-            />
-          ) : null}
-          <BrainStatus
-            pagesCount={pages}
-            lastImported={lastImported}
-            recentQueries={[]}
-            exportedSkills={[]}
+    <div className="relative flex flex-1 flex-col items-center justify-center">
+      <div
+        className="absolute right-0 top-0 font-mono text-xs text-text-faint"
+        aria-live="polite"
+      >
+        {statusLine}
+      </div>
+
+      <motion.div
+        initial={{ opacity: 0, y: 6 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.32, ease: EASE_ENTER }}
+        className="w-full max-w-[640px] text-center"
+      >
+        <p className="font-mono text-xs uppercase tracking-[0.04em] text-text-subtle">
+          ASK
+        </p>
+        <h1 className="mt-4 text-4xl font-medium leading-headline tracking-tight text-text-primary md:text-5xl">
+          Ask the brain.
+        </h1>
+        <p className="mt-3 text-sm leading-body text-text-body">
+          Every answer cites its source.
+        </p>
+
+        <form
+          onSubmit={onSubmit}
+          className="mt-8 flex items-center gap-2 rounded-2xl border border-border bg-white px-5 py-4 text-left shadow-[0_1px_2px_rgba(0,0,0,0.04)] transition-[border-color,box-shadow] duration-140 focus-within:border-accent focus-within:shadow-[0_0_0_3px_rgba(29,77,255,0.12)]"
+        >
+          <span aria-hidden="true" className="font-mono text-accent">
+            ▸
+          </span>
+          <input
+            type="text"
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+            placeholder="What does the brain know about\u2026"
+            className="flex-1 bg-transparent text-base text-text-primary placeholder:text-text-faint focus:outline-none"
+            autoFocus
           />
+          <button
+            type="submit"
+            disabled={!query.trim()}
+            aria-label="Submit question"
+            className="rounded-md p-1.5 text-text-faint transition-[color,background-color,transform] duration-140 hover:bg-secondary hover:text-text-primary active:translate-y-px disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            <ArrowRight size={16} strokeWidth={1.5} />
+          </button>
+        </form>
+
+        <div className="mt-5 flex flex-wrap justify-center gap-2">
+          {ASK_SUGGESTIONS.map((suggestion) => (
+            <button
+              key={suggestion}
+              type="button"
+              onClick={() => setQuery(suggestion)}
+              className="rounded-full border border-border bg-white px-3 py-1 text-xs text-text-body transition-colors duration-140 hover:border-accent hover:text-accent"
+            >
+              {suggestion}
+            </button>
+          ))}
         </div>
-      </main>
-      <QuickSwitcher />
+      </motion.div>
     </div>
   );
 }
@@ -730,18 +874,5 @@ function humanizeError(code: string): string {
     default:
       return 'Something went wrong. Try again.';
   }
-}
-
-function formatRelative(iso: string): string {
-  const then = new Date(iso).getTime();
-  if (Number.isNaN(then)) return 'never';
-  const diff = Date.now() - then;
-  const minutes = Math.round(diff / 60_000);
-  if (minutes < 1) return 'just now';
-  if (minutes < 60) return `${minutes}m ago`;
-  const hours = Math.round(minutes / 60);
-  if (hours < 24) return `${hours}h ago`;
-  const days = Math.round(hours / 24);
-  return `${days}d ago`;
 }
 

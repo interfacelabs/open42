@@ -7,14 +7,25 @@ import { ThinkingDots } from './ThinkingDots';
 interface TranscriptProps {
   messages: ChatMessage[];
   thinking: boolean;
-  onCitationSelect: (citation: Citation) => void;
+  activeCitationIndex: number | null;
+  onActivateCitation: (index: number) => void;
 }
 
-export function Transcript({ messages, thinking, onCitationSelect }: TranscriptProps) {
+export function Transcript({
+  messages,
+  thinking,
+  activeCitationIndex,
+  onActivateCitation,
+}: TranscriptProps) {
   return (
     <div className="space-y-8">
       {messages.map((message) => (
-        <TranscriptRow key={message.id} message={message} onCitationSelect={onCitationSelect} />
+        <TranscriptRow
+          key={message.id}
+          message={message}
+          activeCitationIndex={activeCitationIndex}
+          onActivateCitation={onActivateCitation}
+        />
       ))}
       {thinking ? (
         <div className="max-w-chat text-sm text-text-subtle">
@@ -27,10 +38,12 @@ export function Transcript({ messages, thinking, onCitationSelect }: TranscriptP
 
 const TranscriptRow = memo(function TranscriptRow({
   message,
-  onCitationSelect,
+  activeCitationIndex,
+  onActivateCitation,
 }: {
   message: ChatMessage;
-  onCitationSelect: (citation: Citation) => void;
+  activeCitationIndex: number | null;
+  onActivateCitation: (index: number) => void;
 }) {
   if (message.role === 'user') {
     return (
@@ -44,7 +57,12 @@ const TranscriptRow = memo(function TranscriptRow({
 
   return (
     <div className="max-w-chat text-base leading-body text-text-body">
-      {renderWithCitations(message.text, message.citations ?? [], onCitationSelect)}
+      {renderWithCitations(
+        message.text,
+        message.citations ?? [],
+        activeCitationIndex,
+        onActivateCitation,
+      )}
     </div>
   );
 });
@@ -52,15 +70,23 @@ const TranscriptRow = memo(function TranscriptRow({
 function renderWithCitations(
   text: string,
   citations: Citation[],
-  onCitationSelect: (citation: Citation) => void,
+  activeCitationIndex: number | null,
+  onActivateCitation: (index: number) => void,
 ) {
   const parts = text.split(/(\[\d+])/g);
   return parts.map((part, index) => {
     const match = part.match(/^\[(\d+)]$/);
     if (!match) return <span key={`${part}-${index}`}>{part}</span>;
-    const citation = citations.find((item) => item.index === Number(match[1]));
+    const citation = citations.find(
+      (item) => item.index === Number(match[1]),
+    );
     return citation ? (
-      <CitationChip key={`${part}-${index}`} citation={citation} onSelect={onCitationSelect} />
+      <CitationChip
+        key={`${part}-${index}`}
+        citation={citation}
+        active={activeCitationIndex === citation.index}
+        onActivate={onActivateCitation}
+      />
     ) : (
       <span key={`${part}-${index}`}>{part}</span>
     );

@@ -1,5 +1,5 @@
 const commands = [
-  { name: '/export refund-policy', description: 'Generate the refund-policy skill bundle' },
+  { name: '/skillify', description: 'Mint a new skill from this thread' },
   { name: '/sources', description: 'List citations from the last answer' },
   { name: '/inspect', description: 'Open a source page by slug' },
   { name: '/freshness', description: 'Show staleness across cited pages' },

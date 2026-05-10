@@ -54,6 +54,10 @@ describe('HomePage', () => {
     expect(screen.getByRole('heading', { name: /your brain is empty/i })).toBeInTheDocument();
     expect(screen.getByText(/Connect Notion/i)).toBeInTheDocument();
     expect(screen.getByText(/Upload Notion zip/i)).toBeInTheDocument();
+    // coming-soon catalog (P7) — honest roadmap surfaced below the live tiles
+    expect(screen.getByText(/COMING SOON/i)).toBeInTheDocument();
+    expect(screen.getByText(/Google Drive/i)).toBeInTheDocument();
+    expect(screen.getByText(/^Slack$/i)).toBeInTheDocument();
     // editorial quote
     expect(screen.getByText(/A library is just a building/i)).toBeInTheDocument();
   });
@@ -88,7 +92,7 @@ describe('HomePage', () => {
     expect(screen.getByText(/Some answers/i)).toBeInTheDocument();
   });
 
-  it('ready: renders the calm dashboard surface (no editorial copy)', () => {
+  it('ready: renders the ask-first landing (no editorial copy)', () => {
     (useSWR as unknown as ReturnType<typeof vi.fn>).mockReturnValue({
       data: mkCurrent({
         connections: [
@@ -113,12 +117,17 @@ describe('HomePage', () => {
     // No editorial empty / ingesting headings
     expect(screen.queryByText(/Your brain is empty/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/Reading your team/i)).not.toBeInTheDocument();
-    // Calm surface: BrainStatus heading reflects ready state; sidebar nav present.
+    // Ask-first hero: prompt, tagline, suggestions.
     expect(
-      screen.getByRole('heading', { name: /your brain is ready/i }),
+      screen.getByRole('heading', { name: /ask the brain/i }),
     ).toBeInTheDocument();
-    // Sidebar nav links from the calm Sidebar component.
-    expect(screen.getByRole('link', { name: /brain status/i })).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: /chat/i })).toBeInTheDocument();
+    expect(screen.getByText(/every answer cites its source/i)).toBeInTheDocument();
+    expect(
+      screen.getByPlaceholderText(/what does the brain know about/i),
+    ).toBeInTheDocument();
+    // Sidebar IA: Status section + connected source surface.
+    expect(screen.getByRole('link', { name: /^status$/i })).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: /new thread/i })).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: /export\.zip/ })).toBeInTheDocument();
   });
 });

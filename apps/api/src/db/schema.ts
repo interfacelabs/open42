@@ -49,7 +49,6 @@ export const workspaceInviteStatusEnum = pgEnum('workspace_invite_status', [
   'accepted',
   'revoked',
 ]);
-export const skillTypeEnum = pgEnum('skill_type', ['refund-policy']);
 export const ingestStatusEnum = pgEnum('ingest_status', [
   'pending',
   'running',
@@ -71,6 +70,7 @@ export const connectionStatusEnum = pgEnum('connection_status', [
 export const ingestModeEnum = pgEnum('ingest_mode', ['import_once', 'periodic_pull']);
 export const llmProviderEnum = pgEnum('llm_provider', ['openai', 'anthropic']);
 export const llmScopeEnum = pgEnum('llm_scope', ['chat', 'embed']);
+export const skillRevisionRoleEnum = pgEnum('skill_revision_role', ['you', 'brain']);
 
 // =====================================================================
 // users
@@ -213,17 +213,28 @@ export const skillExports = pgTable(
     userId: uuid('user_id')
       .notNull()
       .references(() => users.id, { onDelete: 'set null' }),
-    skillType: skillTypeEnum('skill_type').notNull(),
+    /**
+     * Which skill this export came from.
+     */
+    skillId: uuid('skill_id').references(() => skills.id, {
+      onDelete: 'set null',
+    }),
     generatedAt: timestamp('generated_at', { withTimezone: true })
       .notNull()
       .defaultNow(),
     citationsCount: integer('citations_count').notNull(),
+    /**
+     * Slugs of the gbrain documents this export cited. Drives the Library
+     * "Cited in skills" smart collection. Existing rows backfill to `[]`.
+     */
+    citedDocSlugs: jsonb('cited_doc_slugs').notNull().default(sql`'[]'::jsonb`),
     sourcePagesOldestAt: timestamp('source_pages_oldest_at', { withTimezone: true }),
     stalenessWarning: boolean('staleness_warning').notNull().default(false),
   },
   (t) => ({
     workspaceIdx: index('skill_exports_workspace_idx').on(t.workspaceId),
     generatedIdx: index('skill_exports_generated_idx').on(t.generatedAt),
+    skillIdx: index('skill_exports_skill_idx').on(t.skillId),
   }),
 );
 
@@ -341,6 +352,132 @@ export const mcpAuditLog = pgTable(
 );
 
 // =====================================================================
+// skills, skill_versions, skill_revisions (wide Skillify — workspace-
+// scoped, user-mintable skills with versioned bodies and a chat-style
+// revision log).
+//
+// `skills` is the per-workspace identity; `skill_versions` stores each
+// committed body + frontmatter (immutable, append-only); `skill_revisions`
+// is the chat log between user and brain that produced (or is in-flight
+// toward) a version. The existing `skill_exports` audit trail and the
+// `skill_type` enum stay untouched for the legacy refund-policy export
+// path until the wide-Skillify generator lands and migrates the data.
+// =====================================================================
+
+export const skills = pgTable(
+  'skills',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    workspaceId: uuid('workspace_id')
+      .notNull()
+      .references(() => workspaces.id, { onDelete: 'cascade' }),
+    /** kebab-case slug; unique per workspace. Maps to SKILL.md frontmatter `name`. */
+    name: text('name').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    workspaceNameUniq: uniqueIndex('skills_workspace_name_uniq').on(
+      t.workspaceId,
+      t.name,
+    ),
+  }),
+);
+
+export const skillVersions = pgTable(
+  'skill_versions',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    skillId: uuid('skill_id')
+      .notNull()
+      .references(() => skills.id, { onDelete: 'cascade' }),
+    /** Semver string, e.g. "0.1.2". Unique per skill. */
+    version: text('version').notNull(),
+    /** Parsed YAML frontmatter — name, description, triggers, tools, etc. */
+    frontmatter: jsonb('frontmatter').notNull(),
+    /** SKILL.md markdown body (everything after the frontmatter). */
+    body: text('body').notNull(),
+    /** Slugs of gbrain docs cited in this version. Mirrors `skill_exports.cited_doc_slugs`. */
+    citedDocSlugs: jsonb('cited_doc_slugs').notNull().default(sql`'[]'::jsonb`),
+    createdByUserId: uuid('created_by_user_id').references(() => users.id, {
+      onDelete: 'set null',
+    }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    skillCreatedIdx: index('skill_versions_skill_created_idx').on(
+      t.skillId,
+      t.createdAt,
+    ),
+    skillVersionUniq: uniqueIndex('skill_versions_skill_version_uniq').on(
+      t.skillId,
+      t.version,
+    ),
+  }),
+);
+
+export const skillRevisions = pgTable(
+  'skill_revisions',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    skillId: uuid('skill_id')
+      .notNull()
+      .references(() => skills.id, { onDelete: 'cascade' }),
+    /**
+     * The version this revision contributed to, or NULL while still in
+     * flight. Set when the revision lands in a committed version.
+     */
+    versionId: uuid('version_id').references(() => skillVersions.id, {
+      onDelete: 'set null',
+    }),
+    role: skillRevisionRoleEnum('role').notNull(),
+    text: text('text').notNull(),
+    /** Inline cite chip text, e.g. "[1] [2]". Optional. */
+    cites: text('cites'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    skillCreatedIdx: index('skill_revisions_skill_created_idx').on(
+      t.skillId,
+      t.createdAt,
+    ),
+  }),
+);
+
+// =====================================================================
+// document_citations (workspace-scoped log of which gbrain doc was cited
+// in which assistant turn). Drives the Library "Most cited" smart
+// collection and the per-doc citationCount the cards render.
+//
+// One row per (assistant turn, doc slug). When a single answer cites the
+// same slug across multiple chunks, we still write only one row — most-
+// cited reflects "asks where this doc was cited at least once". Adding
+// userId / askId fields later is additive.
+// =====================================================================
+
+export const documentCitations = pgTable(
+  'document_citations',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    workspaceId: uuid('workspace_id')
+      .notNull()
+      .references(() => workspaces.id, { onDelete: 'cascade' }),
+    docSlug: text('doc_slug').notNull(),
+    citedAt: timestamp('cited_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    workspaceSlugIdx: index('document_citations_workspace_slug_idx').on(
+      t.workspaceId,
+      t.docSlug,
+    ),
+    workspaceCitedAtIdx: index('document_citations_workspace_cited_at_idx').on(
+      t.workspaceId,
+      t.citedAt,
+    ),
+  }),
+);
+
+// =====================================================================
 // workspace_credentials (per-workspace BYOK keys for LLM providers)
 // One row per (workspace, provider, scope). UI re-saves do an UPSERT.
 // `secret_ciphertext` is AES-GCM-sealed via envelope.encryptSecret with
@@ -387,6 +524,14 @@ export type WorkspaceInvite = typeof workspaceInvites.$inferSelect;
 export type Session = typeof sessions.$inferSelect;
 export type SkillExport = typeof skillExports.$inferSelect;
 export type IngestJob = typeof ingestJobs.$inferSelect;
+export type DocumentCitation = typeof documentCitations.$inferSelect;
+export type NewDocumentCitation = typeof documentCitations.$inferInsert;
+export type Skill = typeof skills.$inferSelect;
+export type NewSkill = typeof skills.$inferInsert;
+export type SkillVersion = typeof skillVersions.$inferSelect;
+export type NewSkillVersion = typeof skillVersions.$inferInsert;
+export type SkillRevision = typeof skillRevisions.$inferSelect;
+export type NewSkillRevision = typeof skillRevisions.$inferInsert;
 export type Connection = typeof connections.$inferSelect;
 export type NewConnection = typeof connections.$inferInsert;
 export type ConnectionInitState = typeof connectionInitStates.$inferSelect;

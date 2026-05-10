@@ -33,7 +33,8 @@ import { workspaceCredentialsRouter } from './routes/workspaces/credentials.js';
 import { buildIngestRouter } from './routes/workspaces/ingest.js';
 import { buildWorkspaceProvisionRouter } from './routes/workspaces/provision.js';
 import { buildHealthzRouter } from './routes/healthz.js';
-import { refundPolicySkillRouter } from './routes/skills/refund-policy.js';
+import { libraryRouter } from './routes/library/index.js';
+import { skillsRouter } from './routes/skills/mint.js';
 import { buildComposioWebhookRouter } from './routes/webhooks/composio.js';
 import { runWorkspaceCycle, type OrchestratorDeps, type RunCycleOptions } from './ingest/orchestrator.js';
 
@@ -142,7 +143,8 @@ app.use(
   }),
 );
 app.use('/chat', chatRouter);
-app.use('/skills/refund-policy', refundPolicySkillRouter);
+app.use('/library', libraryRouter);
+app.use('/skills', skillsRouter);
 
 // Fallback 404
 app.use((_req, res) => {
