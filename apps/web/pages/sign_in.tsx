@@ -60,7 +60,7 @@ export default function SignInPage() {
         return;
       }
       const body = await response.json();
-      await router.replace(body.redirectTo ?? '/auth/onboard');
+      await router.replace(body.redirectTo ?? '/onboard');
     });
     return () => {
       cancelled = true;
@@ -155,7 +155,7 @@ export default function SignInPage() {
           });
           return;
         }
-        await router.replace(payload.redirectTo ?? '/auth/onboard');
+        await router.replace(payload.redirectTo ?? '/onboard');
       } catch (error) {
         verifiedRef.current = false;
         setState({

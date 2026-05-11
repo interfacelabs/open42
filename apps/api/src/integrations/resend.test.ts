@@ -48,7 +48,7 @@ describe('sendEmail', () => {
       to: 'test@example.com',
       subject: 'Hello',
       html: '<p>hi</p>',
-      text: 'https://open42.test/auth/invite/accept?invite_id=abc&token_hash=secret',
+      text: 'https://open42.test/invite/accept?invite_id=abc&token_hash=secret',
     });
     expect(result).toEqual({ ok: false, error: 'email_provider_not_configured' });
     expect(spy).not.toHaveBeenCalled();
@@ -63,7 +63,7 @@ describe('sendEmail', () => {
       to: 'test@example.com',
       subject: 'Hello',
       html: '<p>hi</p>',
-      text: 'Accept: https://open42.test/auth/invite/accept?invite_id=abc&token_hash=secret',
+      text: 'Accept: https://open42.test/invite/accept?invite_id=abc&token_hash=secret',
     });
     expect(result).toEqual({ ok: true });
     expect(spy).toHaveBeenCalledWith(expect.stringContaining('[redacted-url]'));

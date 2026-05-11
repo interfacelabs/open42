@@ -3,49 +3,72 @@
 @tailwind utilities;
 
 /*
- * Open42 design tokens — mirrors DESIGN.md.
- * shadcn semantic tokens map to these via tailwind.config.ts.
+ * Open42 design tokens.
  *
- * Light mode only in P1.
+ * Direction: calm, premium, editorial. Mostly white. Blue used sparingly
+ * and intentionally. No purple, no glassmorphism, no dark mode.
+ *
+ * Tokens are exposed in two forms:
+ *   - HSL channels for shadcn semantic primitives (--background, --foreground…)
+ *   - Direct hex for the Open42 product palette (--panel, --blue, --orange…)
  */
 @layer base {
   :root {
     /* shadcn semantic tokens (HSL channels, no `hsl()` wrapper) */
     --background: 0 0% 100%; /* #ffffff */
-    --foreground: 0 0% 9%; /* #171717 */
+    --foreground: 222 13% 8%; /* #101114 */
 
     --card: 0 0% 100%;
-    --card-foreground: 0 0% 9%;
+    --card-foreground: 222 13% 8%;
 
     --popover: 0 0% 100%;
-    --popover-foreground: 0 0% 9%;
+    --popover-foreground: 222 13% 8%;
 
-    --primary: 0 0% 9%;
+    --primary: 222 16% 5%; /* #090b10 — flat black button */
     --primary-foreground: 0 0% 100%;
 
-    --secondary: 0 0% 96%;
-    --secondary-foreground: 0 0% 9%;
+    --secondary: 220 24% 98%; /* #f6f9ff — panel-soft */
+    --secondary-foreground: 222 13% 8%;
 
-    --muted: 0 0% 96%;
-    --muted-foreground: 0 0% 45%;
+    --muted: 220 33% 97%; /* #f4f7fc */
+    --muted-foreground: 222 5% 47%; /* #737780 */
 
-    --accent: 230 100% 56%; /* #1d4dff — single blue accent, used rarely */
+    --accent: 224 100% 57%; /* #2557ff — single blue accent, used sparingly */
     --accent-foreground: 0 0% 100%;
 
     --destructive: 0 73% 41%; /* #b91c1c */
     --destructive-foreground: 0 0% 100%;
 
-    --border: 0 0% 93%; /* #eeeeee */
-    --input: 0 0% 90%; /* #e5e5e5 */
-    --ring: 230 100% 56%; /* same as accent */
+    --border: 220 14% 92%; /* #e6e9ef */
+    --input: 220 14% 92%;
+    --ring: 224 100% 57%;
 
-    --radius: 16px; /* default card / button radius (rounded-2xl) */
+    --radius: 12px;
 
-    /* Open42 typography tokens (per DESIGN.md) */
-    --text-primary: 0 0% 9%; /* #171717 — headings */
-    --text-body: 0 0% 25%; /* #404040 — body */
-    --text-subtle: 0 0% 45%; /* #737373 — secondary copy */
-    --text-faint: 0 0% 64%; /* #a3a3a3 — captions */
+    /* Open42 typography tokens */
+    --text-primary: 222 13% 8%; /* #101114 */
+    --text-body: 222 8% 26%; /* #3d414b */
+    --text-subtle: 222 5% 47%; /* #737780 */
+    --text-faint: 220 9% 64%; /* #9ca3af */
+
+    /* Open42 product palette (direct hex via CSS vars) */
+    --panel: #fbfcff;
+    --panel-soft: #f6f9ff;
+    --panel-blue: #edf4ff;
+
+    --border-soft: #f0f2f6;
+
+    --blue: #2557ff;
+    --blue-soft: #eaf1ff;
+    --blue-line: #9bbcff;
+
+    --green: #15c784;
+
+    --black-button: #090b10;
+    --black-button-hover: #171a22;
+
+    --orange: #ff8b5f;
+    --orange-soft: #fff1eb;
   }
 }
 
@@ -65,7 +88,7 @@
   }
 }
 
-/* Reduced motion: collapse animations to a hair (per DESIGN.md). */
+/* Reduced motion: collapse animations to a hair. */
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,
@@ -77,24 +100,17 @@
   }
 }
 
-/* Open42 button presets — tactile glossy, per DESIGN.md.
- * Use shadcn's <Button variant="primary"> via class composition, OR these
- * raw classes if you need a one-off without the shadcn primitive.
+/*
+ * Button presets — flat black primary, clean bordered secondary.
+ * Premium productivity software, not glossy SaaS.
  */
 @layer components {
   .btn-primary {
-    @apply inline-flex h-11 items-center justify-center rounded-2xl bg-gradient-to-b from-neutral-800 to-neutral-950 px-6 text-[15px] font-medium tracking-[-0.01em] text-white transition-all duration-200 hover:brightness-110 active:translate-y-px;
-    box-shadow:
-      inset 0 1px 0 rgba(255, 255, 255, 0.18),
-      0 1px 2px rgba(0, 0, 0, 0.18),
-      0 8px 20px rgba(0, 0, 0, 0.12);
+    @apply inline-flex h-10 items-center justify-center gap-2 rounded-lg bg-[var(--black-button)] px-4 text-[14px] font-medium tracking-[-0.005em] text-white transition-colors duration-200 hover:bg-[var(--black-button-hover)] active:translate-y-px disabled:cursor-not-allowed disabled:opacity-50;
   }
 
   .btn-secondary {
-    @apply inline-flex h-11 items-center justify-center rounded-2xl border border-black/10 bg-gradient-to-b from-white to-neutral-100 px-6 text-[15px] font-medium tracking-[-0.005em] text-neutral-800 transition-all duration-200 hover:bg-white active:translate-y-px;
-    box-shadow:
-      inset 0 1px 0 rgba(255, 255, 255, 0.9),
-      0 1px 2px rgba(0, 0, 0, 0.08);
+    @apply inline-flex h-10 items-center justify-center gap-2 rounded-lg border border-[var(--border)] bg-white px-4 text-[14px] font-medium tracking-[-0.005em] text-[var(--foreground)] transition-colors duration-200 hover:bg-[var(--panel-soft)] active:translate-y-px disabled:cursor-not-allowed disabled:opacity-50;
   }
 }
 
@@ -156,10 +172,7 @@
   animation: env-anim-out 0.25s cubic-bezier(0.7, 0, 0.84, 0) forwards;
 }
 
-/* Provisioning step — concentric rings + sweeping arc + center glow.
-   SVG note: transform on a child element rotates/scales around the SVG
-   origin (0,0). The arc paths set `transform-origin` inline so rotation
-   pivots around the diagram center. Rings only animate opacity. */
+/* Provisioning step — concentric rings + sweeping arc + center glow. */
 @keyframes brain-pulse {
   0%,
   100% {
@@ -195,4 +208,86 @@
   100% {
     transform: translateX(560px);
   }
+}
+
+/* Horizon glyph — gentle float for empty states. */
+@keyframes horizon-float {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-2px);
+  }
+}
+.horizon-float {
+  animation: horizon-float 6s ease-in-out infinite;
+}
+
+/* Paper-boats illustration. Boats bob vertically while waves drift sideways. */
+@keyframes boat-bob {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-2.5px);
+  }
+}
+@keyframes wave-drift {
+  from {
+    transform: translateX(0);
+  }
+  to {
+    transform: translateX(-80px);
+  }
+}
+@keyframes sun-breathe {
+  0%,
+  100% {
+    opacity: 0.85;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+.pb-boat {
+  animation: boat-bob 3.6s ease-in-out infinite;
+  transform-box: fill-box;
+  transform-origin: center;
+}
+/* Slow forward drift — boats sail toward the sun, fade, reset. Stagger with
+   animation-delay so the 3 boats sit at different points in the loop. */
+@keyframes boat-sail {
+  0% {
+    transform: translateX(0);
+    opacity: 1;
+  }
+  60% {
+    transform: translateX(60px);
+    opacity: 1;
+  }
+  82% {
+    transform: translateX(82px);
+    opacity: 0;
+  }
+  83% {
+    transform: translateX(0);
+    opacity: 0;
+  }
+  100% {
+    transform: translateX(0);
+    opacity: 1;
+  }
+}
+.pb-sail {
+  animation: boat-sail 18s linear infinite;
+}
+.pb-wave {
+  animation: wave-drift 9s linear infinite;
+}
+.pb-sun {
+  animation: sun-breathe 5s ease-in-out infinite;
+  transform-box: fill-box;
+  transform-origin: center;
 }

@@ -8,7 +8,7 @@ import path from 'node:path';
  *
  *   GET /test/otp?email=…           → { code: '123456' }
  *   GET /test/magic-link?email=…    → { url: 'https://…' }
- *   GET /test/invite?email=…        → { url: 'https://…/auth/invite/accept?invite_id=…&token_hash=…&type=invite' }
+ *   GET /test/invite?email=…        → { url: 'https://…/invite/accept?invite_id=…&token_hash=…&type=invite' }
  *
  * These routes are NOT part of the production surface. The expectation is that
  * the API mounts them only when an env flag is set (e.g. OPEN42_TEST_HOOKS=1)
@@ -76,7 +76,7 @@ export async function readTestInviteLink(page: Page, email: string): Promise<str
 
 /**
  * Drive sign-in from email entry through code verification, ending on
- * /auth/onboard (or wherever the API redirects). Caller should have already
+ * /onboard (or wherever the API redirects). Caller should have already
  * navigated to /sign_in or be on a page where the test starts.
  */
 export async function signInE2E(page: Page, email: string): Promise<void> {
@@ -92,7 +92,7 @@ export async function signInE2E(page: Page, email: string): Promise<void> {
     await page.getByLabel(new RegExp(`digit ${i + 1} of 6`, 'i')).fill(code.charAt(i));
   }
 
-  // 6th digit auto-submits → land on /auth/onboard or /auth/home depending on state.
+  // 6th digit auto-submits → land on /onboard or / depending on state.
   await page.waitForURL(/\/auth\/(onboard|home)/, { timeout: 15_000 });
 }
 

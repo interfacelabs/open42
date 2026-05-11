@@ -45,11 +45,10 @@ export function EnvelopeStage({ lines, isValid }: EnvelopeStageProps) {
       el.style.marginLeft = '-40px';
       el.style.marginTop = '-28px';
       el.style.transition = 'transform 0.35s cubic-bezier(.2,.8,.2,1)';
-      el.innerHTML = '<div class="env-inner"></div>';
+      el.innerHTML = realisticEnvelopeSVG();
       const inner = el.firstElementChild as HTMLElement;
-      inner.className =
-        'w-full h-full bg-white border border-accent rounded-sm relative env-anim-in';
-      inner.style.boxShadow = '0 4px 14px rgba(29,77,255,0.10)';
+      inner.classList.add('env-anim-in');
+      inner.style.filter = 'drop-shadow(0 4px 14px rgba(29,77,255,0.10))';
       stage.appendChild(el);
       const { rot, y } = deterministicForIndex(idx);
       envEls.current.push({ el, rotation: rot, y });
@@ -80,8 +79,12 @@ export function EnvelopeStage({ lines, isValid }: EnvelopeStageProps) {
       const valid = isValid(lines[i] ?? '');
       env.el.setAttribute('data-valid', valid ? 'true' : 'false');
       if (inner) {
-        inner.style.borderStyle = valid ? 'solid' : 'dashed';
-        inner.style.opacity = valid ? '1' : '0.6';
+        inner.style.opacity = valid ? '1' : '0.55';
+        // Dashed outline when invalid — toggles the SVG's body stroke pattern.
+        const body = inner.querySelector('[data-env-body]') as SVGRectElement | null;
+        if (body) {
+          body.style.strokeDasharray = valid ? '' : '3 2';
+        }
       }
     });
   }, [lines, isValid]);
@@ -91,4 +94,30 @@ export function EnvelopeStage({ lines, isValid }: EnvelopeStageProps) {
       <div ref={stageRef} className="relative" style={{ width: 360, height: 200 }} />
     </div>
   );
+}
+
+/**
+ * Tiny mail-envelope SVG used as each token in the invite stage.
+ * Matches the OTP-screen Envelope shape (back-flap V) and adds a stamp,
+ * return-address dashes, and a subtle "to" line so it reads like a real
+ * piece of mail rather than a plain rectangle.
+ *
+ * Returned as a string because the stage spawns elements imperatively via
+ * innerHTML for cheap animation. Stays in sync with the OTP illustration.
+ */
+function realisticEnvelopeSVG(): string {
+  return [
+    '<svg viewBox="0 0 80 56" width="80" height="56" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">',
+    '  <g stroke="#1d4dff" stroke-width="1.1" fill="none" stroke-linecap="round" stroke-linejoin="round">',
+    '    <rect data-env-body x="2" y="6" width="76" height="44" rx="2" fill="#ffffff" />',
+    '    <path d="M 2 6 L 40 32 L 78 6" />',
+    '    <path d="M 2 6 L 40 32 L 78 6" stroke="#1d4dff" stroke-opacity="0.18" stroke-width="2" />',
+    '    <rect x="58" y="9" width="14" height="10" rx="0.8" fill="#ffffff" stroke-dasharray="1.2 1" />',
+    '    <circle cx="65" cy="14" r="1.5" fill="#1d4dff" stroke="none" />',
+    '    <line x1="8" y1="12" x2="22" y2="12" stroke-opacity="0.5" />',
+    '    <line x1="8" y1="15.5" x2="18" y2="15.5" stroke-opacity="0.5" />',
+    '    <line x1="22" y1="44" x2="58" y2="44" stroke-opacity="0.35" stroke-width="0.7" />',
+    '  </g>',
+    '</svg>',
+  ].join('');
 }

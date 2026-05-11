@@ -234,7 +234,7 @@ describe('workspace provision route', () => {
       expect(mocks.generateInviteLink).toHaveBeenCalledTimes(2);
       expect(mocks.generateInviteLink).toHaveBeenCalledWith({
         email: 'a@example.com',
-        redirectTo: expect.stringContaining('/auth/invite/accept?invite_id=invite-0'),
+        redirectTo: expect.stringContaining('/invite/accept?invite_id=invite-0'),
       });
       expect(mocks.sendEmail).toHaveBeenCalledTimes(2);
       expect(mocks.sendEmail).toHaveBeenCalledWith(

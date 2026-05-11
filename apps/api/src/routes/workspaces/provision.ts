@@ -250,7 +250,7 @@ export function buildWorkspaceProvisionRouter(
         try {
           const { actionLink } = await generateInviteLink({
             email: invite.email,
-            redirectTo: `${webUrl}/auth/invite/accept?invite_id=${invite.id}`,
+            redirectTo: `${webUrl}/invite/accept?invite_id=${invite.id}`,
           });
           const rendered = renderInviteEmail({
             workspaceName,

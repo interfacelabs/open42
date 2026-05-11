@@ -130,7 +130,7 @@ describeDb('auth routes', () => {
       .send({ accessToken: 'jwt' });
 
     expect(res.status).toBe(200);
-    expect(res.body).toEqual({ ok: true, redirectTo: '/auth/onboard' });
+    expect(res.body).toEqual({ ok: true, redirectTo: '/onboard' });
     expect(String(res.headers['set-cookie'])).toContain('open42_session=');
 
     const [updated] = await dbMod.db

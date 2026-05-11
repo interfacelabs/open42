@@ -1,8 +1,8 @@
 /**
- * Dashboard tests for `/` (was `/auth/home` pre-rework).
+ * Dashboard tests for `/` (was `/` pre-rework).
  *
  * The "your brain is empty" connect-source UI used to live here; it moved
- * to /auth/onboard?step=connect. The dashboard now only handles `ingesting`
+ * to /onboard?step=connect. The dashboard now only handles `ingesting`
  * and `ready` (calm) states. Anything else triggers a redirect via effect.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';

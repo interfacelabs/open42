@@ -26,8 +26,8 @@ test.describe('Auth + onboarding resilience', () => {
     const email = `e2e-resume+${Date.now()}@example.com`;
     await signInE2E(page, email);
 
-    // After sign-in, derive should land us on /auth/onboard?step=workspace
-    await page.waitForURL('**/auth/onboard**');
+    // After sign-in, derive should land us on /onboard?step=workspace
+    await page.waitForURL('**/onboard**');
     await expect(page.getByRole('heading', { name: /Name/i })).toBeVisible();
 
     // Type a partial name, refresh — should still be on workspace step,
@@ -41,7 +41,7 @@ test.describe('Auth + onboarding resilience', () => {
     // Now actually submit, advance to invite
     await page.getByLabel(/workspace name/i).fill('Resume Co');
     await page.getByRole('button', { name: /continue/i }).click();
-    await page.waitForURL('**/auth/onboard?step=invite**');
+    await page.waitForURL('**/onboard?step=invite**');
 
     // Reload at invite step — should still be on invite, with workspace
     // name preserved server-side and shown in the topbar pill.

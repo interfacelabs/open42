@@ -8,7 +8,7 @@ interface EditorialPaneProps {
 
 export function EditorialPane({ quote, attribution, illustration }: EditorialPaneProps) {
   return (
-    <div className="hidden bg-accent-soft p-12 md:flex md:flex-col md:justify-between md:gap-6 md:overflow-hidden md:relative">
+    <div className="hidden bg-accent-soft p-12 md:flex md:flex-col md:items-center md:justify-center md:gap-52 md:overflow-hidden md:relative">
       <div>
         <p className="font-newsreader font-normal text-[28px] leading-tight tracking-[-0.01em] text-accent-deep max-w-[22ch]">
           {quote}
@@ -17,7 +17,7 @@ export function EditorialPane({ quote, attribution, illustration }: EditorialPan
           {attribution}
         </p>
       </div>
-      <div className="flex items-end justify-center min-h-[220px]">
+      <div className="flex items-center justify-center min-h-[220px]">
         {illustration}
       </div>
     </div>

@@ -7,11 +7,11 @@ vi.mock('next/router', () => ({
     isReady: true,
     query: { invite_id: 'abc', token_hash: 'xyz', type: 'invite' },
     replace: replaceMock,
-    pathname: '/auth/invite/accept',
+    pathname: '/invite/accept',
   }),
 }));
 
-import AcceptInvitePage from '@/pages/auth/invite/accept';
+import AcceptInvitePage from '@/pages/invite/accept';
 
 describe('AcceptInvitePage', () => {
   it('renders verifying state on mount', () => {

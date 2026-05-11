@@ -1,7 +1,7 @@
 /**
  * Final onboarding step — pick a source to seed the brain with.
  *
- * Used to live on /auth/home as the "empty" state. Lifted into the onboarding
+ * Used to live on / as the "empty" state. Lifted into the onboarding
  * flow so the post-onboarding dashboard at `/` doesn't have to switch UIs
  * based on whether the user has connected a source yet.
  *
@@ -186,10 +186,16 @@ export function ConnectSourcesStep({ runtime, mutate }: ConnectSourcesStepProps)
           type="button"
           onClick={skip}
           disabled={busy !== null}
-          className="inline-flex items-center gap-1.5 text-[13px] font-medium text-text-subtle transition-colors duration-140 hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-60"
+          className="group inline-flex items-center gap-1.5 text-[13px] font-medium text-text-body transition-colors duration-140 hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-60"
         >
-          Skip for now &mdash; go straight to the brain
-          <ArrowRight size={14} strokeWidth={1.5} />
+          <span className="border-b border-dotted border-text-faint pb-px transition-colors duration-140 group-hover:border-text-primary">
+            Skip for now &mdash; go straight to the brain
+          </span>
+          <ArrowRight
+            size={14}
+            strokeWidth={1.5}
+            className="transition-transform duration-140 group-hover:translate-x-0.5"
+          />
         </button>
       </div>
 

@@ -7,8 +7,8 @@ vi.mock('next/router', () => ({
     query: { c: 'most-cited' },
     replace: vi.fn(),
     push: vi.fn(),
-    asPath: '/auth/library?c=most-cited',
-    pathname: '/auth/library',
+    asPath: '/library?c=most-cited',
+    pathname: '/library',
   }),
 }));
 
@@ -21,7 +21,7 @@ vi.mock('swr', async () => {
 });
 
 import useSWR from 'swr';
-import LibraryPage from '@/pages/auth/library';
+import LibraryPage from '@/pages/library';
 import type { LibraryDoc } from '@/lib/library-types';
 
 const mockSWR = useSWR as unknown as ReturnType<typeof vi.fn>;

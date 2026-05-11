@@ -42,7 +42,7 @@ export type DashboardState =
  * State for the authenticated dashboard at `/`.
  *
  * The dashboard never shows the "connect a source" empty hero anymore — that
- * UI lives in `/auth/onboard?step=connect`. By the time the user lands here,
+ * UI lives in `/onboard?step=connect`. By the time the user lands here,
  * either they've connected something or they explicitly skipped, and either
  * way the calm chat dashboard is the right surface.
  */

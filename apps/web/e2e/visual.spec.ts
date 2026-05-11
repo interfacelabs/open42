@@ -122,7 +122,7 @@ test.describe('Visual baselines — onboarding layer', () => {
     });
   });
 
-  test('/auth/onboard workspace step', async ({ page }) => {
+  test('/onboard workspace step', async ({ page }) => {
     await mockCurrent(page, {
       user: { id: 'u', email: 'a@x.com' },
       workspace: null,
@@ -130,7 +130,7 @@ test.describe('Visual baselines — onboarding layer', () => {
       connections: [],
       lastJob: null,
     });
-    await page.goto('/auth/onboard');
+    await page.goto('/onboard');
     await page.waitForSelector('label[for="workspace-name"]');
     await freezePage(page);
     await expect(page).toHaveScreenshot('onboard-workspace.png', {
@@ -138,7 +138,7 @@ test.describe('Visual baselines — onboarding layer', () => {
     });
   });
 
-  test('/auth/onboard invite step with envelopes', async ({ page }) => {
+  test('/onboard invite step with envelopes', async ({ page }) => {
     await mockCurrent(page, {
       user: { id: 'u', email: 'a@x.com' },
       workspace: READY_WORKSPACE,
@@ -146,7 +146,7 @@ test.describe('Visual baselines — onboarding layer', () => {
       connections: [],
       lastJob: null,
     });
-    await page.goto('/auth/onboard?step=invite');
+    await page.goto('/onboard?step=invite');
     await page.waitForSelector('textarea#invite-emails');
     await page
       .locator('textarea#invite-emails')
@@ -157,7 +157,7 @@ test.describe('Visual baselines — onboarding layer', () => {
     });
   });
 
-  test('/auth/home empty', async ({ page }) => {
+  test('/ empty', async ({ page }) => {
     await mockCurrent(page, {
       user: { id: 'u', email: 'a@x.com' },
       workspace: READY_WORKSPACE,
@@ -165,13 +165,13 @@ test.describe('Visual baselines — onboarding layer', () => {
       connections: [],
       lastJob: null,
     });
-    await page.goto('/auth/home');
+    await page.goto('/');
     await page.getByRole('heading', { name: /Your brain/i }).waitFor();
     await freezePage(page);
     await expect(page).toHaveScreenshot('home-empty.png', { fullPage: true });
   });
 
-  test('/auth/home ingesting', async ({ page }) => {
+  test('/ ingesting', async ({ page }) => {
     await mockCurrent(page, {
       user: { id: 'u', email: 'a@x.com' },
       workspace: READY_WORKSPACE,
@@ -197,7 +197,7 @@ test.describe('Visual baselines — onboarding layer', () => {
         createdAt: new Date('2026-05-08T00:00:00Z').toISOString(),
       },
     });
-    await page.goto('/auth/home');
+    await page.goto('/');
     await page.getByRole('heading', { name: /Reading/i }).waitFor();
     await freezePage(page);
     await expect(page).toHaveScreenshot('home-ingesting.png', {
@@ -205,7 +205,7 @@ test.describe('Visual baselines — onboarding layer', () => {
     });
   });
 
-  test('/auth/invite/accept blocked', async ({ page }) => {
+  test('/invite/accept blocked', async ({ page }) => {
     await page.route('**/api/auth/verify', (route) =>
       route.fulfill({
         status: 409,
@@ -214,7 +214,7 @@ test.describe('Visual baselines — onboarding layer', () => {
       }),
     );
     await page.goto(
-      '/auth/invite/accept?invite_id=inv_1&token_hash=tok&type=invite',
+      '/invite/accept?invite_id=inv_1&token_hash=tok&type=invite',
     );
     await page
       .getByRole('heading', { name: /already have/i })

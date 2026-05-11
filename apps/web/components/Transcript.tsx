@@ -1,4 +1,5 @@
 import { memo } from 'react';
+import { motion } from 'motion/react';
 
 import type { ChatMessage, Citation } from './chat-types';
 import { CitationChip } from './CitationChip';
@@ -11,6 +12,17 @@ interface TranscriptProps {
   onActivateCitation: (index: number) => void;
 }
 
+/**
+ * Transcript — calm chat view in the spirit of officehours / Granola.
+ *
+ * Layout rules:
+ *   - User turns: dark `text-primary` bubble, asymmetric radius (sharp
+ *     bottom-right corner), right-aligned.
+ *   - Assistant turns: plain text, no bubble, left-aligned. Citations are
+ *     rendered inline as <CitationChip /> chips.
+ *
+ * Width is capped by the parent column (max-w-chat → 720px in tokens).
+ */
 export function Transcript({
   messages,
   thinking,
@@ -18,7 +30,7 @@ export function Transcript({
   onActivateCitation,
 }: TranscriptProps) {
   return (
-    <div className="space-y-8">
+    <div className="flex flex-col gap-6">
       {messages.map((message) => (
         <TranscriptRow
           key={message.id}
@@ -28,7 +40,7 @@ export function Transcript({
         />
       ))}
       {thinking ? (
-        <div className="max-w-chat text-sm text-text-subtle">
+        <div className="flex justify-start">
           <ThinkingDots />
         </div>
       ) : null}
@@ -47,23 +59,46 @@ const TranscriptRow = memo(function TranscriptRow({
 }) {
   if (message.role === 'user') {
     return (
-      <div className="flex justify-end">
-        <p className="max-w-[520px] rounded-2xl border border-border bg-muted px-4 py-3 text-sm leading-body text-text-primary">
+      <motion.div
+        initial={{ opacity: 0, y: 4 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.18, ease: [0.16, 1, 0.3, 1] }}
+        className="flex justify-end"
+      >
+        <p
+          className="max-w-[520px] whitespace-pre-wrap bg-text-primary px-[18px] py-3 text-[14.5px] leading-[1.7] tracking-[-0.006em] text-white"
+          style={{ borderRadius: '20px 20px 4px 20px' }}
+        >
           {message.text}
         </p>
+      </motion.div>
+    );
+  }
+
+  if (message.role === 'system') {
+    return (
+      <div className="flex justify-center">
+        <p className="font-mono text-[11px] text-text-faint">{message.text}</p>
       </div>
     );
   }
 
   return (
-    <div className="max-w-chat text-base leading-body text-text-body">
-      {renderWithCitations(
-        message.text,
-        message.citations ?? [],
-        activeCitationIndex,
-        onActivateCitation,
-      )}
-    </div>
+    <motion.div
+      initial={{ opacity: 0, y: 6 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.32, ease: [0.16, 1, 0.3, 1] }}
+      className="flex justify-start"
+    >
+      <div className="max-w-[600px] whitespace-pre-wrap text-[14.5px] leading-[1.75] tracking-[-0.005em] text-text-body">
+        {renderWithCitations(
+          message.text,
+          message.citations ?? [],
+          activeCitationIndex,
+          onActivateCitation,
+        )}
+      </div>
+    </motion.div>
   );
 });
 

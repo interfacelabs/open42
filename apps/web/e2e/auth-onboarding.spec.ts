@@ -3,14 +3,14 @@ import { test, expect } from '@playwright/test';
 import { fixturePath, readTestOtp } from './helpers';
 
 /**
- * End-to-end coverage for the rewritten /sign_in → /auth/onboard → /auth/home
+ * End-to-end coverage for the rewritten /sign_in → /onboard → /
  * flow.
  *
  * These tests require the full backend stack:
  *
  *   - Postgres reachable from the API (drizzle-managed schema applied)
  *   - Supabase configured (project URL + service role key) with
- *     `redirectTo` allowlist including /auth/invite/accept and /sign_in
+ *     `redirectTo` allowlist including /invite/accept and /sign_in
  *   - The API running with test hooks enabled so /test/otp,
  *     /test/magic-link, and /test/invite return the codes/links the API
  *     just issued. See e2e/helpers.ts for the contract.
@@ -48,18 +48,18 @@ test.describe('Auth + onboarding happy path', () => {
     }
 
     // 6th digit auto-submits
-    await page.waitForURL('**/auth/onboard**', { timeout: 15_000 });
+    await page.waitForURL('**/onboard**', { timeout: 15_000 });
     await expect(page.getByRole('heading', { name: /Name/i })).toBeVisible();
 
     // Workspace step
     await page.getByLabel(/workspace name/i).fill('Speedrun Labs');
     await page.getByRole('button', { name: /continue/i }).click();
-    await page.waitForURL('**/auth/onboard?step=invite**', { timeout: 5_000 });
+    await page.waitForURL('**/onboard?step=invite**', { timeout: 5_000 });
     await expect(page.getByRole('heading', { name: /needs this brain/i })).toBeVisible();
 
     // Invite step — skip
     await page.getByRole('button', { name: /skip for now/i }).click();
-    await page.waitForURL('**/auth/home**', { timeout: 5_000 });
+    await page.waitForURL('**/**', { timeout: 5_000 });
     await expect(
       page.getByRole('heading', { name: /Your brain/i }),
     ).toBeVisible();

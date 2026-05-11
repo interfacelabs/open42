@@ -12,7 +12,7 @@ vi.mock('next/router', () => ({
     },
     replace: vi.fn(),
     push: vi.fn(),
-    pathname: '/auth/onboard',
+    pathname: '/onboard',
   }),
 }));
 
@@ -25,7 +25,7 @@ vi.mock('swr', async () => {
 });
 
 import useSWR from 'swr';
-import OnboardPage from '@/pages/auth/onboard';
+import OnboardPage from '@/pages/onboard';
 
 describe('OnboardPage', () => {
   beforeEach(() => {

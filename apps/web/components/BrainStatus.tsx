@@ -28,10 +28,10 @@ export function BrainStatus({
       </div>
       <div className="mt-8 flex flex-wrap gap-3">
         <Button asChild>
-          <Link href="/auth/chat">Ask the brain</Link>
+          <Link href="/chat">Ask the brain</Link>
         </Button>
         <Button asChild variant="secondary">
-          <Link href="/auth/onboard">Import Notion zip</Link>
+          <Link href="/onboard">Import Notion zip</Link>
         </Button>
       </div>
       <div className="mt-10 grid gap-6 md:grid-cols-2">

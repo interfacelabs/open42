@@ -52,10 +52,10 @@ export function SlideOver({
             aria-modal="true"
             aria-label={ariaLabel}
             className={cn(
-              'absolute right-0 top-0 flex h-screen flex-col border-l border-border bg-white shadow-[-12px_0_32px_rgba(0,0,0,0.06)]',
+              'absolute right-0 top-0 flex h-[100dvh] flex-col border-l border-border bg-white shadow-[-12px_0_32px_rgba(0,0,0,0.06)]',
               width === 'lg'
-                ? 'w-[58vw] max-w-[860px]'
-                : 'w-[44vw] max-w-[640px]',
+                ? 'w-full md:w-[58vw] md:max-w-[860px]'
+                : 'w-full md:w-[44vw] md:max-w-[640px]',
             )}
             initial={{ x: '100%' }}
             animate={{ x: 0 }}

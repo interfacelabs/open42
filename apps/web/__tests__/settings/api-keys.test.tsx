@@ -7,7 +7,7 @@ vi.mock('next/router', () => ({
     query: {},
     replace: vi.fn(),
     push: vi.fn(),
-    pathname: '/auth/settings/api-keys',
+    pathname: '/settings/api-keys',
   }),
 }));
 
@@ -17,7 +17,7 @@ vi.mock('swr', async () => {
 });
 
 import useSWR from 'swr';
-import ApiKeysSettingsPage from '@/pages/auth/settings/api-keys';
+import ApiKeysSettingsPage from '@/pages/settings/api-keys';
 
 interface MockCredential {
   provider: 'openai' | 'anthropic';

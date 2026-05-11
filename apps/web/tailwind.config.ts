@@ -2,8 +2,9 @@ import type { Config } from 'tailwindcss';
 
 /**
  * Open42 Tailwind config.
- * Tokens mirror DESIGN.md. CSS variables defined in styles/globals.css drive
- * the theme so shadcn primitives can re-skin via the same vars.
+ *
+ * Tokens live in styles/globals.css. shadcn semantic colors are exposed as
+ * HSL channels; Open42 product palette is exposed as direct CSS variables.
  */
 const config: Config = {
   content: [
@@ -11,7 +12,7 @@ const config: Config = {
     './components/**/*.{ts,tsx}',
     './lib/**/*.{ts,tsx}',
   ],
-  darkMode: 'class', // not used in P1 but reserved
+  darkMode: 'class',
   theme: {
     container: {
       center: true,
@@ -22,7 +23,7 @@ const config: Config = {
     },
     extend: {
       colors: {
-        // shadcn semantic tokens (mapped to CSS vars in globals.css)
+        // shadcn semantic tokens
         background: 'hsl(var(--background))',
         foreground: 'hsl(var(--foreground))',
         border: 'hsl(var(--border))',
@@ -57,7 +58,7 @@ const config: Config = {
           foreground: 'hsl(var(--card-foreground))',
         },
 
-        // Open42 typography tokens (per DESIGN.md)
+        // Open42 typography tokens
         text: {
           primary: 'hsl(var(--text-primary))',
           body: 'hsl(var(--text-body))',
@@ -65,9 +66,23 @@ const config: Config = {
           faint: 'hsl(var(--text-faint))',
         },
 
-        // Editorial onboarding layer (per spec D6)
+        // Open42 product palette (direct hex)
+        panel: 'var(--panel)',
+        'panel-soft': 'var(--panel-soft)',
+        'panel-blue': 'var(--panel-blue)',
+        'border-soft': 'var(--border-soft)',
+        blue: 'var(--blue)',
+        'blue-soft': 'var(--blue-soft)',
+        'blue-line': 'var(--blue-line)',
+        green: 'var(--green)',
+        'black-button': 'var(--black-button)',
+        'black-button-hover': 'var(--black-button-hover)',
+        orange: 'var(--orange)',
+        'orange-soft': 'var(--orange-soft)',
+
+        // Editorial onboarding layer (legacy, kept for compatibility)
         'accent-deep': '#0a1f8a',
-        'accent-soft': '#eef1ff',
+        'accent-soft': '#eaf1ff',
       },
       borderRadius: {
         lg: 'var(--radius)',
@@ -75,12 +90,13 @@ const config: Config = {
         sm: 'calc(var(--radius) - 4px)',
         input: '10px',
         '2xl': '16px',
-        '3xl': '24px',
+        '3xl': '20px',
       },
       fontFamily: {
         sans: ['var(--font-geist-sans)', 'ui-sans-serif', 'system-ui', 'sans-serif'],
         mono: ['var(--font-geist-mono)', 'ui-monospace', 'monospace'],
         newsreader: ['var(--font-newsreader)', 'Georgia', 'serif'],
+        serif: ['var(--font-newsreader)', 'Georgia', 'serif'],
       },
       lineHeight: {
         display: '0.95',
@@ -104,6 +120,10 @@ const config: Config = {
       transitionDuration: {
         '140': '140ms',
         '320': '320ms',
+      },
+      boxShadow: {
+        card: '0 1px 2px rgba(16, 17, 20, 0.04)',
+        elevate: '0 1px 2px rgba(16, 17, 20, 0.04), 0 4px 12px rgba(16, 17, 20, 0.04)',
       },
     },
   },

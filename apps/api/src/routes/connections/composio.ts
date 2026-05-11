@@ -95,7 +95,7 @@ export function buildComposioRouter(depsIn: ComposioRouterDeps = {}) {
         nonce: generateNonce(),
         expiresAt,
       });
-      const redirectUri = `${WEB_PUBLIC_URL}/auth/connections/composio/callback?state=${encodeURIComponent(
+      const redirectUri = `${WEB_PUBLIC_URL}/connections/composio/callback?state=${encodeURIComponent(
         state,
       )}`;
 

@@ -3,14 +3,14 @@
  *
  * Routing contract:
  *   - 401 from /api/workspaces/current → redirect to /sign_in
- *   - No workspace OR workspace.runtime !== 'ready' → redirect to /auth/onboard
+ *   - No workspace OR workspace.runtime !== 'ready' → redirect to /onboard
  *     (the onboard page's derive picks the correct sub-step)
  *   - Otherwise → render the dashboard. Two states:
  *       * an ingest job is queued/running → IngestingHero with progress
- *       * else → CalmDashboard (Sidebar + AskHero + QuickSwitcher)
+ *       * else → CalmDashboard (Sidebar + AskHero + UtilityPanel)
  *
  * The "connect a source" empty state used to live here. It moved into the
- * onboarding flow as the final step (/auth/onboard?step=connect) — so by
+ * onboarding flow as the final step (/onboard?step=connect) — so by
  * the time a user lands here, either they've connected something or they
  * explicitly skipped, and either way the chat surface is the right thing
  * to render. New sources are added later via Settings → Connections.
@@ -27,8 +27,11 @@ import { AnimatePresence, motion } from 'motion/react';
 import useSWR from 'swr';
 import { ArrowRight } from 'lucide-react';
 
+import { MobileNavTrigger } from '@/components/MobileNavTrigger';
 import { QuickSwitcher } from '@/components/QuickSwitcher';
 import { Sidebar } from '@/components/Sidebar';
+import { UtilityPanel } from '@/components/UtilityPanel';
+import { UtilityPanelToggle } from '@/components/UtilityPanelToggle';
 import {
   CurrentPayload,
   DashboardState,
@@ -94,14 +97,10 @@ export default function DashboardPage() {
 
   const state: DashboardState | null = current ? deriveDashboardState(current) : null;
 
-  // Poll fast while an ingest job is active so the progress UI stays fresh.
   useEffect(() => {
     setPollInterval(state?.kind === 'ingesting' ? 1000 : 0);
   }, [state?.kind]);
 
-  // 401 → sign in. No workspace / runtime not ready → back to onboard.
-  // Wait for the fetch to settle so a stale cached 401 (from before a fresh
-  // sign-in) doesn't bounce the now-authenticated user back to /sign_in.
   useEffect(() => {
     if (isValidating) return;
     if (error && (error as { status?: number }).status === 401) {
@@ -111,7 +110,7 @@ export default function DashboardPage() {
 
   useEffect(() => {
     if (state?.kind === 'redirect-onboard') {
-      void router.replace('/auth/onboard');
+      void router.replace('/onboard');
     }
   }, [state, router]);
 
@@ -159,7 +158,7 @@ function LoadingShell({ error }: { error: { status?: number } | null }) {
   return (
     <div className="flex min-h-screen flex-col px-6 py-8 md:px-16 md:py-12">
       <span className="flex items-center gap-2 font-mono text-[13px] font-medium text-text-primary">
-        <span className="h-[10px] w-[10px] rounded-full bg-accent" aria-hidden="true" />
+        <span className="h-[10px] w-[10px] rounded-full bg-blue" aria-hidden="true" />
         open42
       </span>
       <p className="mt-12 font-mono text-xs text-text-subtle" aria-live="polite">
@@ -178,7 +177,7 @@ function IngestingShell({ current }: { current: DashboardCurrentPayload }) {
     <div className="grid min-h-screen grid-cols-1 md:grid-cols-[1.25fr_1fr]">
       <div className="flex flex-1 flex-col px-6 py-8 md:px-16 md:py-12">
         <span className="flex items-center gap-2 font-mono text-[13px] font-medium text-text-primary">
-          <span className="h-[10px] w-[10px] rounded-full bg-accent" aria-hidden="true" />
+          <span className="h-[10px] w-[10px] rounded-full bg-blue" aria-hidden="true" />
           open42
           {current.workspace?.name ? (
             <span className="text-text-subtle">&middot; {current.workspace.name}</span>
@@ -191,7 +190,7 @@ function IngestingShell({ current }: { current: DashboardCurrentPayload }) {
           </div>
         </div>
       </div>
-      <div className="hidden bg-accent-soft md:block" />
+      <div className="hidden bg-panel-blue md:block" />
     </div>
   );
 }
@@ -227,52 +226,52 @@ function IngestingHero({ current }: { current: DashboardCurrentPayload }) {
       initial={{ opacity: 0, y: 4 }}
       animate={{ opacity: 1, y: 0, transition: { duration: 0.32, ease: EASE_ENTER } }}
     >
-      <h1 className="text-[38px] font-medium leading-[1.06] tracking-[-0.025em] text-text-primary">
+      <h1 className="text-[40px] font-medium leading-[1.04] tracking-[-0.025em] text-text-primary">
         Reading{' '}
-        <em className="font-newsreader font-normal italic text-text-primary">
+        <span className="font-serif font-normal italic text-text-primary">
           your team&rsquo;s notebook.
-        </em>
+        </span>
       </h1>
-      <p className="mt-3.5 max-w-[42ch] text-sm leading-body text-text-body">
+      <p className="mt-3.5 max-w-[42ch] text-[14px] leading-body text-text-body">
         You can close this tab. We&rsquo;ll keep going. When you come back, your brain
         will be ready.
       </p>
 
-      <div className="mt-7 max-w-[560px] rounded-2xl border border-[#e5e5e5] bg-white p-[22px_24px]">
+      <div className="mt-8 max-w-[560px] rounded-xl border border-border-soft bg-white p-6">
         <div className="flex items-center justify-between gap-3.5">
-          <span className="flex items-center gap-2.5 text-sm font-medium text-text-primary">
+          <span className="flex items-center gap-2.5 text-[13.5px] font-medium text-text-primary">
             <span
-              className="h-2 w-2 rounded-full bg-accent"
+              className="h-1.5 w-1.5 rounded-full bg-blue"
               style={{ animation: 'pulse 1.4s ease-in-out infinite' }}
               aria-hidden="true"
             />
             {sourceName}
           </span>
-          <span className="font-mono text-[11px] text-text-subtle">{meta}</span>
+          <span className="font-mono text-[10.5px] text-text-subtle">{meta}</span>
         </div>
 
-        <div className="relative mt-4 h-1.5 overflow-hidden rounded-full bg-accent-soft">
+        <div className="relative mt-4 h-1 overflow-hidden rounded-full bg-blue-soft">
           <div
-            className="h-full rounded-full bg-accent transition-[width] duration-400"
+            className="h-full rounded-full bg-blue transition-[width] duration-500"
             style={{ width: pct !== null ? `${pct}%` : '0%' }}
           />
           {indeterminate ? (
             <div
-              className="pointer-events-none absolute left-0 top-0 h-full w-[60px] bg-gradient-to-r from-transparent via-white/65 to-transparent"
+              className="pointer-events-none absolute left-0 top-0 h-full w-[60px] bg-gradient-to-r from-transparent via-white/75 to-transparent"
               style={{ animation: 'shimmer 1.6s linear infinite' }}
               aria-hidden="true"
             />
           ) : null}
         </div>
 
-        <div className="mt-4 grid max-h-[120px] gap-1.5 overflow-hidden font-mono text-[11px] text-text-subtle">
+        <div className="mt-4 grid max-h-[120px] gap-1.5 overflow-hidden font-mono text-[10.5px] text-text-subtle">
           {recent.length > 0
             ? recent.slice(0, 5).map((line, idx) => (
                 <div
                   key={`${line}-${idx}`}
-                  className={`flex items-center gap-2.5 ${idx === 0 ? 'text-accent' : ''}`}
+                  className={`flex items-center gap-2.5 ${idx === 0 ? 'text-blue' : ''}`}
                 >
-                  <span className="text-accent">{'\u2713'}</span>
+                  <span className="text-blue">{'\u2713'}</span>
                   {line}
                 </div>
               ))
@@ -304,16 +303,37 @@ function CalmDashboard({
   return (
     <div className="flex min-h-screen bg-background">
       <Sidebar />
-      <main className="flex flex-1 flex-col px-10 py-10">
+      <main className="flex flex-1 flex-col overflow-hidden">
+        <TopBar workspaceName={current.workspace?.name ?? ''} />
         {hasError ? (
-          <div className="mx-auto w-full max-w-4xl">
+          <div className="px-5 pt-6 md:px-10">
             <ErrorCard workspaceName={current.workspace?.name ?? ''} mutate={mutate} />
           </div>
         ) : null}
         <AskHero current={current} />
       </main>
+      <UtilityPanel />
+      <UtilityPanelToggle />
       <QuickSwitcher />
     </div>
+  );
+}
+
+function TopBar({ workspaceName }: { workspaceName: string }) {
+  return (
+    <header className="flex items-center justify-between gap-4 border-b border-border-soft px-5 py-5 md:gap-6 md:px-10 md:py-6">
+      <div className="flex min-w-0 flex-1 items-start gap-3">
+        <MobileNavTrigger className="mt-0.5" />
+        <div className="min-w-0">
+          <p className="font-mono text-[10.5px] uppercase tracking-[0.08em] text-text-faint">
+            DASHBOARD
+          </p>
+          <h1 className="mt-1.5 truncate text-[20px] font-medium leading-tight tracking-tight text-text-primary md:mt-2 md:text-[22px]">
+            {workspaceName ? workspaceName : 'Your brain'}
+          </h1>
+        </div>
+      </div>
+    </header>
   );
 }
 
@@ -331,7 +351,7 @@ function AskHero({ current }: { current: DashboardCurrentPayload }) {
       event.preventDefault();
       const trimmed = query.trim();
       if (!trimmed) return;
-      void router.push({ pathname: '/auth/chat', query: { q: trimmed } });
+      void router.push({ pathname: '/chat', query: { q: trimmed } });
     },
     [query, router],
   );
@@ -339,16 +359,18 @@ function AskHero({ current }: { current: DashboardCurrentPayload }) {
   const statusLine =
     pages > 0
       ? `${pages.toLocaleString()} pages${lastImported ? ` \u00b7 synced ${lastImported}` : ''}`
-      : 'brain ready';
+      : null;
 
   return (
-    <div className="relative flex flex-1 flex-col items-center justify-center">
-      <div
-        className="absolute right-0 top-0 font-mono text-xs text-text-faint"
-        aria-live="polite"
-      >
-        {statusLine}
-      </div>
+    <div className="relative flex flex-1 flex-col items-center justify-center px-5 py-10 md:px-10 md:py-12">
+      {statusLine ? (
+        <div
+          className="absolute right-5 top-5 font-mono text-[10.5px] text-text-faint md:right-10 md:top-6"
+          aria-live="polite"
+        >
+          {statusLine}
+        </div>
+      ) : null}
 
       <motion.div
         initial={{ opacity: 0, y: 6 }}
@@ -356,19 +378,22 @@ function AskHero({ current }: { current: DashboardCurrentPayload }) {
         transition={{ duration: 0.32, ease: EASE_ENTER }}
         className="w-full max-w-[640px] text-center"
       >
-        <p className="font-mono text-xs uppercase tracking-[0.04em] text-text-subtle">ASK</p>
-        <h1 className="mt-4 text-4xl font-medium leading-headline tracking-tight text-text-primary md:text-5xl">
-          Ask the brain.
+        <p className="font-mono text-[10.5px] uppercase tracking-[0.08em] text-text-subtle">
+          ASK
+        </p>
+        <h1 className="mt-4 text-[44px] font-medium leading-[1.04] tracking-[-0.025em] text-text-primary md:text-[52px]">
+          Ask the{' '}
+          <span className="font-serif font-normal italic">brain.</span>
         </h1>
-        <p className="mt-3 text-sm leading-body text-text-body">
+        <p className="mt-3 text-[14px] leading-body text-text-body">
           Every answer cites its source.
         </p>
 
         <form
           onSubmit={onSubmit}
-          className="mt-8 flex items-center gap-2 rounded-2xl border border-border bg-white px-5 py-4 text-left shadow-[0_1px_2px_rgba(0,0,0,0.04)] transition-[border-color,box-shadow] duration-140 focus-within:border-accent focus-within:shadow-[0_0_0_3px_rgba(29,77,255,0.12)]"
+          className="mt-8 flex items-center gap-2 rounded-xl border border-border bg-white px-4 py-3.5 text-left transition-[border-color,box-shadow] duration-140 focus-within:border-blue-line focus-within:shadow-[0_0_0_3px_rgba(37,87,255,0.10)]"
         >
-          <span aria-hidden="true" className="font-mono text-accent">
+          <span aria-hidden="true" className="font-mono text-blue">
             ▸
           </span>
           <input
@@ -376,16 +401,16 @@ function AskHero({ current }: { current: DashboardCurrentPayload }) {
             value={query}
             onChange={(event) => setQuery(event.target.value)}
             placeholder={'What does the brain know about\u2026'}
-            className="flex-1 bg-transparent text-base text-text-primary placeholder:text-text-faint focus:outline-none"
+            className="flex-1 bg-transparent text-[15px] text-text-primary placeholder:text-text-faint focus:outline-none"
             autoFocus
           />
           <button
             type="submit"
             disabled={!query.trim()}
             aria-label="Submit question"
-            className="rounded-md p-1.5 text-text-faint transition-[color,background-color,transform] duration-140 hover:bg-secondary hover:text-text-primary active:translate-y-px disabled:cursor-not-allowed disabled:opacity-40"
+            className="rounded-md p-1.5 text-text-faint transition-[color,background-color,transform] duration-140 hover:bg-panel-soft hover:text-text-primary active:translate-y-px disabled:cursor-not-allowed disabled:opacity-40"
           >
-            <ArrowRight size={16} strokeWidth={1.5} />
+            <ArrowRight size={16} strokeWidth={1.6} />
           </button>
         </form>
 
@@ -395,7 +420,7 @@ function AskHero({ current }: { current: DashboardCurrentPayload }) {
               key={suggestion}
               type="button"
               onClick={() => setQuery(suggestion)}
-              className="rounded-full border border-border bg-white px-3 py-1 text-xs text-text-body transition-colors duration-140 hover:border-accent hover:text-accent"
+              className="rounded-full border border-border-soft bg-white px-3 py-1 text-[11.5px] text-text-body transition-colors duration-140 hover:border-blue-line hover:text-blue"
             >
               {suggestion}
             </button>
@@ -443,16 +468,16 @@ function ErrorCard({
   return (
     <div
       role="alert"
-      className="mb-6 flex items-center justify-between gap-4 rounded-2xl border border-destructive/20 bg-white p-5"
+      className="flex items-center justify-between gap-4 rounded-xl border border-destructive/25 bg-white p-5"
     >
       <div>
-        <p className="text-sm font-medium text-text-primary">
+        <p className="text-[13.5px] font-medium text-text-primary">
           Brain runtime had a problem.
         </p>
         {error ? (
-          <p className="mt-1 text-xs text-destructive">{humanizeError(error)}</p>
+          <p className="mt-1 text-[12px] text-destructive">{humanizeError(error)}</p>
         ) : (
-          <p className="mt-1 text-xs text-text-subtle">
+          <p className="mt-1 text-[12px] text-text-subtle">
             We can re-trigger provisioning. Your data is safe.
           </p>
         )}
@@ -461,7 +486,7 @@ function ErrorCard({
         type="button"
         onClick={() => void onRetry()}
         disabled={retrying}
-        className="inline-flex h-9 items-center justify-center rounded-lg bg-accent px-4 text-[13px] font-medium text-white transition-[filter,transform] duration-140 hover:brightness-110 active:translate-y-px disabled:cursor-not-allowed disabled:opacity-60"
+        className="btn-primary h-9 px-4 text-[13px]"
       >
         {retrying ? 'Retrying\u2026' : 'Retry'}
       </button>

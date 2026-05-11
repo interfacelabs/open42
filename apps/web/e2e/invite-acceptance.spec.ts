@@ -9,8 +9,8 @@ import { readTestInviteLink, signInE2E } from './helpers';
  *
  * 1. Happy path: USER_A creates a workspace and invites USER_B's email.
  *    USER_B (in a separate browser context, no shared cookies) clicks the
- *    invite link, lands on /auth/invite/accept, and is redirected to
- *    /auth/home as a member of USER_A's workspace.
+ *    invite link, lands on /invite/accept, and is redirected to
+ *    / as a member of USER_A's workspace.
  *
  * 2. Blocked: USER_C already has their own workspace. They click the invite
  *    link and see the "You already have a brain" page (P1: one workspace per
@@ -37,19 +37,19 @@ test.describe('Invite acceptance', () => {
     const inviterPage = await inviterCtx.newPage();
 
     await signInE2E(inviterPage, inviterEmail);
-    await inviterPage.waitForURL('**/auth/onboard**');
+    await inviterPage.waitForURL('**/onboard**');
 
     // Workspace step
     await inviterPage.getByLabel(/workspace name/i).fill('Inviter Co');
     await inviterPage.getByRole('button', { name: /continue/i }).click();
-    await inviterPage.waitForURL('**/auth/onboard?step=invite**');
+    await inviterPage.waitForURL('**/onboard?step=invite**');
 
     // Invite step — add the invitee email and submit
     await inviterPage.getByLabel(/email addresses/i).fill(inviteeEmail);
     await inviterPage
       .getByRole('button', { name: /send invites/i })
       .click();
-    await inviterPage.waitForURL('**/auth/home**', { timeout: 15_000 });
+    await inviterPage.waitForURL('**/**', { timeout: 15_000 });
 
     // Read the invite link from the API test hook
     const inviteLink = await readTestInviteLink(inviterPage, inviteeEmail);
@@ -60,15 +60,15 @@ test.describe('Invite acceptance', () => {
     const inviteePage = await inviteeCtx.newPage();
 
     await inviteePage.goto(inviteLink);
-    // /auth/invite/accept verifies, then redirects to /auth/home
-    await inviteePage.waitForURL('**/auth/home**', { timeout: 15_000 });
+    // /invite/accept verifies, then redirects to /
+    await inviteePage.waitForURL('**/**', { timeout: 15_000 });
     // The workspace name should appear in the topbar / sidebar pill
     await expect(inviteePage.getByText(/Inviter Co/)).toBeVisible();
 
-    // Idempotency: re-opening the same link should still land on /auth/home
+    // Idempotency: re-opening the same link should still land on /
     // (already-accepted invites should be a no-op redirect, not an error).
     await inviteePage.goto(inviteLink);
-    await inviteePage.waitForURL('**/auth/home**', { timeout: 15_000 });
+    await inviteePage.waitForURL('**/**', { timeout: 15_000 });
 
     await inviteeCtx.close();
   });
@@ -84,15 +84,15 @@ test.describe('Invite acceptance', () => {
     const inviterCtx = await browser.newContext();
     const inviterPage = await inviterCtx.newPage();
     await signInE2E(inviterPage, inviterEmail);
-    await inviterPage.waitForURL('**/auth/onboard**');
+    await inviterPage.waitForURL('**/onboard**');
     await inviterPage.getByLabel(/workspace name/i).fill('Inviter Co');
     await inviterPage.getByRole('button', { name: /continue/i }).click();
-    await inviterPage.waitForURL('**/auth/onboard?step=invite**');
+    await inviterPage.waitForURL('**/onboard?step=invite**');
     await inviterPage.getByLabel(/email addresses/i).fill(inviteeEmail);
     await inviterPage
       .getByRole('button', { name: /send invites/i })
       .click();
-    await inviterPage.waitForURL('**/auth/home**', { timeout: 15_000 });
+    await inviterPage.waitForURL('**/**', { timeout: 15_000 });
     const inviteLink = await readTestInviteLink(inviterPage, inviteeEmail);
     await inviterCtx.close();
 
@@ -100,18 +100,18 @@ test.describe('Invite acceptance', () => {
     const inviteeCtx = await browser.newContext();
     const inviteePage = await inviteeCtx.newPage();
     await signInE2E(inviteePage, inviteeEmail);
-    await inviteePage.waitForURL('**/auth/onboard**');
+    await inviteePage.waitForURL('**/onboard**');
     await inviteePage.getByLabel(/workspace name/i).fill('Invitee Solo');
     await inviteePage.getByRole('button', { name: /continue/i }).click();
-    await inviteePage.waitForURL('**/auth/onboard?step=invite**');
+    await inviteePage.waitForURL('**/onboard?step=invite**');
     await inviteePage
       .getByRole('button', { name: /skip for now/i })
       .click();
-    await inviteePage.waitForURL('**/auth/home**', { timeout: 5_000 });
+    await inviteePage.waitForURL('**/**', { timeout: 5_000 });
 
     // Now they click the invite link from the OTHER workspace
     await inviteePage.goto(inviteLink);
-    // Should land on /auth/invite/accept and show the blocked page
+    // Should land on /invite/accept and show the blocked page
     await expect(
       inviteePage.getByRole('heading', { name: /already have/i }),
     ).toBeVisible({ timeout: 10_000 });

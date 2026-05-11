@@ -6,7 +6,7 @@ vi.mock('next/router', () => ({
     isReady: true,
     query: {},
     replace: vi.fn(),
-    pathname: '/auth/settings/plan',
+    pathname: '/settings/plan',
   }),
 }));
 
@@ -16,7 +16,7 @@ vi.mock('swr', async () => {
 });
 
 import useSWR from 'swr';
-import PlanSettingsPage from '@/pages/auth/settings/plan';
+import PlanSettingsPage from '@/pages/settings/plan';
 
 describe('PlanSettingsPage', () => {
   beforeEach(() => {

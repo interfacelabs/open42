@@ -3,7 +3,10 @@ import { useRouter } from 'next/router';
 import { useEffect } from 'react';
 import useSWR from 'swr';
 
-import { Sidebar } from '@/components/Sidebar';
+import { AppShell } from '@/components/AppShell';
+import { PageHeader } from '@/components/PageHeader';
+import { SettingsNav } from '@/components/SettingsNav';
+import { cn } from '@/lib/utils';
 
 interface PlanCurrentPayload {
   user: { id: string; email: string };
@@ -43,21 +46,21 @@ const PLANS: PlanCard[] = [
   {
     id: 'starter',
     name: 'Free',
-    price: '$0/mo',
+    price: '$0',
     detail: 'One company brain, zip imports, basic ingestion.',
     status: 'current',
   },
   {
     id: 'team',
     name: 'Team',
-    price: '$149/mo',
+    price: '$149',
     detail: 'Shared workspace, live connectors.',
     status: 'coming-soon',
   },
   {
     id: 'business',
     name: 'Business',
-    price: '$399/mo',
+    price: '$399',
     detail: 'Higher limits, priority sync.',
     status: 'coming-soon',
   },
@@ -79,30 +82,29 @@ export default function PlanSettingsPage() {
   return (
     <>
       <Head>
-        <title>Plan - Open42</title>
+        <title>Plan — Open42</title>
       </Head>
-      <main className="flex min-h-screen bg-background">
-        <Sidebar />
-        <div className="flex-1 px-10 py-10">
-          <div className="max-w-4xl">
-            <header>
-              <p className="font-mono text-xs text-text-subtle">BILLING</p>
-              <h1 className="mt-4 text-4xl font-medium leading-headline tracking-tight text-text-primary md:text-5xl">
-                Plan
-              </h1>
-              <p className="mt-3 max-w-[52ch] text-sm leading-body text-text-body">
-                Where you are today, and what&rsquo;s coming next.
-              </p>
-            </header>
+      <AppShell>
+        <PageHeader
+          breadcrumb="SETTINGS · BILLING"
+          title="Plan"
+          subtitle={
+            <>
+              Where you are today, and what&rsquo;s{' '}
+              <span className="font-serif italic">coming next.</span>
+            </>
+          }
+        />
+        <SettingsNav active="plan" />
 
-            <section className="mt-10 grid grid-cols-1 gap-4 md:grid-cols-3">
-              {PLANS.map((plan) => (
-                <PlanCardView key={plan.id} plan={plan} />
-              ))}
-            </section>
-          </div>
+        <div className="flex-1 overflow-auto px-5 py-8 md:px-10 md:py-10">
+          <section className="grid max-w-5xl grid-cols-1 gap-4 md:grid-cols-3">
+            {PLANS.map((plan) => (
+              <PlanCardView key={plan.id} plan={plan} />
+            ))}
+          </section>
         </div>
-      </main>
+      </AppShell>
     </>
   );
 }
@@ -111,28 +113,33 @@ function PlanCardView({ plan }: { plan: PlanCard }) {
   const isCurrent = plan.status === 'current';
   return (
     <article
-      className={`flex min-h-[180px] flex-col justify-between rounded-2xl border border-border bg-white p-6 ${
-        isCurrent ? '' : 'opacity-70'
-      }`}
+      className={cn(
+        'flex min-h-[200px] flex-col justify-between rounded-xl border bg-white p-6 transition-colors duration-140',
+        isCurrent
+          ? 'border-blue-line shadow-card'
+          : 'border-border-soft opacity-90',
+      )}
     >
       <div>
         <span
-          className={
+          className={cn(
+            'inline-flex items-center rounded-full px-2.5 py-0.5 font-mono text-[10px] font-medium uppercase tracking-[0.06em]',
             isCurrent
-              ? 'inline-flex items-center rounded-full bg-accent-soft px-2.5 py-0.5 font-mono text-[10px] font-medium uppercase tracking-[0.04em] text-accent'
-              : 'inline-flex items-center rounded-full bg-muted px-2.5 py-0.5 font-mono text-[10px] font-medium uppercase tracking-[0.04em] text-text-subtle'
-          }
+              ? 'bg-blue-soft text-blue'
+              : 'bg-panel-soft text-text-subtle',
+          )}
         >
           {isCurrent ? 'Current plan' : 'Coming soon'}
         </span>
-        <p className="mt-4 text-base font-medium text-text-primary">
+        <p className="mt-4 text-[15px] font-medium text-text-primary">
           {plan.name}
         </p>
-        <p className="mt-1 text-2xl font-medium tracking-tight text-text-primary">
+        <p className="mt-1 flex items-baseline gap-1 text-[28px] font-medium tracking-tight text-text-primary">
           {plan.price}
+          <span className="text-[13px] font-normal text-text-subtle">/ mo</span>
         </p>
       </div>
-      <p className="mt-4 text-sm leading-relaxed text-text-subtle">
+      <p className="mt-4 text-[13px] leading-relaxed text-text-subtle">
         {plan.detail}
       </p>
     </article>

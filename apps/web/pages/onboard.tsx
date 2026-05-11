@@ -9,7 +9,7 @@ import { EditorialPane } from '@/components/onboarding/EditorialPane';
 import { EnvelopeStage } from '@/components/onboarding/EnvelopeStage';
 import { Nameplate } from '@/components/onboarding/Nameplate';
 import { BrainSpinUp } from '@/components/onboarding/illustrations/BrainSpinUp';
-import { EmptyShelf } from '@/components/onboarding/illustrations/EmptyShelf';
+import { PaperBoats } from '@/components/onboarding/illustrations/PaperBoats';
 import {
   CurrentPayload,
   OnboardStep,
@@ -96,7 +96,7 @@ export default function OnboardPage() {
   useEffect(() => {
     if (!current) return;
     if (step === 'provisioning' && runtime === 'ready') {
-      void router.replace('/auth/onboard?step=connect');
+      void router.replace('/onboard?step=connect');
       return;
     }
     if (step === null) {
@@ -194,7 +194,7 @@ export default function OnboardPage() {
                 </>
               }
               attribution="— OPEN42 OPERATING PRINCIPLE №4"
-              illustration={<EmptyShelf />}
+              illustration={<PaperBoats />}
             />
           ) : (
             <EditorialPane
@@ -345,7 +345,7 @@ function WorkspaceStep({
           return;
         }
         await mutate();
-        await router.replace('/auth/onboard?step=invite');
+        await router.replace('/onboard?step=invite');
       } catch {
         setError('network_error');
         setSubmitting(false);
@@ -472,7 +472,7 @@ function InviteStep({
         setWarning(`couldn\u2019t email ${failed} of ${sent + failed}`);
         await new Promise((resolve) => setTimeout(resolve, 600));
       }
-      await router.push('/auth/onboard?step=provisioning');
+      await router.push('/onboard?step=provisioning');
     } catch {
       setError('network_error');
       setSubmitting(false);
@@ -480,7 +480,7 @@ function InviteStep({
   }, [submitting, validEmails, mutate, router]);
 
   const skip = useCallback(() => {
-    void router.push('/auth/onboard?step=provisioning');
+    void router.push('/onboard?step=provisioning');
   }, [router]);
 
   const runtime = current.workspace?.runtime ?? 'pending';

@@ -1,19 +1,33 @@
 import Head from 'next/head';
 import { useRouter } from 'next/router';
-import { FormEvent, useEffect, useRef, useState } from 'react';
-import { Sparkles } from 'lucide-react';
+import { FormEvent, KeyboardEvent, useEffect, useRef, useState } from 'react';
+import { ArrowUp, Sparkles } from 'lucide-react';
 import useSWR from 'swr';
 
+import { cn } from '@/lib/utils';
+
 import type { ChatMessage } from '@/components/chat-types';
+import { HorizonGlyph } from '@/components/HorizonGlyph';
+import { MobileNavTrigger } from '@/components/MobileNavTrigger';
 import { QuickSwitcher } from '@/components/QuickSwitcher';
 import { ReceiptsRail } from '@/components/ReceiptsRail';
 import { Sidebar } from '@/components/Sidebar';
 import { SkillPanel } from '@/components/SkillPanel';
 import { SlashMenu } from '@/components/SlashMenu';
 import { Transcript } from '@/components/Transcript';
-import { Button } from '@/components/ui/button';
 import { fetcher } from '@/lib/api';
 import type { SkillDraft } from '@/lib/skill-types';
+
+interface ChatWorkspaceConnection {
+  id: string;
+  kind: string;
+  status: string;
+}
+
+interface ChatWorkspacePayload {
+  workspace: { id: string; name: string } | null;
+  connections?: ChatWorkspaceConnection[];
+}
 
 export default function ChatPage() {
   const router = useRouter();
@@ -37,6 +51,17 @@ export default function ChatPage() {
   );
   const activeSkill = activeSkillData?.draft ?? null;
 
+  // Connections — the chat surface is useless without at least one source.
+  // If the workspace has none, we replace the transcript with a calm CTA
+  // that pushes the user toward /settings/connections/add.
+  const { data: workspaceData } = useSWR<ChatWorkspacePayload>(
+    '/api/workspaces/current',
+    fetcher,
+  );
+  const hasNoSources =
+    workspaceData !== undefined &&
+    (workspaceData.connections ?? []).length === 0;
+
   // Hydrate input from ?q= when the user lands here from the home ask-first
   // prompt. Strip the query param so a refresh doesn't re-prefill.
   useEffect(() => {
@@ -46,7 +71,7 @@ export default function ChatPage() {
     if (q && q.trim()) {
       // eslint-disable-next-line react-hooks/set-state-in-effect
       setInput(q);
-      void router.replace('/auth/chat', undefined, { shallow: true });
+      void router.replace('/chat', undefined, { shallow: true });
     }
     hydratedRef.current = true;
   }, [router]);
@@ -198,65 +223,77 @@ export default function ChatPage() {
   // explicit useMemo.
   const latestCitations = pickLatestCitations(messages);
 
+  const isEmpty = messages.length === 0;
+  const showNoSourcesEmpty = hasNoSources && isEmpty;
+
   return (
     <>
       <Head>
-        <title>Chat - Open42</title>
+        <title>Chat — Open42</title>
       </Head>
-      <div className="flex min-h-screen overflow-hidden bg-background">
+      <div className="flex h-screen overflow-hidden bg-background">
         <Sidebar />
-        <main className="flex min-w-0 flex-1 flex-col px-10 py-8">
-          <div className="flex w-full max-w-chat flex-1 flex-col">
-            <div>
-              <p className="font-mono text-xs uppercase tracking-[0.04em] text-text-subtle">CHAT</p>
-              <h1 className="mt-3 text-3xl font-medium leading-headline tracking-tight text-text-primary">
-                Ask with citations.
-              </h1>
-              {activeSkill ? (
-                <SkillModeBadge
-                  skill={activeSkill}
-                  onClear={() => router.push('/auth/chat', undefined, { shallow: true })}
-                />
-              ) : null}
-            </div>
-            <div className="min-h-0 flex-1 overflow-y-auto py-10">
-              <Transcript
-                messages={messages}
-                thinking={thinking}
-                activeCitationIndex={activeCitationIndex}
-                onActivateCitation={setActiveCitationIndex}
-              />
-              {!thinking && latestCitations.length > 0 ? (
-                <button
-                  type="button"
-                  onClick={() => void skillifyThread()}
-                  disabled={skillifying}
-                  className="mt-7 inline-flex items-center gap-1.5 rounded-md border border-dashed border-accent/40 px-3 py-1.5 text-xs text-accent transition-colors duration-140 hover:bg-accent-soft disabled:cursor-progress disabled:opacity-60"
-                >
-                  <Sparkles size={12} strokeWidth={1.5} />
-                  {skillifying ? 'Skillifying…' : 'Skillify this thread'}
-                </button>
-              ) : null}
-              {skillError ? (
-                <p role="alert" className="mt-3 text-xs font-medium text-destructive">
-                  {humanizeSkillError(skillError)}
-                </p>
-              ) : null}
-            </div>
-            <form onSubmit={submit} className="relative">
-              <SlashMenu value={input} />
-              <div className="flex items-end gap-3 rounded-2xl border border-border bg-white p-2">
-                <textarea
-                  value={input}
-                  onChange={(event) => setInput(event.target.value)}
-                  rows={1}
-                  placeholder="Ask the brain"
-                  className="max-h-36 min-h-11 flex-1 resize-none rounded-input border-0 px-3 py-3 text-sm leading-body text-text-primary outline-none"
-                />
-                <Button type="submit">Ask</Button>
-              </div>
-            </form>
+        <main className="flex h-screen min-w-0 flex-1 flex-col">
+          <div className="flex shrink-0 items-center gap-3 border-b border-border-soft px-5 py-3 md:hidden">
+            <MobileNavTrigger />
+            <span className="font-mono text-[11px] uppercase tracking-[0.08em] text-text-faint">
+              Chat
+            </span>
           </div>
+          {activeSkill ? (
+            <div className="flex shrink-0 justify-center border-b border-border-soft px-5 pb-3 pt-4 md:px-6 md:pt-5">
+              <SkillModeBadge
+                skill={activeSkill}
+                onClear={() => router.push('/chat', undefined, { shallow: true })}
+              />
+            </div>
+          ) : null}
+
+          <div className="min-h-0 flex-1 overflow-y-auto">
+            <div className="mx-auto w-full max-w-chat px-6 pb-6 pt-12">
+              {showNoSourcesEmpty ? (
+                <NoSourcesEmpty />
+              ) : isEmpty ? (
+                <EmptyPrompt />
+              ) : (
+                <>
+                  <Transcript
+                    messages={messages}
+                    thinking={thinking}
+                    activeCitationIndex={activeCitationIndex}
+                    onActivateCitation={setActiveCitationIndex}
+                  />
+                  {!thinking && latestCitations.length > 0 ? (
+                    <button
+                      type="button"
+                      onClick={() => void skillifyThread()}
+                      disabled={skillifying}
+                      className="mt-8 inline-flex items-center gap-1.5 rounded-full border border-dashed border-blue-line px-3 py-1 text-[11.5px] text-blue transition-colors duration-140 hover:bg-blue-soft disabled:cursor-progress disabled:opacity-60"
+                    >
+                      <Sparkles size={11} strokeWidth={1.6} />
+                      {skillifying ? 'Skillifying…' : 'Skillify this thread'}
+                    </button>
+                  ) : null}
+                  {skillError ? (
+                    <p role="alert" className="mt-3 text-[12px] font-medium text-destructive">
+                      {humanizeSkillError(skillError)}
+                    </p>
+                  ) : null}
+                </>
+              )}
+            </div>
+          </div>
+
+          {showNoSourcesEmpty ? null : (
+            <div className="shrink-0">
+              <Composer
+                input={input}
+                onChange={setInput}
+                onSubmit={submit}
+                disabled={thinking}
+              />
+            </div>
+          )}
         </main>
         <ReceiptsRail
           citations={latestCitations}
@@ -285,6 +322,106 @@ function csrfHeaders(): HeadersInit {
 function firstQueryParam(value: string | string[] | undefined): string | null {
   if (Array.isArray(value)) return value[0] ?? null;
   return typeof value === 'string' ? value : null;
+}
+
+function Composer({
+  input,
+  onChange,
+  onSubmit,
+  disabled,
+}: {
+  input: string;
+  onChange: (value: string) => void;
+  onSubmit: (event: FormEvent<HTMLFormElement>) => void;
+  disabled?: boolean;
+}) {
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const canSubmit = input.trim().length > 0 && !disabled;
+
+  // Auto-grow up to ~6 rows. Resets each render so deletes shrink the field.
+  useEffect(() => {
+    const node = textareaRef.current;
+    if (!node) return;
+    node.style.height = 'auto';
+    node.style.height = `${Math.min(node.scrollHeight, 168)}px`;
+  }, [input]);
+
+  function onKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
+    if (event.key === 'Enter' && !event.shiftKey) {
+      event.preventDefault();
+      const form = event.currentTarget.form;
+      if (form && canSubmit) form.requestSubmit();
+    }
+  }
+
+  return (
+    <form onSubmit={onSubmit} className="relative">
+      <SlashMenu value={input} />
+      <div className="mx-auto w-full max-w-chat px-6 pb-8 pt-3">
+        <div className="flex items-end gap-2 rounded-3xl border border-border bg-white py-2 pl-5 pr-2 shadow-card transition-[border-color,box-shadow] duration-140 focus-within:border-blue-line focus-within:shadow-[0_0_0_3px_rgba(37,87,255,0.10)]">
+          <textarea
+            ref={textareaRef}
+            value={input}
+            onChange={(event) => onChange(event.target.value)}
+            onKeyDown={onKeyDown}
+            rows={1}
+            placeholder="Ask the brain…"
+            className="max-h-[168px] min-h-[28px] flex-1 resize-none border-0 bg-transparent py-1.5 text-[15px] leading-[1.55] text-text-primary outline-none placeholder:text-text-faint"
+          />
+          <button
+            type="submit"
+            disabled={!canSubmit}
+            aria-label="Send"
+            className={cn(
+              'shrink-0 flex h-9 w-9 items-center justify-center rounded-full transition-all duration-140 active:scale-[0.96]',
+              canSubmit
+                ? 'bg-text-primary text-white hover:brightness-110'
+                : 'bg-panel-soft text-text-faint',
+            )}
+          >
+            <ArrowUp size={16} strokeWidth={2.25} />
+          </button>
+        </div>
+        <p className="mt-2 text-center font-mono text-[10px] text-text-faint">
+          Every answer cites its source. ⏎ to send · ⇧⏎ for newline
+        </p>
+      </div>
+    </form>
+  );
+}
+
+function EmptyPrompt() {
+  return (
+    <div className="flex flex-col items-center pt-8 text-center">
+      <p className="font-mono text-[10.5px] uppercase tracking-[0.08em] text-text-faint">
+        ASK
+      </p>
+      <h1 className="mt-3 text-[36px] font-medium leading-[1.05] tracking-[-0.025em] text-text-primary md:text-[42px]">
+        Ask the <span className="font-serif font-normal italic">brain.</span>
+      </h1>
+      <p className="mt-3 max-w-[42ch] text-[13.5px] leading-relaxed text-text-subtle">
+        Type below. Every answer comes with citations from your sources.
+      </p>
+    </div>
+  );
+}
+
+function NoSourcesEmpty() {
+  return (
+    <div className="mx-auto flex min-h-[60vh] max-w-[640px] flex-col items-center justify-center px-6 py-8 text-center">
+      <HorizonGlyph size={180} />
+      <h2 className="mt-2 text-[18px] font-medium leading-tight tracking-tight text-text-primary">
+        The brain needs something to read.
+      </h2>
+      <p className="mt-2 max-w-[44ch] text-[13.5px] leading-relaxed text-text-subtle">
+        Connect Notion, Drive, or upload a zip first — then come back and the
+        brain can answer with <span className="font-serif italic">citations.</span>
+      </p>
+      <a href="/settings/connections/add" className="btn-primary mt-6">
+        Connect a source
+      </a>
+    </div>
+  );
 }
 
 function SkillModeBadge({ skill, onClear }: { skill: SkillDraft; onClear: () => void }) {

@@ -4,8 +4,11 @@ import { FormEvent, useEffect, useMemo, useState } from 'react';
 import { Trash2 } from 'lucide-react';
 import useSWR from 'swr';
 
-import { Sidebar } from '@/components/Sidebar';
+import { AppShell } from '@/components/AppShell';
+import { PageHeader } from '@/components/PageHeader';
+import { SettingsNav } from '@/components/SettingsNav';
 import { Button } from '@/components/ui/button';
+import { cn } from '@/lib/utils';
 
 type Provider = 'openai' | 'anthropic';
 type Scope = 'chat' | 'embed';
@@ -73,28 +76,22 @@ export default function ApiKeysSettingsPage() {
   return (
     <>
       <Head>
-        <title>API Keys - Open42</title>
+        <title>API keys — Open42</title>
       </Head>
-      <main className="flex min-h-screen bg-background">
-        <Sidebar />
-        <div className="flex-1 px-10 py-10">
-          <div className="max-w-3xl">
-            <header>
-              <p className="font-mono text-xs text-text-subtle">SETTINGS</p>
-              <h1 className="mt-4 text-4xl font-medium leading-headline tracking-tight text-text-primary md:text-5xl">
-                API keys
-              </h1>
-              <p className="mt-3 max-w-[58ch] text-sm leading-body text-text-body">
-                Bring your own provider keys. When set, this workspace bills
-                LLM and embedding calls to your account instead of the shared
-                Open42 key.
-              </p>
-            </header>
+      <AppShell>
+        <PageHeader
+          breadcrumb="SETTINGS · API KEYS"
+          title="API keys"
+          subtitle="Bring your own provider keys. When set, this workspace bills LLM and embedding calls to your account instead of the shared Open42 key."
+        />
+        <SettingsNav active="api-keys" />
 
+        <div className="flex-1 overflow-auto px-5 py-8 md:px-10 md:py-10">
+          <div className="max-w-3xl">
             {isForbidden ? (
               <div
                 role="alert"
-                className="mt-8 rounded-lg border border-input bg-secondary px-4 py-3 text-sm text-text-body"
+                className="rounded-xl border border-border bg-panel-soft px-5 py-4 text-[13.5px] text-text-body"
                 data-testid="api-keys-forbidden"
               >
                 Only workspace owners can manage API keys. Ask the owner of
@@ -102,10 +99,8 @@ export default function ApiKeysSettingsPage() {
               </div>
             ) : (
               <>
-                <section className="mt-10">
-                  <h2 className="text-sm font-medium uppercase tracking-[0.04em] text-text-subtle">
-                    Configured keys
-                  </h2>
+                <section>
+                  <SectionHeading>Configured keys</SectionHeading>
                   <CredentialsList
                     credentials={credentials}
                     onRemoved={() => mutate()}
@@ -113,17 +108,23 @@ export default function ApiKeysSettingsPage() {
                 </section>
 
                 <section className="mt-12">
-                  <h2 className="text-sm font-medium uppercase tracking-[0.04em] text-text-subtle">
-                    Add a key
-                  </h2>
+                  <SectionHeading>Add a key</SectionHeading>
                   <AddKeyForm onSaved={() => mutate()} />
                 </section>
               </>
             )}
           </div>
         </div>
-      </main>
+      </AppShell>
     </>
+  );
+}
+
+function SectionHeading({ children }: { children: React.ReactNode }) {
+  return (
+    <h2 className="font-mono text-[10.5px] uppercase tracking-[0.08em] text-text-faint">
+      {children}
+    </h2>
   );
 }
 
@@ -136,9 +137,11 @@ function CredentialsList({
 }) {
   if (credentials.length === 0) {
     return (
-      <div className="mt-4 rounded-2xl border border-dashed border-border bg-white p-8 text-center">
-        <p className="text-sm font-medium text-text-primary">No keys yet.</p>
-        <p className="mt-2 text-sm text-text-subtle">
+      <div className="mt-3 rounded-xl border border-dashed border-border bg-white p-8 text-center">
+        <p className="text-[14px] font-medium text-text-primary">
+          No keys yet.
+        </p>
+        <p className="mt-1.5 text-[13px] text-text-subtle">
           Add your provider keys below to use your own account.
         </p>
       </div>
@@ -146,7 +149,7 @@ function CredentialsList({
   }
 
   return (
-    <ul className="mt-4 space-y-3">
+    <ul className="mt-3 space-y-3">
       {credentials.map((cred) => (
         <CredentialCard
           key={`${cred.provider}:${cred.scope}`}
@@ -206,26 +209,22 @@ function CredentialCard({
       <article
         role="region"
         aria-label={ariaLabel}
-        className="flex items-center justify-between rounded-2xl border border-border bg-white p-5"
+        className="flex items-center justify-between rounded-xl border border-border-soft bg-white p-5"
       >
         <div className="min-w-0">
-          <div className="flex items-center gap-2">
-            <p className="text-base font-medium text-text-primary">
+          <div className="flex flex-wrap items-center gap-2">
+            <p className="text-[14px] font-medium text-text-primary">
               {PROVIDER_LABEL[credential.provider]}
             </p>
-            <span className="inline-flex items-center rounded-full bg-muted px-2 py-0.5 font-mono text-[10px] font-medium uppercase tracking-[0.04em] text-text-subtle">
-              {SCOPE_LABEL[credential.scope]}
-            </span>
-            <span className="inline-flex items-center rounded-full bg-emerald-50 px-2 py-0.5 font-mono text-[10px] font-medium uppercase tracking-[0.04em] text-emerald-700">
-              Configured
-            </span>
+            <Tag tone="neutral">{SCOPE_LABEL[credential.scope]}</Tag>
+            <Tag tone="success">Configured</Tag>
           </div>
-          <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 font-mono text-xs text-text-subtle">
+          <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 font-mono text-[11px] text-text-subtle">
             {credential.model ? <span>model: {credential.model}</span> : null}
             <span>added {new Date(credential.createdAt).toLocaleDateString()}</span>
           </div>
           {error ? (
-            <p className="mt-2 text-xs text-red-600">{error}</p>
+            <p className="mt-2 text-[12px] text-destructive">{error}</p>
           ) : null}
         </div>
         <Button
@@ -235,11 +234,32 @@ function CredentialCard({
           disabled={removing}
           aria-label={`Remove ${ariaLabel}`}
         >
-          <Trash2 className="mr-2 h-4 w-4" strokeWidth={1.5} />
-          {removing ? 'Removing...' : 'Remove'}
+          <Trash2 className="h-3.5 w-3.5" strokeWidth={1.6} />
+          {removing ? 'Removing…' : 'Remove'}
         </Button>
       </article>
     </li>
+  );
+}
+
+function Tag({
+  tone,
+  children,
+}: {
+  tone: 'neutral' | 'success' | 'warn';
+  children: React.ReactNode;
+}) {
+  return (
+    <span
+      className={cn(
+        'inline-flex items-center rounded-full px-2 py-0.5 font-mono text-[10px] font-medium uppercase tracking-[0.06em]',
+        tone === 'neutral' && 'bg-panel-soft text-text-subtle',
+        tone === 'success' && 'bg-blue-soft text-blue',
+        tone === 'warn' && 'bg-orange-soft text-orange',
+      )}
+    >
+      {children}
+    </span>
   );
 }
 
@@ -308,7 +328,6 @@ function AddKeyForm({ onSaved }: { onSaved: () => void }) {
         setSubmitting(false);
         return;
       }
-      // Reset form (do NOT keep the secret in memory).
       setApiKey('');
       setModel('');
       setSavedFlash(true);
@@ -324,58 +343,56 @@ function AddKeyForm({ onSaved }: { onSaved: () => void }) {
   return (
     <form
       onSubmit={onSubmit}
-      className="mt-4 space-y-5 rounded-2xl border border-border bg-white p-6"
+      className="mt-3 space-y-5 rounded-xl border border-border-soft bg-white p-6"
       noValidate
     >
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
         <FieldLabel label="Provider">
-          <select
+          <Select
             value={provider}
-            onChange={(e) => {
-              setProvider(e.target.value as Provider);
+            onChange={(value) => {
+              setProvider(value as Provider);
               setScopeError(null);
             }}
-            className="h-10 w-full rounded-input border border-border bg-white px-3 text-sm text-text-primary focus:outline-none focus:ring-2 focus:ring-ring"
-          >
-            <option value="openai">OpenAI</option>
-            <option value="anthropic">Anthropic</option>
-          </select>
+            options={[
+              { value: 'openai', label: 'OpenAI' },
+              { value: 'anthropic', label: 'Anthropic' },
+            ]}
+          />
         </FieldLabel>
 
         <FieldLabel label="Scope">
-          <select
+          <Select
             value={scope}
-            onChange={(e) => {
-              setScope(e.target.value as Scope);
+            onChange={(value) => {
+              setScope(value as Scope);
               setScopeError(null);
             }}
-            className="h-10 w-full rounded-input border border-border bg-white px-3 text-sm text-text-primary focus:outline-none focus:ring-2 focus:ring-ring"
-          >
-            <option value="chat">Chat</option>
-            <option value="embed">Embed</option>
-          </select>
+            options={[
+              { value: 'chat', label: 'Chat' },
+              { value: 'embed', label: 'Embed' },
+            ]}
+          />
           {unsupported ? (
-            <p className="mt-1 text-xs text-text-subtle">
+            <p className="mt-1.5 text-[11.5px] text-text-subtle">
               Anthropic doesn&rsquo;t expose an embeddings API. Pick OpenAI for
               embed.
             </p>
           ) : scopeError ? (
-            <p className="mt-1 text-xs text-red-600">{scopeError}</p>
+            <p className="mt-1.5 text-[11.5px] text-destructive">{scopeError}</p>
           ) : null}
         </FieldLabel>
       </div>
 
       <FieldLabel label="API key">
-        <input
+        <Input
           type="password"
           autoComplete="off"
           spellCheck={false}
           value={apiKey}
           onChange={(e) => setApiKey(e.target.value)}
-          placeholder={
-            provider === 'openai' ? 'sk-...' : 'sk-ant-...'
-          }
-          className="h-10 w-full rounded-input border border-border bg-white px-3 font-mono text-sm text-text-primary placeholder:text-text-faint focus:outline-none focus:ring-2 focus:ring-ring"
+          placeholder={provider === 'openai' ? 'sk-…' : 'sk-ant-…'}
+          mono
         />
       </FieldLabel>
 
@@ -383,7 +400,7 @@ function AddKeyForm({ onSaved }: { onSaved: () => void }) {
         label="Model override"
         hint="Optional. Defaults to the workspace's selected model."
       >
-        <input
+        <Input
           type="text"
           autoComplete="off"
           spellCheck={false}
@@ -392,28 +409,22 @@ function AddKeyForm({ onSaved }: { onSaved: () => void }) {
           placeholder={
             scope === 'embed' ? 'text-embedding-3-large' : 'gpt-4o-mini'
           }
-          className="h-10 w-full rounded-input border border-border bg-white px-3 font-mono text-sm text-text-primary placeholder:text-text-faint focus:outline-none focus:ring-2 focus:ring-ring"
+          mono
         />
       </FieldLabel>
 
       {formError ? (
-        <p className="text-sm text-red-600" role="alert">
+        <p className="text-[13px] text-destructive" role="alert">
           {formError}
         </p>
       ) : null}
 
       <div className="flex items-center gap-3">
         <Button type="submit" disabled={!canSubmit} size="sm">
-          {submitting ? 'Saving...' : 'Save'}
+          {submitting ? 'Saving…' : 'Save'}
         </Button>
-        {/*
-          TODO(BYOK): wire a Test button once Lane E3 ships a `?dry_run=1`
-          variant of POST /workspaces/credentials. Skipped in v1 to avoid a
-          coordination roundtrip — invalid keys will surface on the next
-          real LLM call.
-        */}
         {savedFlash ? (
-          <span className="text-xs font-medium text-emerald-700">Saved</span>
+          <span className="text-[12px] font-medium text-blue">Saved</span>
         ) : null}
       </div>
     </form>
@@ -431,13 +442,56 @@ function FieldLabel({
 }) {
   return (
     <label className="block">
-      <span className="text-xs font-medium uppercase tracking-[0.04em] text-text-subtle">
+      <span className="font-mono text-[10.5px] uppercase tracking-[0.06em] text-text-faint">
         {label}
       </span>
       <div className="mt-1.5">{children}</div>
       {hint ? (
-        <span className="mt-1 block text-xs text-text-subtle">{hint}</span>
+        <span className="mt-1.5 block text-[11.5px] text-text-subtle">
+          {hint}
+        </span>
       ) : null}
     </label>
+  );
+}
+
+function Input({
+  mono,
+  className,
+  ...props
+}: React.InputHTMLAttributes<HTMLInputElement> & { mono?: boolean }) {
+  return (
+    <input
+      {...props}
+      className={cn(
+        'h-10 w-full rounded-lg border border-border bg-white px-3 text-[14px] text-text-primary placeholder:text-text-faint focus:border-blue-line focus:outline-none focus:ring-[3px] focus:ring-blue-soft',
+        mono && 'font-mono text-[13px]',
+        className,
+      )}
+    />
+  );
+}
+
+function Select({
+  value,
+  onChange,
+  options,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+  options: Array<{ value: string; label: string }>;
+}) {
+  return (
+    <select
+      value={value}
+      onChange={(e) => onChange(e.target.value)}
+      className="h-10 w-full rounded-lg border border-border bg-white px-3 text-[14px] text-text-primary focus:border-blue-line focus:outline-none focus:ring-[3px] focus:ring-blue-soft"
+    >
+      {options.map((opt) => (
+        <option key={opt.value} value={opt.value}>
+          {opt.label}
+        </option>
+      ))}
+    </select>
   );
 }
