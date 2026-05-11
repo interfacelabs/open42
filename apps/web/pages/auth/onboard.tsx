@@ -49,7 +49,7 @@ export default function OnboardPage() {
   // SWR's refreshInterval is read on every render, so we can flip it from a
   // local state that updates as the derived step changes.
   const [pollMs, setPollMs] = useState(0);
-  const { data: current, error, mutate, isLoading } = useSWR<OnboardCurrentPayload>(
+  const { data: current, error, mutate, isLoading, isValidating } = useSWR<OnboardCurrentPayload>(
     '/api/workspaces/current',
     fetcher,
     { refreshInterval: pollMs },
@@ -61,10 +61,14 @@ export default function OnboardPage() {
   const [inviteText, setInviteText] = useState<string>('');
 
   useEffect(() => {
+    // Only redirect on a *settled* 401 — SWR returns the previously cached
+    // error immediately on mount, so a stale 401 from before sign-in would
+    // bounce the user back to /sign_in even when the new session is valid.
+    if (isValidating) return;
     if (error && (error as { status?: number }).status === 401) {
       void router.replace('/sign_in');
     }
-  }, [error, router]);
+  }, [error, isValidating, router]);
 
   // Seed the workspace input from the server payload exactly once when current arrives.
   useEffect(() => {

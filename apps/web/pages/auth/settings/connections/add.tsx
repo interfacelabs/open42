@@ -1,10 +1,11 @@
 import Head from 'next/head';
 import Link from 'next/link';
 import { ChangeEvent, useState } from 'react';
-import { FileArchive, Github, PlugZap, X } from 'lucide-react';
+import { FileArchive, PlugZap, X } from 'lucide-react';
 import useSWR from 'swr';
 
 import { Button } from '@/components/ui/button';
+import { providerLogo } from '@/lib/provider-logos';
 
 interface Connection {
   id: string;
@@ -83,7 +84,7 @@ export default function AddConnectionPage() {
                 <span className="block text-sm font-medium text-text-primary">Notion</span>
                 <span className="mt-2 block text-sm text-text-subtle">Live OAuth or zip import</span>
               </span>
-              <PlugZap className="h-5 w-5 text-text-subtle" strokeWidth={1.5} />
+              <ProviderTileLogo slug="notion" name="Notion" />
             </button>
             <button
               type="button"
@@ -94,7 +95,7 @@ export default function AddConnectionPage() {
                 <span className="block text-sm font-medium text-text-primary">GitHub</span>
                 <span className="mt-2 block text-sm text-text-subtle">Coming soon</span>
               </span>
-              <Github className="h-5 w-5 text-text-subtle" strokeWidth={1.5} />
+              <ProviderTileLogo slug="github" name="GitHub" />
             </button>
           </section>
         </div>
@@ -136,6 +137,21 @@ export default function AddConnectionPage() {
         ) : null}
       </main>
     </>
+  );
+}
+
+function ProviderTileLogo({ slug, name }: { slug: string; name: string }) {
+  const src = providerLogo(slug);
+  if (!src) return null;
+  return (
+    <img
+      src={src}
+      alt={`${name} logo`}
+      width={20}
+      height={20}
+      className="h-5 w-5"
+      loading="lazy"
+    />
   );
 }
 

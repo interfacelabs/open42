@@ -22,16 +22,22 @@ import { ArrowRight } from 'lucide-react';
 
 import { EASE_ENTER } from '@/lib/motion';
 import type { WorkspaceRuntime } from '@/lib/onboarding/derive';
+import { providerLogo } from '@/lib/provider-logos';
 
-const COMING_SOON_SOURCES: Array<{ name: string; monogram: string; eta: string }> = [
-  { name: 'Google Drive', monogram: 'D', eta: 'Q3' },
-  { name: 'Slack', monogram: 'S', eta: 'Q3' },
-  { name: 'Gmail', monogram: 'G', eta: 'Q3' },
-  { name: 'Confluence', monogram: 'C', eta: 'Q4' },
-  { name: 'Linear', monogram: 'L', eta: 'Q4' },
-  { name: 'GitHub', monogram: '⌥', eta: 'Q4' },
-  { name: 'Box / Dropbox', monogram: 'B', eta: 'Q4' },
-  { name: 'Markdown / files', monogram: 'M', eta: 'soon' },
+const COMING_SOON_SOURCES: Array<{
+  name: string;
+  slug: string | null;
+  monogram: string;
+  eta: string;
+}> = [
+  { name: 'Google Drive', slug: 'googledrive', monogram: 'D', eta: 'Q3' },
+  { name: 'Slack', slug: 'slack', monogram: 'S', eta: 'Q3' },
+  { name: 'Gmail', slug: 'gmail', monogram: 'G', eta: 'Q3' },
+  { name: 'Confluence', slug: 'confluence', monogram: 'C', eta: 'Q4' },
+  { name: 'Linear', slug: 'linear', monogram: 'L', eta: 'Q4' },
+  { name: 'GitHub', slug: 'github', monogram: '⌥', eta: 'Q4' },
+  { name: 'Box / Dropbox', slug: 'dropbox', monogram: 'B', eta: 'Q4' },
+  { name: 'Markdown / files', slug: null, monogram: 'M', eta: 'soon' },
 ];
 
 interface ConnectSourcesStepProps {
@@ -159,20 +165,7 @@ export function ConnectSourcesStep({ runtime, mutate }: ConnectSourcesStepProps)
           tagAccent
           disabled={busy !== null || blocked}
           onClick={() => void connectNotion()}
-          icon={
-            <svg
-              viewBox="0 0 16 16"
-              width={14}
-              height={14}
-              fill="none"
-              stroke="currentColor"
-              strokeWidth={1.5}
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            >
-              <path d="M3 4 L13 4 M3 8 L13 8 M3 12 L9 12" />
-            </svg>
-          }
+          icon={<ProviderLogo slug="notion" name="Notion" />}
           loading={busy === 'notion'}
         />
         <SourceCard
@@ -181,20 +174,7 @@ export function ConnectSourcesStep({ runtime, mutate }: ConnectSourcesStepProps)
           tag={blocked ? 'WAITING ON RUNTIME' : 'FILE \u00b7 ZIP'}
           disabled={busy !== null || blocked}
           onClick={onFilePick}
-          icon={
-            <svg
-              viewBox="0 0 16 16"
-              width={14}
-              height={14}
-              fill="none"
-              stroke="currentColor"
-              strokeWidth={1.5}
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            >
-              <path d="M4 2 L11 2 L13 4 L13 14 L4 14 Z M11 2 L11 4 L13 4" />
-            </svg>
-          }
+          icon={<ProviderLogo slug="notion" name="Notion" />}
           loading={busy === 'zip'}
         />
       </div>
@@ -249,27 +229,57 @@ function ComingSoonSources() {
         COMING SOON
       </p>
       <div className="mt-2.5 grid grid-cols-2 gap-2 md:grid-cols-4">
-        {COMING_SOON_SOURCES.map((s) => (
-          <div
-            key={s.name}
-            aria-disabled="true"
-            title={`${s.name} — ${s.eta}`}
-            className="rounded-xl border border-border bg-white px-3 py-2.5 opacity-60"
-          >
-            <div className="flex items-center gap-1.5">
-              <span
-                aria-hidden="true"
-                className="inline-flex h-4 w-4 items-center justify-center rounded bg-muted font-mono text-[10px] text-text-faint"
-              >
-                {s.monogram}
-              </span>
-              <span className="truncate text-[12px] text-text-faint">{s.name}</span>
+        {COMING_SOON_SOURCES.map((s) => {
+          const logo = providerLogo(s.slug);
+          return (
+            <div
+              key={s.name}
+              aria-disabled="true"
+              title={`${s.name} — ${s.eta}`}
+              className="rounded-xl border border-border bg-white px-3 py-2.5 opacity-60"
+            >
+              <div className="flex items-center gap-1.5">
+                {logo ? (
+                  <img
+                    src={logo}
+                    alt=""
+                    aria-hidden="true"
+                    width={16}
+                    height={16}
+                    className="h-4 w-4 rounded"
+                    loading="lazy"
+                  />
+                ) : (
+                  <span
+                    aria-hidden="true"
+                    className="inline-flex h-4 w-4 items-center justify-center rounded bg-muted font-mono text-[10px] text-text-faint"
+                  >
+                    {s.monogram}
+                  </span>
+                )}
+                <span className="truncate text-[12px] text-text-faint">{s.name}</span>
+              </div>
+              <div className="mt-0.5 font-mono text-[10px] text-text-faint">{s.eta}</div>
             </div>
-            <div className="mt-0.5 font-mono text-[10px] text-text-faint">{s.eta}</div>
-          </div>
-        ))}
+          );
+        })}
       </div>
     </section>
+  );
+}
+
+function ProviderLogo({ slug, name }: { slug: string; name: string }) {
+  const src = providerLogo(slug);
+  if (!src) return null;
+  return (
+    <img
+      src={src}
+      alt={`${name} logo`}
+      width={16}
+      height={16}
+      className="h-4 w-4"
+      loading="lazy"
+    />
   );
 }
 
@@ -300,7 +310,7 @@ function SourceCard({
       className="group flex min-h-[132px] flex-col justify-between rounded-xl border border-[#e5e5e5] bg-white p-4 text-left transition-[border-color,box-shadow,transform] duration-150 hover:border-accent hover:shadow-[0_4px_14px_rgba(29,77,255,0.08)] active:translate-y-px disabled:cursor-not-allowed disabled:opacity-60"
     >
       <div>
-        <span className="flex h-7 w-7 items-center justify-center rounded-lg border border-accent text-accent">
+        <span className="flex h-7 w-7 items-center justify-center rounded-lg border border-border bg-white">
           {icon}
         </span>
         <p className="mt-3.5 text-sm font-medium text-text-primary">{name}</p>

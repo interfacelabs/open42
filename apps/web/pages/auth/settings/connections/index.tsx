@@ -5,6 +5,7 @@ import { RefreshCw, Trash2, Plus, MoreHorizontal } from 'lucide-react';
 import useSWR from 'swr';
 
 import { Button } from '@/components/ui/button';
+import { connectionKindToSlug, providerLogo } from '@/lib/provider-logos';
 
 interface Connection {
   id: string;
@@ -117,10 +118,30 @@ export default function ConnectionsPage({ initialData }: { initialData: Connecti
                     </tr>
                   </thead>
                   <tbody>
-                    {payload.connections.map((connection) => (
+                    {payload.connections.map((connection) => {
+                      const logo = providerLogo(connectionKindToSlug(connection.kind));
+                      return (
                       <tr key={connection.id} className="border-b border-border last:border-0">
                         <td className="py-4 font-medium text-text-primary">
-                          {connection.displayName}
+                          <span className="flex items-center gap-2.5">
+                            {logo ? (
+                              <img
+                                src={logo}
+                                alt=""
+                                aria-hidden="true"
+                                width={20}
+                                height={20}
+                                className="h-5 w-5 rounded"
+                                loading="lazy"
+                              />
+                            ) : (
+                              <span
+                                aria-hidden="true"
+                                className="inline-block h-5 w-5 rounded bg-muted"
+                              />
+                            )}
+                            {connection.displayName}
+                          </span>
                         </td>
                         <td className="py-4 text-text-body">{kindLabel(connection.kind)}</td>
                         <td className="py-4">
@@ -149,7 +170,8 @@ export default function ConnectionsPage({ initialData }: { initialData: Connecti
                           </div>
                         </td>
                       </tr>
-                    ))}
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>

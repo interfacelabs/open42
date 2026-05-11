@@ -86,7 +86,7 @@ const fetcher = async (url: string) => {
 export default function DashboardPage() {
   const router = useRouter();
   const [pollInterval, setPollInterval] = useState(0);
-  const { data: current, error, mutate } = useSWR<DashboardCurrentPayload>(
+  const { data: current, error, mutate, isValidating } = useSWR<DashboardCurrentPayload>(
     '/api/workspaces/current',
     fetcher,
     { refreshInterval: pollInterval },
@@ -100,11 +100,14 @@ export default function DashboardPage() {
   }, [state?.kind]);
 
   // 401 → sign in. No workspace / runtime not ready → back to onboard.
+  // Wait for the fetch to settle so a stale cached 401 (from before a fresh
+  // sign-in) doesn't bounce the now-authenticated user back to /sign_in.
   useEffect(() => {
+    if (isValidating) return;
     if (error && (error as { status?: number }).status === 401) {
       void router.replace('/sign_in');
     }
-  }, [error, router]);
+  }, [error, isValidating, router]);
 
   useEffect(() => {
     if (state?.kind === 'redirect-onboard') {
