@@ -8,7 +8,8 @@ import { stdin as input, stdout as output } from 'node:process';
 
 const args = process.argv.slice(2);
 const printOnly = args.includes('--print');
-const envFileArg = argValue('--env-file') ?? '.env';
+const askProviderKeys = args.includes('--ask-provider-keys');
+const envFileArg = argValue('--env-path') ?? argValue('--env-file') ?? '.env';
 const envPath = resolve(process.cwd(), envFileArg);
 
 const existing = printOnly ? new Map() : parseEnvFile(envPath);
@@ -44,9 +45,30 @@ try {
     ),
   };
 
+  const providerKeys = {};
+  const forceUpsert = new Set();
+  if (askProviderKeys) {
+    console.log('');
+    console.log('Optional provider keys (leave blank to add later in Settings):');
+    const anthropic = await askOptional(rl, existing, 'ANTHROPIC_API_KEY', 'Anthropic API key');
+    const openai = await askOptional(rl, existing, 'OPENAI_API_KEY', 'OpenAI API key');
+    if (anthropic) providerKeys.ANTHROPIC_API_KEY = anthropic;
+    if (openai) providerKeys.OPENAI_API_KEY = openai;
+    if (anthropic || openai) {
+      generated.OPEN42_ALLOW_SHARED_KEYS = 'true';
+      forceUpsert.add('OPEN42_ALLOW_SHARED_KEYS');
+      console.log('');
+      console.log('Enabled shared-keys mode (OPEN42_ALLOW_SHARED_KEYS=true).');
+      console.log(
+        'Workspace members will use these server keys until they add their own in Settings.',
+      );
+    }
+  }
+
   const values = {
     ...generated,
     ...prompted,
+    ...providerKeys,
     TENANT_PROVISIONER: valueOrGenerated(existing, 'TENANT_PROVISIONER', () => 'compose'),
     GBRAIN_BASE_URL: valueOrGenerated(existing, 'GBRAIN_BASE_URL', () => 'http://gbrain:8080'),
     GBRAIN_VERSION: valueOrGenerated(existing, 'GBRAIN_VERSION', () => '0.31.3'),
@@ -57,7 +79,7 @@ try {
     ),
   };
 
-  await upsertEnvFile(envPath, values);
+  await upsertEnvFile(envPath, values, forceUpsert);
   console.log(`Wrote ${envPath}`);
   console.log('Bootstrap owner: the first Supabase magic-link recipient becomes the owner.');
 } finally {
@@ -65,9 +87,17 @@ try {
 }
 
 function argValue(name) {
+  const prefixed = args.find((arg) => arg.startsWith(`${name}=`));
+  if (prefixed) {
+    const value = prefixed.slice(name.length + 1);
+    if (!value) throw new Error(`${name} requires a value`);
+    return value;
+  }
   const index = args.indexOf(name);
   if (index === -1) return null;
-  return args[index + 1] ?? null;
+  const value = args[index + 1] ?? null;
+  if (!value || value.startsWith('--')) throw new Error(`${name} requires a value`);
+  return value;
 }
 
 function randomHex32() {
@@ -99,8 +129,52 @@ function tenantProxyTokenForWorkspace(existing, workspaceId) {
 async function askIfMissing(rl, existing, key, label) {
   const current = existing.get(key);
   if (isUsable(current)) return current;
-  const answer = await rl.question(`${label}: `);
-  return answer.trim();
+  while (true) {
+    const answer = await ask(rl, `${label}: `);
+    if (answer === null) {
+      throw new Error(
+        `${label} is required. Re-run interactively or pre-populate ${key} in the env file.`,
+      );
+    }
+    const trimmed = answer.trim();
+    if (isUsable(trimmed)) return trimmed;
+    if (!input.isTTY) {
+      throw new Error(
+        `${label} is required. Re-run interactively or pre-populate ${key} in the env file.`,
+      );
+    }
+    console.log(`${label} is required.`);
+  }
+}
+
+async function askOptional(rl, existing, key, label) {
+  const current = existing.get(key);
+  if (isUsable(current)) return current;
+  const answer = await ask(rl, `${label} (optional, press Enter to skip): `);
+  if (answer === null) return '';
+  const trimmed = answer.trim();
+  return trimmed.length > 0 ? trimmed : '';
+}
+
+async function ask(rl, prompt) {
+  if (rl.closed) return null;
+  const aborter = new AbortController();
+  const onClose = () => aborter.abort();
+  rl.once('close', onClose);
+  try {
+    return await rl.question(prompt, { signal: aborter.signal });
+  } catch (error) {
+    if (
+      error?.name === 'AbortError' ||
+      error?.code === 'ERR_INVALID_STATE' ||
+      error?.code === 'ERR_USE_AFTER_CLOSE'
+    ) {
+      return null;
+    }
+    throw error;
+  } finally {
+    rl.off('close', onClose);
+  }
 }
 
 function isUsable(value) {
@@ -117,7 +191,9 @@ function isUsable(value) {
   ].includes(normalized);
 }
 
-async function upsertEnvFile(path, values) {
+async function upsertEnvFile(path, values, forceUpsert = new Set()) {
+  const forceList = forceUpsert instanceof Set ? forceUpsert : new Set(forceUpsert);
+  forceList.add('OPEN42_TENANT_PROXY_TOKEN');
   const lines = existsSync(path) ? (await readFile(path, 'utf8')).split(/\r?\n/) : [];
   const seen = new Set();
   const next = lines.map((line) => {
@@ -125,7 +201,7 @@ async function upsertEnvFile(path, values) {
     if (!match?.[1] || !(match[1] in values)) return line;
     seen.add(match[1]);
     const current = match[2] ?? '';
-    if (match[1] === 'OPEN42_TENANT_PROXY_TOKEN' && current !== values[match[1]]) {
+    if (forceList.has(match[1]) && current !== values[match[1]]) {
       return `${match[1]}=${values[match[1]]}`;
     }
     return isUsable(current) ? line : `${match[1]}=${values[match[1]]}`;
