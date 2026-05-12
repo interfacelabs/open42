@@ -94,6 +94,7 @@ dist/
 build/
 site/
 *.tsbuildinfo
+packages/cloud/migrations-bundled/
 
 # =====================================================================
 # Docs tooling

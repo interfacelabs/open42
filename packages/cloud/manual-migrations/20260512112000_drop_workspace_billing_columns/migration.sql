@@ -1,3 +1,5 @@
+-- Apply manually only after the workspace_billing companion table has been
+-- deployed, dual-written, reconciled, and read by all running cloud workers.
 DROP INDEX IF EXISTS "workspaces_stripe_customer_id_uniq";--> statement-breakpoint
 DROP INDEX IF EXISTS "workspaces_stripe_subscription_id_uniq";--> statement-breakpoint
 ALTER TABLE "workspaces"

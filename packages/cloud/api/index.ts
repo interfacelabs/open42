@@ -1,8 +1,9 @@
 import type express from 'express';
 import type pino from 'pino';
 
-import { registerCloudLlmUsageRecorder } from '../../../apps/api/src/cloud-hooks.js';
-import { registerTenantProvisioner } from '../../../apps/api/src/tenants/provision.js';
+import { registerCloudLlmUsageRecorder } from '@open42/api/cloud-hooks';
+import { requireRole as coreRequireRole } from '@open42/api/middleware/require-role';
+import { registerTenantProvisioner } from '@open42/api/tenants/provision';
 import { buildWorkspaceBillingRouter } from './routes/workspaces/billing.js';
 import { buildStripeWebhookRouter } from './routes/webhooks/stripe.js';
 import { recordLlmUsage, startBillingUsageRetryLoop } from './billing/usage.js';
@@ -25,7 +26,7 @@ export function mountCloudRoutes(
   app: express.Express,
   deps: {
     logger?: Pick<pino.Logger, 'error' | 'info'>;
-    requireRole: typeof import('../../../apps/api/src/middleware/require-role.js').requireRole;
+    requireRole: typeof coreRequireRole;
   },
 ): CloudApiHandle {
   app.use(

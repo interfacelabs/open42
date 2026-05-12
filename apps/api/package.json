@@ -3,6 +3,44 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./auth/llm-keys": {
+      "types": "./dist/auth/llm-keys.d.ts",
+      "default": "./dist/auth/llm-keys.js"
+    },
+    "./cloud-hooks": {
+      "types": "./dist/cloud-hooks.d.ts",
+      "default": "./dist/cloud-hooks.js"
+    },
+    "./db/client": {
+      "types": "./dist/db/client.d.ts",
+      "default": "./dist/db/client.js"
+    },
+    "./db/schema": {
+      "types": "./dist/db/schema.d.ts",
+      "default": "./dist/db/schema.js"
+    },
+    "./env": {
+      "types": "./dist/env.d.ts",
+      "default": "./dist/env.js"
+    },
+    "./middleware/error-sanitize": {
+      "types": "./dist/middleware/error-sanitize.d.ts",
+      "default": "./dist/middleware/error-sanitize.js"
+    },
+    "./middleware/require-role": {
+      "types": "./dist/middleware/require-role.d.ts",
+      "default": "./dist/middleware/require-role.js"
+    },
+    "./tenants/provision": {
+      "types": "./dist/tenants/provision.d.ts",
+      "default": "./dist/tenants/provision.js"
+    }
+  },
   "scripts": {
     "dev": "tsx watch src/index.ts",
     "build": "tsc -p tsconfig.build.json",
@@ -16,6 +54,7 @@
     "db:generate": "drizzle-kit generate",
     "db:push": "drizzle-kit push --force",
     "db:migrate": "drizzle-kit migrate",
+    "db:migrate:cloud": "node ../../packages/cloud/scripts/prepare-migrations.mjs && drizzle-kit migrate --config drizzle.config.cloud.migrate.ts",
     "db:studio": "drizzle-kit studio"
   },
   "dependencies": {

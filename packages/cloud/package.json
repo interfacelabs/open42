@@ -4,7 +4,10 @@
   "private": true,
   "type": "module",
   "exports": {
-    "./api": "./api/index.ts",
+    "./api": {
+      "types": "./api/dist/index.d.ts",
+      "default": "./api/dist/index.js"
+    },
     "./web/*": "./web/*"
   }
 }
