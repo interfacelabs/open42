@@ -3,6 +3,7 @@
   "compilerOptions": {
     "paths": {
       "@/*": ["./src/*"],
+      "@open42/api/*": ["./src/*"],
       "@open42/cloud/api": ["../../packages/cloud/api/index.ts"]
     }
   }

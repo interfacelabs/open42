@@ -49,6 +49,8 @@ import {
   type RunCycleOptions,
 } from './ingest/orchestrator.js';
 
+type CloudApiModule = typeof import('@open42/cloud/api');
+
 const logger = pino({
   level: process.env.LOG_LEVEL ?? 'info',
   // Defense-in-depth against accidental error-body leaks. The primary
@@ -130,7 +132,7 @@ app.use(
     kick: kickWorkspaceIngest,
   }),
 );
-cloudApi?.mountCloudWebhooks?.(app, { logger });
+cloudApi?.mountCloudWebhooks?.(app);
 app.use(express.json({ limit: '1mb' }));
 app.use(cookieParser());
 app.use(
@@ -269,7 +271,7 @@ function portFromUrl(value?: string): string | null {
   }
 }
 
-async function loadCloudApi(): Promise<any | null> {
+async function loadCloudApi(): Promise<CloudApiModule | null> {
   if (OPEN42_EDITION !== 'cloud') return null;
   return import('@open42/cloud/api');
 }

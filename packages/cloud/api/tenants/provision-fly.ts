@@ -1,4 +1,4 @@
-import type { TenantProvisionerOptions, TenantRuntime } from '../../../../apps/api/src/tenants/provision.js';
+import type { TenantProvisionerOptions, TenantRuntime } from '@open42/api/tenants/provision';
 
 type Fetch = typeof fetch;
 
@@ -158,9 +158,7 @@ async function createFlyMachine(options: {
   return { id, privateIp };
 }
 
-function flyOpen42ApiBaseUrl(env: {
-  OPEN42_API_FLYCAST_HOST?: string;
-}): string {
+function flyOpen42ApiBaseUrl(env: { OPEN42_API_FLYCAST_HOST?: string }): string {
   const host = env.OPEN42_API_FLYCAST_HOST ?? 'open42-api.flycast';
   const withProtocol = /^https?:\/\//.test(host) ? host : `http://${host}`;
   return withProtocol.replace(/\/+$/, '');

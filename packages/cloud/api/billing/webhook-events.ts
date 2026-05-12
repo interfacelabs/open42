@@ -1,6 +1,6 @@
 import { and, eq, isNull, lt, or } from 'drizzle-orm';
 
-import { db as defaultDb } from '../../../../apps/api/src/db/client.js';
+import { db as defaultDb } from '@open42/api/db/client';
 import { stripeWebhookEvents } from '../schema-cloud.js';
 
 // A crashed worker can delay duplicate Stripe deliveries until this lease

@@ -1,7 +1,7 @@
 import { and, eq, gte, sql } from 'drizzle-orm';
 import type Stripe from 'stripe';
 
-import { db as defaultDb, schema as coreSchema } from '../../../../apps/api/src/db/client.js';
+import { db as defaultDb, schema as coreSchema } from '@open42/api/db/client';
 import { billingUsageEvents, workspaceBilling } from '../schema-cloud.js';
 import {
   billingModeLabel,
@@ -68,13 +68,21 @@ export async function getWorkspaceBilling(workspaceId: string, deps: BillingDeps
     .select({
       id: coreSchema.workspaces.id,
       name: coreSchema.workspaces.name,
-      planKey: workspaceBilling.planKey,
-      mode: workspaceBilling.mode,
-      stripeCustomerId: workspaceBilling.stripeCustomerId,
-      stripeSubscriptionId: workspaceBilling.stripeSubscriptionId,
-      stripeSubscriptionStatus: workspaceBilling.stripeSubscriptionStatus,
-      stripeSubscriptionCurrentPeriodStart: workspaceBilling.stripeSubscriptionCurrentPeriodStart,
-      stripeSubscriptionCurrentPeriodEnd: workspaceBilling.stripeSubscriptionCurrentPeriodEnd,
+      planKey: sql<
+        string | null
+      >`COALESCE(${legacyWorkspaceText('billing_plan_key')}, ${workspaceBilling.planKey})`,
+      mode: sql<BillingMode | null>`COALESCE(NULLIF(${legacyWorkspaceText('billing_mode')}, '')::workspace_billing_mode, ${workspaceBilling.mode})`,
+      stripeCustomerId: sql<
+        string | null
+      >`COALESCE(${legacyWorkspaceText('stripe_customer_id')}, ${workspaceBilling.stripeCustomerId})`,
+      stripeSubscriptionId: sql<
+        string | null
+      >`COALESCE(${legacyWorkspaceText('stripe_subscription_id')}, ${workspaceBilling.stripeSubscriptionId})`,
+      stripeSubscriptionStatus: sql<
+        string | null
+      >`COALESCE(${legacyWorkspaceText('stripe_subscription_status')}, ${workspaceBilling.stripeSubscriptionStatus})`,
+      stripeSubscriptionCurrentPeriodStart: sql<Date | null>`COALESCE(${legacyWorkspaceTimestamp('stripe_subscription_current_period_start')}, ${workspaceBilling.stripeSubscriptionCurrentPeriodStart})`,
+      stripeSubscriptionCurrentPeriodEnd: sql<Date | null>`COALESCE(${legacyWorkspaceTimestamp('stripe_subscription_current_period_end')}, ${workspaceBilling.stripeSubscriptionCurrentPeriodEnd})`,
     })
     .from(coreSchema.workspaces)
     .leftJoin(workspaceBilling, eq(workspaceBilling.workspaceId, coreSchema.workspaces.id))
@@ -153,8 +161,12 @@ export async function createCheckoutSession(
       workspaceName: coreSchema.workspaces.name,
       ownerUserId: coreSchema.workspaces.ownerUserId,
       ownerEmail: coreSchema.users.email,
-      stripeCustomerId: workspaceBilling.stripeCustomerId,
-      stripeSubscriptionStatus: workspaceBilling.stripeSubscriptionStatus,
+      stripeCustomerId: sql<
+        string | null
+      >`COALESCE(${legacyWorkspaceText('stripe_customer_id')}, ${workspaceBilling.stripeCustomerId})`,
+      stripeSubscriptionStatus: sql<
+        string | null
+      >`COALESCE(${legacyWorkspaceText('stripe_subscription_status')}, ${workspaceBilling.stripeSubscriptionStatus})`,
     })
     .from(coreSchema.workspaces)
     .innerJoin(coreSchema.users, eq(coreSchema.users.id, coreSchema.workspaces.ownerUserId))
@@ -240,9 +252,14 @@ export async function createPortalSession(
   if (!stripe) throw new BillingError('stripe_not_configured');
 
   const [workspace] = await db
-    .select({ stripeCustomerId: workspaceBilling.stripeCustomerId })
-    .from(workspaceBilling)
-    .where(eq(workspaceBilling.workspaceId, workspaceId))
+    .select({
+      stripeCustomerId: sql<
+        string | null
+      >`COALESCE(${legacyWorkspaceText('stripe_customer_id')}, ${workspaceBilling.stripeCustomerId})`,
+    })
+    .from(coreSchema.workspaces)
+    .leftJoin(workspaceBilling, eq(workspaceBilling.workspaceId, coreSchema.workspaces.id))
+    .where(eq(coreSchema.workspaces.id, workspaceId))
     .limit(1);
   if (!workspace) throw new BillingError('workspace_not_found');
   if (!workspace.stripeCustomerId) throw new BillingError('stripe_customer_missing');
@@ -307,6 +324,30 @@ export async function syncSubscription(
     return;
   }
   if (customerId) {
+    const [existingBilling] = await db
+      .select({ workspaceId: workspaceBilling.workspaceId })
+      .from(workspaceBilling)
+      .where(eq(workspaceBilling.stripeCustomerId, customerId))
+      .limit(1);
+    if (existingBilling) {
+      await db
+        .update(workspaceBilling)
+        .set(set)
+        .where(eq(workspaceBilling.workspaceId, existingBilling.workspaceId));
+      await syncLegacyWorkspaceBilling(existingBilling.workspaceId, set, db);
+      return;
+    }
+
+    const [legacyWorkspace] = await db
+      .select({ workspaceId: coreSchema.workspaces.id })
+      .from(coreSchema.workspaces)
+      .where(sql`${legacyWorkspaceText('stripe_customer_id')} = ${customerId}`)
+      .limit(1);
+    if (legacyWorkspace) {
+      await upsertWorkspaceBilling(legacyWorkspace.workspaceId, set, db);
+      return;
+    }
+
     await db
       .update(workspaceBilling)
       .set(set)
@@ -357,6 +398,44 @@ async function upsertWorkspaceBilling(
         updatedAt: new Date(),
       },
     });
+  await syncLegacyWorkspaceBilling(workspaceId, values, db);
+}
+
+async function syncLegacyWorkspaceBilling(
+  workspaceId: string,
+  values: Partial<typeof workspaceBilling.$inferInsert>,
+  db: typeof defaultDb,
+): Promise<void> {
+  try {
+    await db.execute(sql`
+      UPDATE "workspaces"
+      SET
+        "billing_plan_key" = COALESCE(${values.planKey ?? null}, "billing_plan_key"),
+        "billing_mode" = COALESCE(${values.mode ?? null}::workspace_billing_mode, "billing_mode"),
+        "stripe_customer_id" = COALESCE(${values.stripeCustomerId ?? null}, "stripe_customer_id"),
+        "stripe_subscription_id" = COALESCE(${values.stripeSubscriptionId ?? null}, "stripe_subscription_id"),
+        "stripe_subscription_status" = COALESCE(${values.stripeSubscriptionStatus ?? null}, "stripe_subscription_status"),
+        "stripe_subscription_current_period_start" = COALESCE(${values.stripeSubscriptionCurrentPeriodStart ?? null}, "stripe_subscription_current_period_start"),
+        "stripe_subscription_current_period_end" = COALESCE(${values.stripeSubscriptionCurrentPeriodEnd ?? null}, "stripe_subscription_current_period_end")
+      WHERE "id" = ${workspaceId}
+    `);
+  } catch (err) {
+    if (isMissingLegacyBillingColumnError(err)) return;
+    throw err;
+  }
+}
+
+function legacyWorkspaceText(column: string) {
+  return sql<string | null>`to_jsonb("workspaces")->>${column}`;
+}
+
+function legacyWorkspaceTimestamp(column: string) {
+  return sql<Date | null>`NULLIF(${legacyWorkspaceText(column)}, '')::timestamptz`;
+}
+
+function isMissingLegacyBillingColumnError(err: unknown): boolean {
+  const code = (err as { code?: string }).code;
+  return code === '42703' || code === '42704';
 }
 
 function subscriptionPeriod(

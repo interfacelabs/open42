@@ -1,0 +1,15 @@
+{
+  "extends": "../../../tsconfig.base.json",
+  "compilerOptions": {
+    "outDir": "./dist",
+    "rootDir": ".",
+    "declaration": true,
+    "declarationMap": true,
+    "sourceMap": true,
+    "paths": {
+      "@open42/api/*": ["../../../apps/api/dist/*"]
+    }
+  },
+  "include": ["**/*.ts"],
+  "exclude": ["**/*.test.ts", "dist", "node_modules"]
+}

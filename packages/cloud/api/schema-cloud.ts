@@ -12,7 +12,7 @@ import {
 } from 'drizzle-orm/pg-core';
 import { sql } from 'drizzle-orm';
 
-import { llmProviderEnum, llmScopeEnum, workspaces } from '../../../apps/api/src/db/schema.js';
+import { llmProviderEnum, llmScopeEnum, workspaces } from '@open42/api/db/schema';
 
 export const workspaceBillingModeEnum = pgEnum('workspace_billing_mode', ['platform', 'byok']);
 export const billingUsageStatusEnum = pgEnum('billing_usage_status', [

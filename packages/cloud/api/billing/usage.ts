@@ -3,10 +3,10 @@ import { randomUUID } from 'node:crypto';
 import { and, eq, gte, sql } from 'drizzle-orm';
 import type pino from 'pino';
 
-import type { LlmProvider, LlmScope } from '../../../../apps/api/src/auth/llm-keys.js';
-import type { db as defaultDbValue } from '../../../../apps/api/src/db/client.js';
-import { db as coreDb, schema as coreSchema } from '../../../../apps/api/src/db/client.js';
-import { sanitizeErrorForLog } from '../../../../apps/api/src/middleware/error-sanitize.js';
+import type { LlmProvider, LlmScope } from '@open42/api/auth/llm-keys';
+import type { db as defaultDbValue } from '@open42/api/db/client';
+import { db as coreDb, schema as coreSchema } from '@open42/api/db/client';
+import { sanitizeErrorForLog } from '@open42/api/middleware/error-sanitize';
 import { billingUsageEvents, workspaceBilling } from '../schema-cloud.js';
 import { getBillingConfig, hasMeterEvent, type BillingConfig } from './config.js';
 import { getStripeClient } from './stripe-client.js';
@@ -131,9 +131,13 @@ export async function recordLlmUsage(
     const [workspace] = await tx
       .select({
         id: coreSchema.workspaces.id,
-        stripeCustomerId: workspaceBilling.stripeCustomerId,
-        stripeSubscriptionStatus: workspaceBilling.stripeSubscriptionStatus,
-        stripeSubscriptionCurrentPeriodStart: workspaceBilling.stripeSubscriptionCurrentPeriodStart,
+        stripeCustomerId: sql<
+          string | null
+        >`COALESCE(${legacyWorkspaceText('stripe_customer_id')}, ${workspaceBilling.stripeCustomerId})`,
+        stripeSubscriptionStatus: sql<
+          string | null
+        >`COALESCE(${legacyWorkspaceText('stripe_subscription_status')}, ${workspaceBilling.stripeSubscriptionStatus})`,
+        stripeSubscriptionCurrentPeriodStart: sql<Date | null>`COALESCE(${legacyWorkspaceTimestamp('stripe_subscription_current_period_start')}, ${workspaceBilling.stripeSubscriptionCurrentPeriodStart})`,
       })
       .from(coreSchema.workspaces)
       .leftJoin(workspaceBilling, eq(workspaceBilling.workspaceId, coreSchema.workspaces.id))
@@ -313,16 +317,26 @@ export async function retryUnreportedBillingUsage(
           e.billable_units AS "billableUnits",
           e.stripe_meter_event_identifier AS "stripeMeterEventIdentifier",
           e.occurred_at AS "occurredAt",
-          b.stripe_customer_id AS "stripeCustomerId",
-          b.stripe_subscription_status AS "stripeSubscriptionStatus"
+          COALESCE(to_jsonb(w)->>'stripe_customer_id', b.stripe_customer_id) AS "stripeCustomerId",
+          COALESCE(
+            to_jsonb(w)->>'stripe_subscription_status',
+            b.stripe_subscription_status
+          ) AS "stripeSubscriptionStatus"
         FROM billing_usage_events e
-        INNER JOIN workspace_billing b ON b.workspace_id = e.workspace_id
+        INNER JOIN workspaces w ON w.id = e.workspace_id
+        LEFT JOIN workspace_billing b ON b.workspace_id = e.workspace_id
         WHERE e.status IN ('failed'::billing_usage_status, 'unreported'::billing_usage_status)
           AND e.billable_units > 0
           AND e.stripe_meter_event_identifier IS NOT NULL
-          AND b.stripe_customer_id IS NOT NULL
-          AND b.stripe_subscription_current_period_start IS NOT NULL
-          AND e.occurred_at >= b.stripe_subscription_current_period_start
+          AND COALESCE(to_jsonb(w)->>'stripe_customer_id', b.stripe_customer_id) IS NOT NULL
+          AND COALESCE(
+            NULLIF(to_jsonb(w)->>'stripe_subscription_current_period_start', '')::timestamptz,
+            b.stripe_subscription_current_period_start
+          ) IS NOT NULL
+          AND e.occurred_at >= COALESCE(
+            NULLIF(to_jsonb(w)->>'stripe_subscription_current_period_start', '')::timestamptz,
+            b.stripe_subscription_current_period_start
+          )
         ORDER BY e.occurred_at
         LIMIT ${limit}
         FOR UPDATE OF e SKIP LOCKED
@@ -447,6 +461,14 @@ function startOfUtcMonth(date: Date): Date {
 function errorMessage(err: unknown): string {
   if (err instanceof Error) return err.message.slice(0, 240);
   return String(err).slice(0, 240);
+}
+
+function legacyWorkspaceText(column: string) {
+  return sql<string | null>`to_jsonb("workspaces")->>${column}`;
+}
+
+function legacyWorkspaceTimestamp(column: string) {
+  return sql<Date | null>`NULLIF(${legacyWorkspaceText(column)}, '')::timestamptz`;
 }
 
 async function loadDefaultDb(): Promise<DbClient> {

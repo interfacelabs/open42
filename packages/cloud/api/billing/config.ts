@@ -1,4 +1,4 @@
-import { WEB_PUBLIC_URL } from '../../../../apps/api/src/env.js';
+import { WEB_PUBLIC_URL } from '@open42/api/env';
 
 export type BillingMode = 'platform' | 'byok';
 

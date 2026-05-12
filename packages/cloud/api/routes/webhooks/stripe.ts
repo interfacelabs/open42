@@ -2,7 +2,8 @@ import express, { Router } from 'express';
 import pino from 'pino';
 import type Stripe from 'stripe';
 
-import { sanitizeErrorForLog } from '../../../../../apps/api/src/middleware/error-sanitize.js';
+import { db as defaultDb } from '@open42/api/db/client';
+import { sanitizeErrorForLog } from '@open42/api/middleware/error-sanitize';
 import { getStripeClient } from '../../billing/stripe-client.js';
 import { syncCheckoutSession, syncSubscription } from '../../billing/service.js';
 import {
@@ -10,7 +11,6 @@ import {
   markStripeWebhookEventFailed,
   markStripeWebhookEventProcessed,
 } from '../../billing/webhook-events.js';
-import { db as defaultDb } from '../../../../../apps/api/src/db/client.js';
 
 const logger = pino({ name: 'routes/webhooks/stripe', level: process.env.LOG_LEVEL ?? 'info' });
 

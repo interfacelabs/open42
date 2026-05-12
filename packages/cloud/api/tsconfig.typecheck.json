@@ -1,0 +1,12 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "rootDir": "../../../",
+    "paths": {
+      "@open42/api/*": ["../../../apps/api/src/*"]
+    }
+  },
+  "include": ["**/*.ts", "../../../apps/api/src/types/**/*.d.ts"],
+  "exclude": ["dist", "node_modules"]
+}
