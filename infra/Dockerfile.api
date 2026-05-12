@@ -1,0 +1,29 @@
+FROM node:20-alpine AS deps
+WORKDIR /app
+COPY package.json package-lock.json ./
+COPY apps/api/package.json apps/api/package.json
+COPY apps/web/package.json apps/web/package.json
+COPY apps/landing/package.json apps/landing/package.json
+COPY apps/mobile/package.json apps/mobile/package.json
+COPY packages/cloud/package.json packages/cloud/package.json
+COPY packages/cloud-stubs/package.json packages/cloud-stubs/package.json
+RUN npm ci
+
+FROM node:20-alpine AS build
+WORKDIR /app
+ENV OPEN42_EDITION=community
+COPY --from=deps /app/node_modules ./node_modules
+COPY . .
+RUN npm run build -w @open42/api
+
+FROM node:20-alpine
+WORKDIR /app
+ENV NODE_ENV=production
+COPY --from=build /app/package.json ./package.json
+COPY --from=build /app/node_modules ./node_modules
+COPY --from=build /app/apps/api/package.json ./apps/api/package.json
+COPY --from=build /app/apps/api/dist ./apps/api/dist
+COPY --from=build /app/apps/api/drizzle.config.ts ./apps/api/drizzle.config.ts
+COPY --from=build /app/apps/api/drizzle.config.community.ts ./apps/api/drizzle.config.community.ts
+COPY --from=build /app/apps/api/src ./apps/api/src
+CMD ["sh", "-c", "npm run db:migrate -w @open42/api && npm run start -w @open42/api"]

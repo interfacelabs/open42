@@ -1,0 +1,10 @@
+node_modules
+apps/*/node_modules
+packages/*/node_modules
+packages/*/*/node_modules
+apps/*/.next
+dist
+.git
+.env
+.env.local
+.venv-docs
