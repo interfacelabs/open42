@@ -9,7 +9,7 @@ import { CardCabinet } from '@/components/onboarding/illustrations/CardCabinet';
 import { csrfHeaders } from '@/lib/csrf';
 import { EASE_STANDARD } from '@/lib/motion';
 
-import { runAcceptFlow } from './accept-flow';
+import { runAcceptFlow } from '@/lib/invite/accept-flow';
 
 const PENDING_KEY = 'open42:pending_invite';
 type Pending = { inviteId: string; tokenHash: string; type: string };

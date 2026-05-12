@@ -13,7 +13,7 @@ import {
   runAcceptFlow,
   type AcceptFlowDeps,
   type AcceptFlowInput,
-} from './accept-flow';
+} from '@/lib/invite/accept-flow';
 
 /**
  * Builds a fetch mock keyed by URL prefix. Mirrors the dispatcher used in
