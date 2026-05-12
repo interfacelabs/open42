@@ -218,7 +218,7 @@ END $$;
 --> statement-breakpoint
 CREATE INDEX IF NOT EXISTS "connection_init_states_expires_idx" ON "connection_init_states" USING btree ("expires_at");--> statement-breakpoint
 CREATE INDEX IF NOT EXISTS "connections_workspace_status_idx" ON "connections" USING btree ("workspace_id","status");--> statement-breakpoint
-CREATE UNIQUE INDEX IF NOT EXISTS "connections_one_notion_per_workspace" ON "connections" USING btree ("workspace_id") WHERE "connections"."kind"::text LIKE 'notion-%' AND "connections"."status" <> 'disconnected';--> statement-breakpoint
+CREATE UNIQUE INDEX IF NOT EXISTS "connections_one_notion_per_workspace" ON "connections" USING btree ("workspace_id") WHERE "connections"."kind" IN ('notion-composio', 'notion-zip') AND "connections"."status" <> 'disconnected';--> statement-breakpoint
 CREATE UNIQUE INDEX IF NOT EXISTS "connections_composio_account_uniq" ON "connections" USING btree ("composio_connected_account_id") WHERE "connections"."composio_connected_account_id" IS NOT NULL AND "connections"."status" <> 'disconnected';--> statement-breakpoint
 CREATE INDEX IF NOT EXISTS "ingest_jobs_workspace_idx" ON "ingest_jobs" USING btree ("workspace_id");--> statement-breakpoint
 CREATE INDEX IF NOT EXISTS "ingest_jobs_status_idx" ON "ingest_jobs" USING btree ("status");--> statement-breakpoint

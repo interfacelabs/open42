@@ -1,8 +1,6 @@
 import { eq, sql } from 'drizzle-orm';
 import { Router, type Request } from 'express';
 
-import { resolveOwnerWorkspaceId } from '../../auth/membership.js';
-import { validateSession } from '../../auth/sessions.js';
 import { db, schema } from '../../db/client.js';
 import { GbrainClient } from '../../gbrain/client.js';
 import {
@@ -13,7 +11,20 @@ import {
   pageToDoc,
 } from './assemble.js';
 
-export const libraryRouter = Router();
+/**
+ * Library router — list / read docs for the workspace named in the parent
+ * path (`/workspaces/:id/library`). `requireMembership` (mounted on the
+ * parent in `apps/api/src/index.ts`) validates the session and asserts
+ * membership before any handler runs, so we read `req.workspace!.id` and
+ * `req.session!.userId` directly. `mergeParams: true` is required so the
+ * parent `:id` is visible from within this nested router.
+ *
+ * Previously this router lived at `/library` and resolved the workspace via
+ * `resolveOwnerWorkspaceId(session.userId)` — that returned "first owned
+ * workspace" non-deterministically (LIMIT 1, undefined ordering), which is
+ * broken under multi-workspace.
+ */
+export const libraryRouter = Router({ mergeParams: true });
 
 libraryRouter.get('/', async (req, res, next) => {
   try {
@@ -76,13 +87,13 @@ export async function loadCitedInSkills(workspaceId: string): Promise<ReadonlySe
   return new Set(rows.map((r) => r.slug));
 }
 
-libraryRouter.get('/doc/:id', async (req, res, next) => {
+libraryRouter.get('/doc/:docId', async (req, res, next) => {
   try {
     const ctx = await resolveContext(req, res);
     if (!ctx) return;
     const { gbrain } = ctx;
 
-    const id = req.params.id;
+    const id = req.params.docId;
     if (!id) {
       res.status(400).json({ error: 'missing_id' });
       return;
@@ -101,19 +112,17 @@ libraryRouter.get('/doc/:id', async (req, res, next) => {
 });
 
 /**
- * Resolves the request's session + workspace + gbrain client. Writes the
- * 401/409 response and returns null when the request can't proceed; callers
- * should bail in that case. Mirrors the inlined helper in
- * `routes/skills/refund-policy.ts` to keep behavior identical until that
- * route is migrated to a shared helper.
+ * Resolves the workspace runtime + gbrain client for the current request.
+ * `requireMembership` has already validated the session and asserted
+ * membership, so the workspace id is trusted. We only need to confirm the
+ * tenant runtime is provisioned (gbrain credentials populated) before
+ * issuing upstream calls — if it isn't, the route 409s and the caller can
+ * back off until ingest comes up. Returns null after writing the response.
  */
 async function resolveContext(req: Request, res: import('express').Response) {
-  const session = await sessionFromRequest(req);
-  if (!session) {
-    res.status(401).json({ error: 'unauthorized' });
-    return null;
-  }
-  const workspace = await workspaceForUser(session.userId);
+  const session = req.session!;
+  const workspaceId = req.workspace!.id;
+  const workspace = await loadWorkspaceRuntime(workspaceId);
   if (!workspace) {
     res.status(409).json({ error: 'workspace_not_ready' });
     return null;
@@ -130,18 +139,7 @@ async function resolveContext(req: Request, res: import('express').Response) {
   return { session, workspace, gbrain };
 }
 
-async function sessionFromRequest(req: Request) {
-  const sessionId = req.cookies?.[process.env.SESSION_COOKIE_NAME ?? 'open42_session'];
-  if (!sessionId) return null;
-  return validateSession(sessionId, {
-    userAgent: req.header('user-agent'),
-    ip: req.ip,
-  });
-}
-
-async function workspaceForUser(userId: string) {
-  const workspaceId = await resolveOwnerWorkspaceId(userId);
-  if (!workspaceId) return null;
+async function loadWorkspaceRuntime(workspaceId: string) {
   const [workspace] = await db
     .select()
     .from(schema.workspaces)

@@ -20,6 +20,7 @@ import {
 } from '@/lib/library-types';
 import { EASE_ENTER } from '@/lib/motion';
 import { cn } from '@/lib/utils';
+import { useWorkspaceStore } from '@/lib/workspaces/store';
 
 interface LibraryResponse {
   docs: LibraryDoc[];
@@ -56,15 +57,21 @@ export default function LibraryPage() {
     if (current && !current.workspace) void router.replace('/onboard');
   }, [current, router]);
 
+  // Library data is keyed off the URL + the current workspace id. The API is
+  // mounted at `/workspaces/:id/library` so the workspace id rides in the path
+  // and `requireMembership` enforces access. Without a workspace id the SWR
+  // key is null and the panel sits idle.
+  const workspaceId = useWorkspaceStore((s) => s.currentWorkspaceId);
   const queryKey = useMemo(() => {
+    if (!workspaceId) return null;
     const params = new URLSearchParams();
     if (sourceFilterParam) {
       params.set('source', sourceFilterParam);
     } else {
       params.set('collection', collectionId);
     }
-    return `/api/library?${params.toString()}`;
-  }, [collectionId, sourceFilterParam]);
+    return `/api/workspaces/${encodeURIComponent(workspaceId)}/library?${params.toString()}`;
+  }, [collectionId, sourceFilterParam, workspaceId]);
 
   const { data, isLoading } = useSWR<LibraryResponse>(queryKey, fetcher);
 

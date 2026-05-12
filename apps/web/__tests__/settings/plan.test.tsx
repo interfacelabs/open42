@@ -7,6 +7,8 @@ vi.mock('next/router', () => ({
     query: {},
     replace: vi.fn(),
     pathname: '/settings/plan',
+    asPath: '/settings/plan',
+    events: { on: () => {}, off: () => {} },
   }),
 }));
 

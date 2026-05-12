@@ -7,11 +7,9 @@ import { HorizonGlyph } from '@/components/HorizonGlyph';
 import { PageHeader } from '@/components/PageHeader';
 import { SettingsNav } from '@/components/SettingsNav';
 import { Button } from '@/components/ui/button';
+import { csrfHeaders } from '@/lib/csrf';
 import { cn } from '@/lib/utils';
-
-interface ConnectionsPayload {
-  workspaceId: string | null;
-}
+import { useWorkspaceStore } from '@/lib/workspaces/store';
 
 interface IngestPayload {
   ingestMode: 'import_once' | 'periodic_pull';
@@ -35,11 +33,7 @@ interface IngestPayload {
 const fetcher = (url: string) => fetch(url).then((res) => res.json());
 
 export default function IngestSettingsPage() {
-  const { data: connections } = useSWR<ConnectionsPayload>(
-    '/api/connections',
-    fetcher,
-  );
-  const workspaceId = connections?.workspaceId ?? null;
+  const workspaceId = useWorkspaceStore((s) => s.currentWorkspaceId);
   const { data, mutate } = useSWR<IngestPayload>(
     workspaceId ? `/api/workspaces/${workspaceId}/ingest` : null,
     fetcher,
@@ -306,10 +300,3 @@ function EmptyState() {
   );
 }
 
-function csrfHeaders(): HeadersInit {
-  const csrf = document.cookie
-    .split('; ')
-    .find((part) => part.startsWith('open42_csrf='))
-    ?.split('=')[1];
-  return csrf ? { 'X-CSRF-Token': csrf } : {};
-}

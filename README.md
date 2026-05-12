@@ -234,6 +234,7 @@ End-to-end: register the webhook URL in your Composio dashboard. Trigger a Notio
 - **Egress proxy is the only path to provider APIs.** Tenants ship with `OPENAI_API_KEY=<proxy-token>` and `OPENAI_BASE_URL=https://<api>/proxy/openai/v1`. A real provider key never lives in the tenant container.
 - **Envelope encryption.** Per-row AES-GCM with AAD `${workspaceId}|${purpose}` and a per-tenant DEK derived via HKDF over the master KEK (`OPEN42_KEK`). Bumping the KEK invalidates all per-tenant secrets — see `apps/api/src/crypto/envelope.ts`.
 - **Authorization claim.** Every route resolves the workspace through the `memberships` table, never through `users.currentWorkspaceId` (which is a UI hint and not authoritative). See `apps/api/src/auth/membership.ts`.
+- **Membership gate.** Every tenant-scoped route (`POST /chat`, `/workspaces/:id/connections/*`, `GET|PATCH /workspaces/:id/ingest`, the per-workspace invite/member endpoints, and `POST /workspaces/:id/switch`) is wrapped in `requireMembership({ from: 'param'|'body'|'query' })`. The middleware reads the target `workspaceId` from the request (never from `users.current_workspace_id`, which is a UI hint), calls `assertWorkspaceMembership`, and attaches `req.workspace = { id, role }` plus `req.session = { id, userId }` for handlers. The proxy routes (`/proxy/openai`, `/proxy/anthropic`) are the documented exception — they're server-to-server, and the per-workspace bearer token is the credential.
 
 ## License
 

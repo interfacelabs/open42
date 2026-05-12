@@ -4,9 +4,11 @@ import { ReactNode, useEffect } from 'react';
 import useSWR from 'swr';
 import { MessageSquarePlus, Plug, Sparkles, X } from 'lucide-react';
 
+import WorkspaceSwitcher from '@/components/WorkspaceSwitcher';
 import { fetcher, sourceKey, sourceLabel } from '@/lib/api';
 import { useSidebarOpen } from '@/lib/useSidebarOpen';
 import { cn } from '@/lib/utils';
+import { useHydrateWorkspaceStore, useWorkspaceStore } from '@/lib/workspaces/store';
 
 interface Connection {
   id: string;
@@ -45,11 +47,23 @@ const collections: { id: string; label: string }[] = [
  * Footer holds the user pill (avatar + handle + version).
  */
 export function Sidebar() {
+  // Hydrate the workspace store exactly once per page load — the Sidebar is
+  // the canonical authenticated chrome (mounted by dashboard, chat, library,
+  // status, all settings pages), so this single call covers every screen
+  // where the switcher and tenant-scoped fetches need a populated store.
+  useHydrateWorkspaceStore();
   const router = useRouter();
   const { data } = useSWR<CurrentResponse>('/api/workspaces/current', fetcher);
   const connections = data?.connections ?? [];
   const email = data?.user?.email ?? null;
-  const { data: skillsData } = useSWR<SkillsListResponse>('/api/skills', fetcher);
+  // Skills list is workspace-scoped — the API rejects requests without an
+  // explicit workspace_id in the path. The sidebar reads currentWorkspaceId
+  // from the Zustand store; SWR sits idle on `null` until hydration.
+  const workspaceId = useWorkspaceStore((s) => s.currentWorkspaceId);
+  const { data: skillsData } = useSWR<SkillsListResponse>(
+    workspaceId ? `/api/workspaces/${encodeURIComponent(workspaceId)}/skills` : null,
+    fetcher,
+  );
   const skills = skillsData?.skills ?? [];
 
   const path = router.asPath ?? router.pathname ?? '';
@@ -118,6 +132,10 @@ export function Sidebar() {
         >
           <X size={16} strokeWidth={1.6} />
         </button>
+      </div>
+
+      <div className="px-3 pb-1">
+        <WorkspaceSwitcher />
       </div>
 
       <nav className="flex-1 overflow-auto px-2 pb-4 text-sm">

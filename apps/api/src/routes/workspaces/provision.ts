@@ -1,12 +1,13 @@
 import { and, desc, eq, sql } from 'drizzle-orm';
-import { Router, type Request } from 'express';
+import { Router, type NextFunction, type Request, type Response } from 'express';
 
 import { resolveOwnerWorkspaceId } from '../../auth/membership.js';
 import { generateInviteLink as defaultGenerateInviteLink } from '../../auth/supabase.js';
 import { validateSession } from '../../auth/sessions.js';
 import { db, schema } from '../../db/client.js';
-import { renderInviteEmail } from '../../integrations/email-templates/invite.js';
+import { sendInvitesForWorkspace } from '../../invites/send-invites.js';
 import { sendEmail as defaultSendEmail } from '../../integrations/resend.js';
+import { requireRole } from '../../middleware/require-role.js';
 import {
   enqueueProvisionJob as defaultEnqueueProvisionJob,
   removeAndEnqueueProvisionJob as defaultRetryProvisionJob,
@@ -94,6 +95,20 @@ interface WorkspaceLifecycleRepo {
     name: string,
   ): Promise<{ payload: CurrentPayload; wasCreated: boolean }>;
   upsertInvites(userId: string, emails: string[]): Promise<UpsertInvitesResult>;
+  /**
+   * Fetch a non-soft-deleted workspace row by id for the retry endpoint.
+   * Returns null when the workspace doesn't exist or has been soft-deleted.
+   * Authorization (membership/role) is enforced by middleware *before* this
+   * call — the repo trusts the caller.
+   */
+  findRetryableWorkspace(
+    workspaceId: string,
+  ): Promise<{ id: string; status: string } | null>;
+  /**
+   * Reset a workspace to the provisioning state ahead of re-enqueue. Idempotent
+   * — repeated calls are safe.
+   */
+  markWorkspaceProvisioning(workspaceId: string): Promise<void>;
 }
 
 export function buildWorkspaceProvisionRouter(
@@ -153,7 +168,10 @@ export function buildWorkspaceProvisionRouter(
         // stalled-job recovery picks it up. Fire-and-forget over an in-process
         // Promise (the previous design) lost work on every crash.
         if (useInlineProvision) {
-          void safelyProvisionTenant({ ownerUserId: session.userId });
+          void safelyProvisionTenant({
+            workspaceId: payload.workspace.id,
+            ownerUserId: session.userId,
+          });
         } else {
           await enqueueProvisionJob({
             workspaceId: payload.workspace.id,
@@ -171,29 +189,30 @@ export function buildWorkspaceProvisionRouter(
     }
   });
 
-  router.post('/onboarding/retry-provision', async (req, res, next) => {
+  // Codex round-4 P2: retry now takes workspace_id in the body. Previously
+  // the handler resolved one owner workspace via resolveOwnerWorkspaceId with
+  // LIMIT 1 and undefined ordering — with multi-workspace (B2) a user may
+  // own a failed workspace AND another working one, so retry must target
+  // the specific workspace the UI is rendering as failed.
+  //
+  // Authorization: only owners retry. requireRole runs requireMembership
+  // first (validates session + membership), then asserts role='owner'.
+  // Missing workspace_id → 400. Non-member or non-owner → 403.
+  const retryGate = requireRole(['owner'], { from: 'body' }, 'forbidden_cannot_retry');
+  router.post(
+    '/onboarding/retry-provision',
+    retryGate,
+    async (req: Request, res: Response, next: NextFunction) => {
     try {
-      const session = await requireSession(req, res);
-      if (!session) return;
+      const workspaceId = req.workspace!.id;
+      const session = req.session!;
 
-      // Authorization claim comes from `memberships` (role='owner'), NOT
-      // workspaces.owner_user_id directly. See apps/api/src/auth/membership.ts
-      // (Codex ship-blocker #1) — the helper JOINs through memberships and
-      // excludes soft-deleted workspaces.
-      const ownedWorkspaceId = await resolveOwnerWorkspaceId(session.userId);
-      if (!ownedWorkspaceId) {
-        res.status(409).json({ error: 'no_workspace' });
-        return;
-      }
-
-      const [workspace] = await db
-        .select({ id: schema.workspaces.id, status: schema.workspaces.status })
-        .from(schema.workspaces)
-        .where(eq(schema.workspaces.id, ownedWorkspaceId))
-        .limit(1);
-
+      const workspace = await repo.findRetryableWorkspace(workspaceId);
       if (!workspace) {
-        res.status(409).json({ error: 'no_workspace' });
+        // requireMembership already ruled out missing/soft-deleted workspaces
+        // for non-members; getting here would mean a race (workspace deleted
+        // mid-flight). Return 404 rather than 409 for consistency.
+        res.status(404).json({ error: 'workspace_not_found' });
         return;
       }
       if (workspace.status === 'ready') {
@@ -201,21 +220,17 @@ export function buildWorkspaceProvisionRouter(
         return;
       }
 
-      await db
-        .update(schema.workspaces)
-        .set({
-          status: 'provisioning',
-          lastError: null,
-          provisioningStartedAt: new Date(),
-        })
-        .where(eq(schema.workspaces.id, workspace.id));
+      await repo.markWorkspaceProvisioning(workspace.id);
 
       // Drop any prior job (terminal or active) and enqueue a fresh one. The
       // worker resets `provisioning_started_at` on its first attempt as well
       // — that's belt-and-suspenders for the rare race where the user clicks
       // retry while a final retry is already mid-flight.
       if (useInlineProvision) {
-        void safelyProvisionTenant({ ownerUserId: session.userId });
+        void safelyProvisionTenant({
+          workspaceId: workspace.id,
+          ownerUserId: session.userId,
+        });
       } else {
         await retryProvisionJob({
           workspaceId: workspace.id,
@@ -227,7 +242,8 @@ export function buildWorkspaceProvisionRouter(
     } catch (err) {
       next(err);
     }
-  });
+    },
+  );
 
   router.post('/onboarding/invites', async (req, res, next) => {
     try {
@@ -238,44 +254,62 @@ export function buildWorkspaceProvisionRouter(
         res.status(400).json({ error: 'invite_emails_invalid' });
         return;
       }
-      const { workspaceName, inviterEmail, invites } = await repo.upsertInvites(
-        session.userId,
-        emails,
-      );
 
-      const webUrl = (process.env.WEB_PUBLIC_URL ?? 'http://localhost:3000').replace(/\/+$/, '');
-      let sent = 0;
-      let failed = 0;
-      for (const invite of invites) {
-        try {
-          const { actionLink } = await generateInviteLink({
-            email: invite.email,
-            redirectTo: `${webUrl}/invite/accept?invite_id=${invite.id}`,
-          });
-          const rendered = renderInviteEmail({
-            workspaceName,
-            inviterEmail,
-            inviteUrl: actionLink,
-          });
-          const result = await sendEmail({
-            to: invite.email,
-            subject: rendered.subject,
-            html: rendered.html,
-            text: rendered.text,
-          });
-          if (result.ok) {
-            sent += 1;
-          } else {
-            failed += 1;
-            console.error('[invite-email] resend failed', invite.email, result.error);
-          }
-        } catch (err) {
-          failed += 1;
-          console.error('[invite-email] generate-link failed', invite.email, err);
-        }
+      // Empty submission is a no-op (the onboarding UX uses this to skip the
+      // invite step). Returning here avoids `sendInvitesForWorkspace` throwing
+      // `invite_emails_required`, which the global error handler used to map
+      // to 500 — pre-refactor behavior was 200 + sent=0 (codex round-3 P2).
+      if (emails.length === 0) {
+        const payload = await repo.current(session.userId);
+        res.json(
+          payload
+            ? { ...sanitizeCurrentPayload(payload), sent: 0, failed: 0 }
+            : { sent: 0, failed: 0 },
+        );
+        return;
       }
 
+      // The legacy onboarding-route contract: `repo.upsertInvites` resolves
+      // the owner workspace via `resolveOwnerWorkspaceId`, returns
+      // workspaceName/inviterEmail, and writes pending rows with the
+      // partial-unique-index upsert. The link-generation + email-send loop
+      // moved into `sendInvitesForWorkspace` (apps/api/src/invites/send-invites.ts)
+      // so this route and the new per-workspace invites router share one
+      // implementation. The `upsertInvitesForWorkspace` shim here is a
+      // pass-through — the actual upsert ran in `repo.upsertInvites` above.
+      const upserted = await repo.upsertInvites(session.userId, emails);
+      const result = await sendInvitesForWorkspace(
+        {
+          workspaceId: upserted.workspaceId,
+          workspaceName: upserted.workspaceName,
+          inviterUserId: session.userId,
+          inviterEmail: upserted.inviterEmail,
+          emails,
+          role: 'member',
+          webBaseUrl: process.env.WEB_PUBLIC_URL ?? 'http://localhost:3000',
+        },
+        {
+          generateInviteLink,
+          sendEmail,
+          upsertInvitesForWorkspace: async () => ({
+            invites: upserted.invites.map((r) => ({
+              id: r.id,
+              email: r.email,
+              role: 'member' as const,
+              status: 'pending' as const,
+              // Legacy `InviteRow` shape carried no createdAt; the helper
+              // only reads `invite.id` + `invite.email` from this payload.
+              createdAt: new Date(),
+            })),
+            failed: [],
+          }),
+        },
+      );
+
       const payload = await repo.current(session.userId);
+      // Legacy contract: `sent` and `failed` are numbers, not arrays.
+      const sent = result.sent;
+      const failed = result.failed.length;
       res.json(payload ? { ...sanitizeCurrentPayload(payload), sent, failed } : { sent, failed });
     } catch (err) {
       next(err);
@@ -429,6 +463,29 @@ function createDrizzleWorkspaceLifecycleRepo(): WorkspaceLifecycleRepo {
 
       return { workspaceId, workspaceName, inviterEmail, invites: inserted };
     },
+    async findRetryableWorkspace(workspaceId) {
+      const [row] = await db
+        .select({ id: schema.workspaces.id, status: schema.workspaces.status })
+        .from(schema.workspaces)
+        .where(
+          and(
+            eq(schema.workspaces.id, workspaceId),
+            sql`${schema.workspaces.deletedAt} IS NULL`,
+          ),
+        )
+        .limit(1);
+      return row ?? null;
+    },
+    async markWorkspaceProvisioning(workspaceId) {
+      await db
+        .update(schema.workspaces)
+        .set({
+          status: 'provisioning',
+          lastError: null,
+          provisioningStartedAt: new Date(),
+        })
+        .where(eq(schema.workspaces.id, workspaceId));
+    },
   };
 }
 
@@ -502,24 +559,72 @@ async function currentPayload(userId: string): Promise<CurrentPayload | null> {
 }
 
 export async function currentWorkspaceForUser(userId: string): Promise<CurrentWorkspace | null> {
+  // Resolution order (Codex round-2 P1):
+  //   1. If users.current_workspace_id points at a workspace the user has a
+  //      membership in (and the workspace isn't soft-deleted) → return that.
+  //   2. Otherwise → fall back to "first owned, then first joined" — sorted
+  //      by role (owner first) then created_at DESC, matching the order used
+  //      by GET /workspaces.
+  //   3. If the hint was stale (non-null but no membership / soft-deleted),
+  //      self-heal users.current_workspace_id to the fallback pick so the
+  //      column converges.
+  //
   // Membership is the only authorization claim — see apps/api/src/auth/membership.ts
-  // (Codex ship-blocker #1). The owner row also gets a membership at creation
-  // time (saveWorkspaceName inserts both atomically), so the membership table
-  // is sufficient on its own.
-  const [row] = await db
+  // (Codex ship-blocker #1). users.current_workspace_id is a UI hint and is
+  // only honored here to *select* among workspaces the user already has a
+  // membership in — it never grants access on its own.
+
+  // Step 1: try the hint. Single query: join users → memberships → workspaces
+  // filtered by users.current_workspace_id; returns at most one row.
+  const [hintRow] = await db
     .select({ workspace: schema.workspaces })
-    .from(schema.workspaces)
-    .leftJoin(
+    .from(schema.users)
+    .innerJoin(
       schema.memberships,
       and(
-        eq(schema.memberships.workspaceId, schema.workspaces.id),
-        eq(schema.memberships.userId, userId),
+        eq(schema.memberships.userId, schema.users.id),
+        eq(schema.memberships.workspaceId, schema.users.currentWorkspaceId),
       ),
     )
-    .where(and(eq(schema.memberships.userId, userId), sql`${schema.workspaces.deletedAt} IS NULL`))
+    .innerJoin(schema.workspaces, eq(schema.workspaces.id, schema.memberships.workspaceId))
+    .where(and(eq(schema.users.id, userId), sql`${schema.workspaces.deletedAt} IS NULL`))
     .limit(1);
-  if (!row?.workspace) return null;
-  const workspace = row.workspace;
+
+  if (hintRow?.workspace) {
+    return toCurrentWorkspace(hintRow.workspace);
+  }
+
+  // Step 2: fallback — first owned, then first joined.
+  const [fallbackRow] = await db
+    .select({ workspace: schema.workspaces, role: schema.memberships.role })
+    .from(schema.memberships)
+    .innerJoin(schema.workspaces, eq(schema.workspaces.id, schema.memberships.workspaceId))
+    .where(and(eq(schema.memberships.userId, userId), sql`${schema.workspaces.deletedAt} IS NULL`))
+    .orderBy(
+      sql`CASE WHEN ${schema.memberships.role} = 'owner' THEN 0 ELSE 1 END`,
+      desc(schema.workspaces.createdAt),
+    )
+    .limit(1);
+
+  if (!fallbackRow?.workspace) return null;
+
+  // Step 3: self-heal — if the user had a hint but it pointed at a workspace
+  // we couldn't honor (stale / soft-deleted / they were kicked), write the
+  // fallback pick back to users.current_workspace_id so the column converges.
+  // Best-effort; failure to update doesn't change the response.
+  try {
+    await db
+      .update(schema.users)
+      .set({ currentWorkspaceId: fallbackRow.workspace.id })
+      .where(eq(schema.users.id, userId));
+  } catch {
+    // swallow — the response is correct even if the write fails.
+  }
+
+  return toCurrentWorkspace(fallbackRow.workspace);
+}
+
+function toCurrentWorkspace(workspace: typeof schema.workspaces.$inferSelect): CurrentWorkspace {
   const gbrainReady = Boolean(
     (workspace.gbrainBaseUrl || workspace.flyPrivateIp) &&
     workspace.gbrainOauthClientId &&

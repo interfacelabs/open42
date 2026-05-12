@@ -10,7 +10,7 @@
  * for dev) and the docker daemon being available.
  */
 import '../src/env.js';
-import { eq } from 'drizzle-orm';
+import { and, eq, sql } from 'drizzle-orm';
 
 import { db, schema } from '../src/db/client.js';
 import { generateProxyToken } from '../src/proxy/token.js';
@@ -29,11 +29,37 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
-  console.log(`[provision] user=${userId} starting…`);
-  const result = await provisionTenant({ ownerUserId: userId });
+  // provisionTenant is now keyed by workspaceId end-to-end (Chunk-7 round-3
+  // P1). For this dev script we operate on the owner's first non-deleted
+  // workspace via memberships; if none exists, ensureWorkspaceForProvisioning
+  // will create one on demand.
+  const workspaceId = await resolveOwnerWorkspaceId(userId);
+  if (!workspaceId) {
+    console.error(`no workspace found for user ${userId}; create one via the app first`);
+    process.exit(1);
+  }
+
+  console.log(`[provision] user=${userId} workspace=${workspaceId} starting…`);
+  const result = await provisionTenant({ workspaceId, ownerUserId: userId });
   await ensureWorkspaceProxyToken(result.workspaceId);
   console.log('[provision] done');
   console.log(JSON.stringify(result, null, 2));
+}
+
+async function resolveOwnerWorkspaceId(userId: string): Promise<string | null> {
+  const [row] = await db
+    .select({ workspaceId: schema.memberships.workspaceId })
+    .from(schema.memberships)
+    .innerJoin(schema.workspaces, eq(schema.workspaces.id, schema.memberships.workspaceId))
+    .where(
+      and(
+        eq(schema.memberships.userId, userId),
+        eq(schema.memberships.role, 'owner'),
+        sql`${schema.workspaces.deletedAt} IS NULL`,
+      ),
+    )
+    .limit(1);
+  return row?.workspaceId ?? null;
 }
 
 async function resolveUserId(arg: string): Promise<string | null> {

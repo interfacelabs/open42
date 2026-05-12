@@ -1,16 +1,23 @@
-import express from 'express';
+import express, { type NextFunction, type Request, type Response } from 'express';
 import cookieParser from 'cookie-parser';
 import { eq } from 'drizzle-orm';
 import request from 'supertest';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import '../../env.js';
+import { requireMembership as realRequireMembership } from '../../middleware/require-membership.js';
 
 /**
  * Route-level coverage for the wide-Skillify endpoints. DB-backed: skipped
  * when DATABASE_URL is unset (matches `auth.test.ts` / `ingest.test.ts`
  * patterns). The LLM call and BYOK key resolution are mocked so the tests
  * don't need a real Anthropic key or workspace_credentials row.
+ *
+ * The router now lives under `/workspaces/:id/skills` and is gated by
+ * `requireMembership({ from: 'param' })`. The test app mounts that real
+ * middleware so the DB-side membership check still runs end-to-end (which
+ * is what catches cross-tenant probes — exercised by the "another workspace"
+ * tests below).
  */
 
 const RUN_DB_TESTS = !!process.env.DATABASE_URL;
@@ -127,22 +134,48 @@ describeDb('skills routes', () => {
     app.set('trust proxy', true);
     app.use(express.json());
     app.use(cookieParser());
-    app.use('/skills', mod.skillsRouter);
+    app.use(
+      '/workspaces/:id/skills',
+      realRequireMembership({ from: 'param' }),
+      mod.skillsRouter,
+    );
     return app;
   }
 
-  describe('POST /skills (mint)', () => {
+  // Path helpers — the old tests used `/skills/...`; rebuild them under the
+  // new workspace-scoped mount. Each test gets the correct workspace id from
+  // its `makeOwnerWorkspace` result.
+  const skillsPath = (workspaceId: string) =>
+    `/workspaces/${workspaceId}/skills`;
+  const skillPath = (workspaceId: string, skillId: string) =>
+    `/workspaces/${workspaceId}/skills/${skillId}`;
+
+  describe('POST /workspaces/:id/skills (mint)', () => {
     it('returns 401 without a session cookie', async () => {
+      const { workspaceId } = await makeOwnerWorkspace('test-agent');
       const res = await request(buildApp())
-        .post('/skills')
+        .post(skillsPath(workspaceId))
         .send({ intent: 'Draft a refund-policy skill' });
       expect(res.status).toBe(401);
     });
 
-    it('returns 400 when intent is missing', async () => {
-      const { sessionId } = await makeOwnerWorkspace('test-agent');
+    it('returns 403 when the caller is not a member of the workspace', async () => {
+      // A mints in workspace A, B holds workspace B's session but pokes A's path.
+      const a = await makeOwnerWorkspace('agent-a');
+      const b = await makeOwnerWorkspace('agent-b');
       const res = await request(buildApp())
-        .post('/skills')
+        .post(skillsPath(a.workspaceId))
+        .set('User-Agent', 'agent-b')
+        .set('Cookie', `open42_session=${b.sessionId}`)
+        .send(mintPayload('Cross-tenant mint'));
+      expect(res.status).toBe(403);
+      expect(res.body).toEqual({ error: 'workspace_membership_required' });
+    });
+
+    it('returns 400 when intent is missing', async () => {
+      const { workspaceId, sessionId } = await makeOwnerWorkspace('test-agent');
+      const res = await request(buildApp())
+        .post(skillsPath(workspaceId))
         .set('User-Agent', 'test-agent')
         .set('Cookie', `open42_session=${sessionId}`)
         .send({});
@@ -152,9 +185,9 @@ describeDb('skills routes', () => {
 
     it('returns 503 when no LLM key is configured', async () => {
       mocks.resolveLlmKey.mockResolvedValueOnce(null);
-      const { sessionId } = await makeOwnerWorkspace('test-agent');
+      const { workspaceId, sessionId } = await makeOwnerWorkspace('test-agent');
       const res = await request(buildApp())
-        .post('/skills')
+        .post(skillsPath(workspaceId))
         .set('User-Agent', 'test-agent')
         .set('Cookie', `open42_session=${sessionId}`)
         .send({ intent: 'Draft something' });
@@ -165,7 +198,7 @@ describeDb('skills routes', () => {
     it('returns 201 + persists skills + skill_versions + skill_revisions on success', async () => {
       const { workspaceId, sessionId } = await makeOwnerWorkspace('test-agent');
       const res = await request(buildApp())
-        .post('/skills')
+        .post(skillsPath(workspaceId))
         .set('User-Agent', 'test-agent')
         .set('Cookie', `open42_session=${sessionId}`)
         .send(mintPayload('Draft a sample skill'));
@@ -212,17 +245,17 @@ describeDb('skills routes', () => {
     });
 
     it('returns 409 when the LLM picks a name that already exists', async () => {
-      const { sessionId } = await makeOwnerWorkspace('test-agent');
+      const { workspaceId, sessionId } = await makeOwnerWorkspace('test-agent');
       // First call wins.
       const first = await request(buildApp())
-        .post('/skills')
+        .post(skillsPath(workspaceId))
         .set('User-Agent', 'test-agent')
         .set('Cookie', `open42_session=${sessionId}`)
         .send(mintPayload('Draft once'));
       expect(first.status).toBe(201);
       // Same draft → same `name` → unique-violation maps to 409.
       const second = await request(buildApp())
-        .post('/skills')
+        .post(skillsPath(workspaceId))
         .set('User-Agent', 'test-agent')
         .set('Cookie', `open42_session=${sessionId}`)
         .send(mintPayload('Draft again'));
@@ -239,10 +272,10 @@ describeDb('skills routes', () => {
         model: 'claude-3-5-sonnet-latest',
         retries: 0,
       });
-      const { sessionId } = await makeOwnerWorkspace('test-agent');
+      const { workspaceId, sessionId } = await makeOwnerWorkspace('test-agent');
 
       const res = await request(buildApp())
-        .post('/skills')
+        .post(skillsPath(workspaceId))
         .set('User-Agent', 'test-agent')
         .set('Cookie', `open42_session=${sessionId}`)
         .send({
@@ -256,10 +289,10 @@ describeDb('skills routes', () => {
 
     it('returns 504 when skill generation times out', async () => {
       mocks.generateSkill.mockRejectedValueOnce(new Error('skill_generation_timeout'));
-      const { sessionId } = await makeOwnerWorkspace('test-agent');
+      const { workspaceId, sessionId } = await makeOwnerWorkspace('test-agent');
 
       const res = await request(buildApp())
-        .post('/skills')
+        .post(skillsPath(workspaceId))
         .set('User-Agent', 'test-agent')
         .set('Cookie', `open42_session=${sessionId}`)
         .send(mintPayload('Draft once'));
@@ -269,11 +302,11 @@ describeDb('skills routes', () => {
     });
   });
 
-  describe('GET /skills/:id/draft', () => {
+  describe('GET /workspaces/:id/skills/:skillId/draft', () => {
     it('returns 404 for an invalid uuid', async () => {
-      const { sessionId } = await makeOwnerWorkspace('test-agent');
+      const { workspaceId, sessionId } = await makeOwnerWorkspace('test-agent');
       const res = await request(buildApp())
-        .get('/skills/not-a-uuid/draft')
+        .get(`${skillsPath(workspaceId)}/not-a-uuid/draft`)
         .set('User-Agent', 'test-agent')
         .set('Cookie', `open42_session=${sessionId}`);
       expect(res.status).toBe(404);
@@ -284,28 +317,30 @@ describeDb('skills routes', () => {
       // Mint in workspace A.
       const a = await makeOwnerWorkspace('agent-a');
       const minted = await request(buildApp())
-        .post('/skills')
+        .post(skillsPath(a.workspaceId))
         .set('User-Agent', 'agent-a')
         .set('Cookie', `open42_session=${a.sessionId}`)
         .send(mintPayload('Draft'));
       expect(minted.status).toBe(201);
       const skillId = minted.body.draft.id;
 
-      // Fetch from workspace B → 404, not 403, so we don't reveal existence.
+      // Fetch from workspace B (B owns its own workspace and points at it) →
+      // 404 because A's skill isn't visible there. Cross-tenant probing
+      // reveals nothing.
       const b = await makeOwnerWorkspace('agent-b');
       const res = await request(buildApp())
-        .get(`/skills/${skillId}/draft`)
+        .get(`${skillPath(b.workspaceId, skillId)}/draft`)
         .set('User-Agent', 'agent-b')
         .set('Cookie', `open42_session=${b.sessionId}`);
       expect(res.status).toBe(404);
     });
   });
 
-  describe('POST /skills/:id (download)', () => {
+  describe('POST /workspaces/:id/skills/:skillId (download)', () => {
     it('returns 404 for an invalid uuid', async () => {
-      const { sessionId } = await makeOwnerWorkspace('test-agent');
+      const { workspaceId, sessionId } = await makeOwnerWorkspace('test-agent');
       const res = await request(buildApp())
-        .post('/skills/not-a-uuid')
+        .post(`${skillsPath(workspaceId)}/not-a-uuid`)
         .set('User-Agent', 'test-agent')
         .set('Cookie', `open42_session=${sessionId}`);
       expect(res.status).toBe(404);
@@ -313,9 +348,9 @@ describeDb('skills routes', () => {
     });
 
     it('downloads the zip and writes a skill_exports audit row', async () => {
-      const { sessionId } = await makeOwnerWorkspace('test-agent');
+      const { workspaceId, sessionId } = await makeOwnerWorkspace('test-agent');
       const minted = await request(buildApp())
-        .post('/skills')
+        .post(skillsPath(workspaceId))
         .set('User-Agent', 'test-agent')
         .set('Cookie', `open42_session=${sessionId}`)
         .send(mintPayload('Draft'));
@@ -323,7 +358,7 @@ describeDb('skills routes', () => {
       const skillId = minted.body.draft.id as string;
 
       const res = await request(buildApp())
-        .post(`/skills/${skillId}`)
+        .post(skillPath(workspaceId, skillId))
         .set('User-Agent', 'test-agent')
         .set('Cookie', `open42_session=${sessionId}`);
 
@@ -343,11 +378,11 @@ describeDb('skills routes', () => {
     });
   });
 
-  describe('POST /skills/:id/revise', () => {
+  describe('POST /workspaces/:id/skills/:skillId/revise', () => {
     it('writes a new version + two revisions and returns the bumped draft', async () => {
-      const { sessionId } = await makeOwnerWorkspace('test-agent');
+      const { workspaceId, sessionId } = await makeOwnerWorkspace('test-agent');
       const minted = await request(buildApp())
-        .post('/skills')
+        .post(skillsPath(workspaceId))
         .set('User-Agent', 'test-agent')
         .set('Cookie', `open42_session=${sessionId}`)
         .send(mintPayload('Draft'));
@@ -365,7 +400,7 @@ describeDb('skills routes', () => {
       });
 
       const res = await request(buildApp())
-        .post(`/skills/${skillId}/revise`)
+        .post(`${skillPath(workspaceId, skillId)}/revise`)
         .set('User-Agent', 'test-agent')
         .set('Cookie', `open42_session=${sessionId}`)
         .send({ text: 'Make it more concise.' });
@@ -384,9 +419,9 @@ describeDb('skills routes', () => {
     });
 
     it('bumps to v0.1.1 even when the model returns the same version string', async () => {
-      const { sessionId } = await makeOwnerWorkspace('test-agent');
+      const { workspaceId, sessionId } = await makeOwnerWorkspace('test-agent');
       const minted = await request(buildApp())
-        .post('/skills')
+        .post(skillsPath(workspaceId))
         .set('User-Agent', 'test-agent')
         .set('Cookie', `open42_session=${sessionId}`)
         .send(mintPayload('Draft'));
@@ -399,7 +434,7 @@ describeDb('skills routes', () => {
       });
 
       const res = await request(buildApp())
-        .post(`/skills/${skillId}/revise`)
+        .post(`${skillPath(workspaceId, skillId)}/revise`)
         .set('User-Agent', 'test-agent')
         .set('Cookie', `open42_session=${sessionId}`)
         .send({ text: 'Tweak nothing.' });
@@ -412,9 +447,9 @@ describeDb('skills routes', () => {
     });
 
     it('keeps the original skill name when the model changes frontmatter.name', async () => {
-      const { sessionId } = await makeOwnerWorkspace('test-agent');
+      const { workspaceId, sessionId } = await makeOwnerWorkspace('test-agent');
       const minted = await request(buildApp())
-        .post('/skills')
+        .post(skillsPath(workspaceId))
         .set('User-Agent', 'test-agent')
         .set('Cookie', `open42_session=${sessionId}`)
         .send(mintPayload('Draft'));
@@ -434,7 +469,7 @@ describeDb('skills routes', () => {
       });
 
       const res = await request(buildApp())
-        .post(`/skills/${skillId}/revise`)
+        .post(`${skillPath(workspaceId, skillId)}/revise`)
         .set('User-Agent', 'test-agent')
         .set('Cookie', `open42_session=${sessionId}`)
         .send({ text: 'Rename it maliciously.' });
@@ -454,16 +489,16 @@ describeDb('skills routes', () => {
     });
 
     it('returns 400 when text is missing', async () => {
-      const { sessionId } = await makeOwnerWorkspace('test-agent');
+      const { workspaceId, sessionId } = await makeOwnerWorkspace('test-agent');
       const minted = await request(buildApp())
-        .post('/skills')
+        .post(skillsPath(workspaceId))
         .set('User-Agent', 'test-agent')
         .set('Cookie', `open42_session=${sessionId}`)
         .send(mintPayload('Draft'));
       const skillId = minted.body.draft.id as string;
 
       const res = await request(buildApp())
-        .post(`/skills/${skillId}/revise`)
+        .post(`${skillPath(workspaceId, skillId)}/revise`)
         .set('User-Agent', 'test-agent')
         .set('Cookie', `open42_session=${sessionId}`)
         .send({});
@@ -472,9 +507,9 @@ describeDb('skills routes', () => {
     });
 
     it('returns 404 for an invalid uuid', async () => {
-      const { sessionId } = await makeOwnerWorkspace('test-agent');
+      const { workspaceId, sessionId } = await makeOwnerWorkspace('test-agent');
       const res = await request(buildApp())
-        .post('/skills/not-a-uuid/revise')
+        .post(`${skillsPath(workspaceId)}/not-a-uuid/revise`)
         .set('User-Agent', 'test-agent')
         .set('Cookie', `open42_session=${sessionId}`)
         .send({ text: 'Trying to revise' });
@@ -483,9 +518,9 @@ describeDb('skills routes', () => {
     });
 
     it('returns 504 when revision generation times out', async () => {
-      const { sessionId } = await makeOwnerWorkspace('test-agent');
+      const { workspaceId, sessionId } = await makeOwnerWorkspace('test-agent');
       const minted = await request(buildApp())
-        .post('/skills')
+        .post(skillsPath(workspaceId))
         .set('User-Agent', 'test-agent')
         .set('Cookie', `open42_session=${sessionId}`)
         .send(mintPayload('Draft'));
@@ -493,7 +528,7 @@ describeDb('skills routes', () => {
       mocks.generateSkill.mockRejectedValueOnce(new Error('skill_generation_timeout'));
 
       const res = await request(buildApp())
-        .post(`/skills/${skillId}/revise`)
+        .post(`${skillPath(workspaceId, skillId)}/revise`)
         .set('User-Agent', 'test-agent')
         .set('Cookie', `open42_session=${sessionId}`)
         .send({ text: 'Make it time out.' });
@@ -504,15 +539,16 @@ describeDb('skills routes', () => {
     it('returns 404 when reviseing a skill from another workspace', async () => {
       const a = await makeOwnerWorkspace('agent-a');
       const minted = await request(buildApp())
-        .post('/skills')
+        .post(skillsPath(a.workspaceId))
         .set('User-Agent', 'agent-a')
         .set('Cookie', `open42_session=${a.sessionId}`)
         .send(mintPayload('Draft'));
       const skillId = minted.body.draft.id as string;
 
+      // B authenticated against B's workspace; A's skill not found there.
       const b = await makeOwnerWorkspace('agent-b');
       const res = await request(buildApp())
-        .post(`/skills/${skillId}/revise`)
+        .post(`${skillPath(b.workspaceId, skillId)}/revise`)
         .set('User-Agent', 'agent-b')
         .set('Cookie', `open42_session=${b.sessionId}`)
         .send({ text: 'Trying to revise across tenants' });

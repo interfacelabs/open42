@@ -20,6 +20,7 @@ import {
 import { motion } from 'motion/react';
 import { ArrowRight } from 'lucide-react';
 
+import { csrfHeaders } from '@/lib/csrf';
 import { EASE_ENTER } from '@/lib/motion';
 import type { WorkspaceRuntime } from '@/lib/onboarding/derive';
 import { providerLogo } from '@/lib/provider-logos';
@@ -42,10 +43,11 @@ const COMING_SOON_SOURCES: Array<{
 
 interface ConnectSourcesStepProps {
   runtime: WorkspaceRuntime;
+  workspaceId: string | null;
   mutate: () => Promise<unknown>;
 }
 
-export function ConnectSourcesStep({ runtime, mutate }: ConnectSourcesStepProps) {
+export function ConnectSourcesStep({ runtime, workspaceId, mutate }: ConnectSourcesStepProps) {
   const router = useRouter();
   const [busy, setBusy] = useState<'notion' | 'zip' | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -64,11 +66,11 @@ export function ConnectSourcesStep({ runtime, mutate }: ConnectSourcesStepProps)
     : null;
 
   const connectNotion = useCallback(async () => {
-    if (busy || blocked) return;
+    if (busy || blocked || !workspaceId) return;
     setBusy('notion');
     setError(null);
     try {
-      const response = await fetch('/api/connections/init', {
+      const response = await fetch(`/api/workspaces/${workspaceId}/connections/init`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', ...csrfHeaders() },
         body: JSON.stringify({ kind: 'notion-composio' }),
@@ -92,7 +94,7 @@ export function ConnectSourcesStep({ runtime, mutate }: ConnectSourcesStepProps)
       setError('network_error');
       setBusy(null);
     }
-  }, [busy, blocked, mutate, router]);
+  }, [busy, blocked, mutate, router, workspaceId]);
 
   const onFilePick = useCallback(() => {
     if (busy || blocked) return;
@@ -104,13 +106,13 @@ export function ConnectSourcesStep({ runtime, mutate }: ConnectSourcesStepProps)
       const file = event.target.files?.[0];
       // Reset the input so picking the same file twice still triggers change.
       if (event.target) event.target.value = '';
-      if (!file || busy || blocked) return;
+      if (!file || busy || blocked || !workspaceId) return;
       setBusy('zip');
       setError(null);
       try {
         const form = new FormData();
         form.append('file', file);
-        const response = await fetch('/api/connections/notion-zip', {
+        const response = await fetch(`/api/workspaces/${workspaceId}/connections/notion-zip`, {
           method: 'POST',
           headers: { ...csrfHeaders() },
           body: form,
@@ -128,7 +130,7 @@ export function ConnectSourcesStep({ runtime, mutate }: ConnectSourcesStepProps)
         setBusy(null);
       }
     },
-    [busy, blocked, mutate, router],
+    [busy, blocked, mutate, router, workspaceId],
   );
 
   const skip = useCallback(() => {
@@ -327,15 +329,6 @@ function SourceCard({
       </p>
     </button>
   );
-}
-
-function csrfHeaders(): HeadersInit {
-  if (typeof document === 'undefined') return {};
-  const csrf = document.cookie
-    .split('; ')
-    .find((part) => part.startsWith('open42_csrf='))
-    ?.split('=')[1];
-  return csrf ? { 'X-CSRF-Token': csrf } : {};
 }
 
 function humanizeError(code: string): string {

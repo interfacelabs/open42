@@ -10,19 +10,36 @@ import { EnvelopeStage } from '@/components/onboarding/EnvelopeStage';
 import { Nameplate } from '@/components/onboarding/Nameplate';
 import { BrainSpinUp } from '@/components/onboarding/illustrations/BrainSpinUp';
 import { PaperBoats } from '@/components/onboarding/illustrations/PaperBoats';
+import { csrfHeaders } from '@/lib/csrf';
+import { isValidInviteEmail, parseInviteEmails } from '@/lib/email-parser';
 import {
   CurrentPayload,
+  OnboardMode,
   OnboardStep,
   WorkspaceRuntime,
   deriveOnboardStep,
 } from '@/lib/onboarding/derive';
 import { EASE_STANDARD } from '@/lib/motion';
+import {
+  useWorkspaceStore,
+  type WorkspaceSummary,
+} from '@/lib/workspaces/store';
 
 interface OnboardCurrentPayload extends CurrentPayload {
   workspace: { id: string; name: string; runtime: WorkspaceRuntime } | null;
   invites: Array<{ id: string; email: string; status: string }>;
   user: { id: string; email: string };
 }
+
+/**
+ * Codex round-6 P2: when the user reloads (or navigates back) mid-provisioning
+ * during the mode=create flow, the React-only `createdWorkspaceId` state
+ * resets to null and the polling effect stops watching for the new
+ * workspace — the page hangs on the spinner forever. Persisting the id to
+ * sessionStorage (per-tab, cleared on tab close) survives a reload while
+ * still scoping recovery to the same browser tab.
+ */
+const CREATE_PENDING_KEY = 'open42:create_pending_workspace_id';
 
 const fetcher = async (url: string) => {
   const res = await fetch(url);
@@ -34,17 +51,10 @@ const fetcher = async (url: string) => {
   return res.json();
 };
 
-const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-const isValidEmail = (s: string) => EMAIL_RE.test(s.trim().toLowerCase());
-const parseLines = (text: string): string[] =>
-  text
-    .split(/[,;\n]+/)
-    .map((s) => s.trim().toLowerCase())
-    .filter(Boolean);
-
 export default function OnboardPage() {
   const router = useRouter();
   const urlStep = typeof router.query.step === 'string' ? router.query.step : null;
+  const mode: OnboardMode = router.query.mode === 'create' ? 'create' : 'first';
   // On the provisioning step we need to poll until runtime flips to 'ready'.
   // SWR's refreshInterval is read on every render, so we can flip it from a
   // local state that updates as the derived step changes.
@@ -59,6 +69,39 @@ export default function OnboardPage() {
   const [workspaceName, setWorkspaceName] = useState<string>('');
   const [seededFromServer, setSeededFromServer] = useState(false);
   const [inviteText, setInviteText] = useState<string>('');
+  // mode=create: id of the workspace we just POST'd /api/workspaces for. We
+  // poll /api/workspaces (the list endpoint) for THIS workspace's status —
+  // /api/workspaces/current can't be used because POST /workspaces does not
+  // change users.current_workspace_id on the server, so /current keeps
+  // returning the OLD workspace forever and our previous condition never
+  // fired (users got stuck on the provisioning step).
+  //
+  // Initialise from sessionStorage so a reload during provisioning doesn't
+  // strand the user on the spinner (round-6 P2). Cleared once the create
+  // flow resolves (ready → home, or failed → switched + retry UI).
+  const [createdWorkspaceId, setCreatedWorkspaceIdState] = useState<string | null>(() => {
+    if (typeof window === 'undefined') return null;
+    return window.sessionStorage.getItem(CREATE_PENDING_KEY);
+  });
+  // Wrapper that mirrors the React state into sessionStorage so a reload
+  // mid-provisioning can pick up where we left off. We deliberately don't
+  // useEffect this: the setter is the only call site, so wrapping it keeps
+  // the side-effect adjacent to the state update and avoids double-writes.
+  const setCreatedWorkspaceId = useCallback((id: string) => {
+    if (typeof window !== 'undefined') {
+      window.sessionStorage.setItem(CREATE_PENDING_KEY, id);
+    }
+    setCreatedWorkspaceIdState(id);
+  }, []);
+
+  // List poll — only active in create mode after submit. We surface
+  // `workspaces` (full list) so the redirect effect can locate the new row
+  // by id and read its `status`.
+  const { data: wsList } = useSWR<{ workspaces: WorkspaceSummary[] }>(
+    mode === 'create' && createdWorkspaceId ? '/api/workspaces' : null,
+    fetcher,
+    { refreshInterval: 1500 },
+  );
 
   useEffect(() => {
     // Only redirect on a *settled* 401 — SWR returns the previously cached
@@ -71,29 +114,39 @@ export default function OnboardPage() {
   }, [error, isValidating, router]);
 
   // Seed the workspace input from the server payload exactly once when current arrives.
+  // In create mode the existing workspace name should NOT pre-fill the form —
+  // the user is creating a brand-new workspace.
   useEffect(() => {
+    if (mode === 'create') return;
     if (!seededFromServer && current?.workspace?.name) {
       setWorkspaceName(current.workspace.name);
       setSeededFromServer(true);
     }
-  }, [current, seededFromServer]);
+  }, [current, seededFromServer, mode]);
 
-  const step: OnboardStep | null = current ? deriveOnboardStep(current, urlStep) : null;
+  // In create mode, while SWR is still loading we should still show the
+  // workspace-name step (the user has no need to wait on /workspaces/current
+  // — they're creating a new one). Once `current` lands we re-derive normally.
+  const step: OnboardStep | null = current
+    ? deriveOnboardStep(current, urlStep, mode)
+    : mode === 'create'
+      ? 'workspace'
+      : null;
   const topbarWorkspaceName = current?.workspace?.name ?? '';
 
-  const inviteLines = useMemo(() => parseLines(inviteText), [inviteText]);
+  const inviteLines = useMemo(() => parseInviteEmails(inviteText), [inviteText]);
 
   // Poll on the provisioning step; idle otherwise.
   useEffect(() => {
     setPollMs(step === 'provisioning' ? 1500 : 0);
   }, [step]);
 
-  // When the runtime flips ready while we're on the provisioning step,
-  // hand off to the next step (connect a source). When derive returns null
-  // (onboarding fully complete — workspace ready + at least one connection),
-  // hand off to the dashboard at /.
+  // First-time (mode='first') flow: when the runtime flips ready on the
+  // provisioning step, hand off to the connect step. When derive returns
+  // null (workspace ready + at least one connection), hand off home.
   const runtime = current?.workspace?.runtime;
   useEffect(() => {
+    if (mode === 'create') return;
     if (!current) return;
     if (step === 'provisioning' && runtime === 'ready') {
       void router.replace('/onboard?step=connect');
@@ -102,7 +155,65 @@ export default function OnboardPage() {
     if (step === null) {
       void router.replace('/');
     }
-  }, [current, step, runtime, router]);
+  }, [current, step, runtime, router, mode]);
+
+  // mode='create' flow: poll /api/workspaces (the list) for the new
+  // workspace and, once *its* status flips to 'ready', switch + redirect.
+  // Using the list endpoint avoids /workspaces/current's staleness — the
+  // server never updates current_workspace_id from POST /workspaces, so
+  // the previous condition (current.workspace?.id === newId) could never
+  // become true and users were stranded on the provisioning step.
+  //
+  // If the new workspace flips to 'failed' instead, switch into it so the
+  // ProvisioningStep (which reads current.workspace.runtime from
+  // /api/workspaces/current) renders its failure/retry UI for the new
+  // workspace. /workspaces/current already honors current_workspace_id
+  // (round-2 fix), so the failure surface "just works" after the switch.
+  useEffect(() => {
+    if (mode !== 'create') return;
+    if (!createdWorkspaceId) return;
+    const newWs = wsList?.workspaces?.find((w) => w.id === createdWorkspaceId);
+    if (!newWs) return;
+    if (newWs.status === 'ready') {
+      void (async () => {
+        try {
+          await useWorkspaceStore.getState().switchTo(createdWorkspaceId);
+        } catch {
+          // best-effort; the refresh below reconciles store state regardless
+        }
+        await useWorkspaceStore.getState().refresh();
+        // Resolution reached — clear the per-tab create marker so a future
+        // visit to /auth/onboard?mode=create doesn't re-read a stale id.
+        if (typeof window !== 'undefined') {
+          window.sessionStorage.removeItem(CREATE_PENDING_KEY);
+        }
+        void router.replace('/');
+      })();
+      return;
+    }
+    if (newWs.status === 'failed') {
+      // Switch into the failed workspace + remutate /workspaces/current so
+      // the ProvisioningStep we're already on re-renders against the new
+      // workspace's runtime ('failed' → retry button). No redirect — the
+      // user stays on the provisioning step until they retry. Also clear
+      // the per-tab create marker: the failure UI's retry path goes through
+      // /workspaces/onboarding/retry-provision against the current
+      // workspace, so this polling effect's job is done. Keeping the
+      // stashed id would let a successful retry re-read it on the next
+      // mount and re-arm the list poll for an already-resolved workspace.
+      if (typeof window !== 'undefined') {
+        window.sessionStorage.removeItem(CREATE_PENDING_KEY);
+      }
+      void (async () => {
+        try {
+          await useWorkspaceStore.getState().switchTo(createdWorkspaceId);
+        } catch {
+          // best-effort; the mutate below still pulls the new current
+        }
+        await mutate();
+      })();
+    }
+  }, [mode, createdWorkspaceId, wsList, router, mutate]);
 
   return (
     <>
@@ -120,7 +231,18 @@ export default function OnboardPage() {
                   step === 'connect' ? 'max-w-[560px]' : 'max-w-[460px]'
                 }`}
               >
-                {isLoading || !current ? (
+                {mode === 'create' && step === 'workspace' ? (
+                  // In create mode the workspace-name step renders even before
+                  // SWR settles — the user is creating a new workspace and
+                  // doesn't need any state from /workspaces/current to start.
+                  <WorkspaceStep
+                    name={workspaceName}
+                    setName={setWorkspaceName}
+                    mutate={mutate}
+                    mode={mode}
+                    onCreated={setCreatedWorkspaceId}
+                  />
+                ) : isLoading || !current ? (
                   <p className="font-mono text-xs text-text-subtle" aria-live="polite">
                     {error && (error as { status?: number }).status !== 401
                       ? 'Couldn\u2019t load your workspace. Refresh to try again.'
@@ -131,12 +253,15 @@ export default function OnboardPage() {
                     name={workspaceName}
                     setName={setWorkspaceName}
                     mutate={mutate}
+                    mode={mode}
+                    onCreated={setCreatedWorkspaceId}
                   />
                 ) : step === 'provisioning' ? (
                   <ProvisioningStep current={current} mutate={mutate} />
                 ) : step === 'connect' ? (
                   <ConnectSourcesStep
                     runtime={current.workspace?.runtime ?? 'provisioning'}
+                    workspaceId={current.workspace?.id ?? null}
                     mutate={mutate}
                   />
                 ) : step === 'invite' ? (
@@ -168,7 +293,7 @@ export default function OnboardPage() {
                 </>
               }
               attribution="— OPEN42 OPERATING PRINCIPLE №2"
-              illustration={<EnvelopeStage lines={inviteLines} isValid={isValidEmail} />}
+              illustration={<EnvelopeStage lines={inviteLines} isValid={isValidInviteEmail} />}
             />
           ) : step === 'provisioning' ? (
             <EditorialPane
@@ -316,10 +441,14 @@ function WorkspaceStep({
   name,
   setName,
   mutate,
+  mode,
+  onCreated,
 }: {
   name: string;
   setName: (value: string) => void;
   mutate: () => Promise<unknown>;
+  mode: OnboardMode;
+  onCreated: (id: string) => void;
 }) {
   const router = useRouter();
   const [submitting, setSubmitting] = useState(false);
@@ -333,7 +462,16 @@ function WorkspaceStep({
       setSubmitting(true);
       setError(null);
       try {
-        const response = await fetch('/api/workspaces/onboarding/workspace', {
+        // In `mode='create'` we hit the new POST /api/workspaces endpoint
+        // (Chunk 5) — it creates an additional workspace + owner membership
+        // for the already-onboarded user. In the legacy first-time flow we
+        // keep using the onboarding alias to preserve its specific semantics
+        // (idempotent rename of the user's bootstrap workspace).
+        const url =
+          mode === 'create'
+            ? '/api/workspaces'
+            : '/api/workspaces/onboarding/workspace';
+        const response = await fetch(url, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', ...csrfHeaders() },
           body: JSON.stringify({ name: trimmed }),
@@ -344,6 +482,18 @@ function WorkspaceStep({
           setSubmitting(false);
           return;
         }
+        if (mode === 'create') {
+          // Capture the new workspace id so the parent's effect can detect
+          // when its runtime flips to 'ready' and route home.
+          const payload = (await response.json().catch(() => ({}))) as {
+            workspace?: { id?: string };
+          };
+          const newId = payload.workspace?.id;
+          if (newId) onCreated(newId);
+          await mutate();
+          await router.replace('/onboard?mode=create&step=provisioning');
+          return;
+        }
         await mutate();
         await router.replace('/onboard?step=invite');
       } catch {
@@ -351,7 +501,7 @@ function WorkspaceStep({
         setSubmitting(false);
       }
     },
-    [name, submitting, mutate, router],
+    [name, submitting, mutate, router, mode, onCreated],
   );
 
   return (
@@ -433,7 +583,7 @@ function InviteStep({
   const [error, setError] = useState<string | null>(null);
   const [warning, setWarning] = useState<string | null>(null);
 
-  const validEmails = useMemo(() => lines.filter(isValidEmail), [lines]);
+  const validEmails = useMemo(() => lines.filter(isValidInviteEmail), [lines]);
 
   const removeChip = useCallback(
     (target: string) => {
@@ -658,14 +808,27 @@ function ProvisioningStep({
       ? 'Taking a little longer than usual. Hold tight — you can keep this tab open or come back later.'
       : 'We\u2019re building you a private runtime. This usually takes 30\u201360 seconds. You can leave this tab open or check back in a minute.';
 
+  const workspaceId = current.workspace?.id ?? null;
   const onRetry = useCallback(async () => {
     if (retrying) return;
+    if (!workspaceId) {
+      // No workspace to retry against — shouldn't happen because the
+      // provisioning step only renders when current.workspace exists, but
+      // guard anyway so we don't fire a 400 against the API.
+      setRetryError('retry_failed');
+      return;
+    }
     setRetrying(true);
     setRetryError(null);
     try {
+      // Codex round-4 P2: retry endpoint now requires workspace_id in the
+      // body (it used to LIMIT-1 over the user's owned workspaces). The
+      // workspace id is known from `current` — the page already renders
+      // this specific workspace's failed/overdue state.
       const response = await fetch('/api/workspaces/onboarding/retry-provision', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', ...csrfHeaders() },
+        body: JSON.stringify({ workspace_id: workspaceId }),
       });
       if (!response.ok && response.status !== 202) {
         const payload = await response.json().catch(() => ({}));
@@ -679,7 +842,7 @@ function ProvisioningStep({
       setRetryError('network_error');
       setRetrying(false);
     }
-  }, [retrying, mutate]);
+  }, [retrying, workspaceId, mutate]);
 
   return (
     <motion.div
@@ -767,15 +930,6 @@ function ProvisioningStep({
       ) : null}
     </motion.div>
   );
-}
-
-function csrfHeaders(): HeadersInit {
-  if (typeof document === 'undefined') return {};
-  const csrf = document.cookie
-    .split('; ')
-    .find((part) => part.startsWith('open42_csrf='))
-    ?.split('=')[1];
-  return csrf ? { 'X-CSRF-Token': csrf } : {};
 }
 
 function humanizeError(code: string): string {

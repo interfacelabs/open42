@@ -6,13 +6,18 @@ import { motion } from 'motion/react';
 
 import { EditorialPane } from '@/components/onboarding/EditorialPane';
 import { CardCabinet } from '@/components/onboarding/illustrations/CardCabinet';
+import { csrfHeaders } from '@/lib/csrf';
 import { EASE_STANDARD } from '@/lib/motion';
+
+import { runAcceptFlow } from './accept-flow';
+
+const PENDING_KEY = 'open42:pending_invite';
+type Pending = { inviteId: string; tokenHash: string; type: string };
 
 type AcceptState =
   | { kind: 'verifying' }
   | { kind: 'redirecting' }
   | { kind: 'expired' }
-  | { kind: 'blocked' }
   | { kind: 'mismatch' }
   | { kind: 'error'; message: string };
 
@@ -68,42 +73,19 @@ const COPY: Record<AcceptState['kind'], StateCopy> = {
     attribution: '— A NOTE TO THE READER',
     showCta: true,
   },
-  blocked: {
-    heading: (
-      <>
-        You already have{' '}
-        <em className="font-newsreader font-normal italic text-text-primary">
-          a brain.
-        </em>
-      </>
-    ),
-    sub: (
-      <>
-        Open42 supports one workspace per account in P1. Ask your team admin to
-        merge later, or sign in to your existing brain.
-      </>
-    ),
-    quote: (
-      <>
-        One brain <em>at a time.</em>
-      </>
-    ),
-    attribution: '— OPEN42 OPERATING PRINCIPLE №5',
-    showCta: true,
-  },
   mismatch: {
     heading: (
       <>
-        Wrong{' '}
+        This invite is for{' '}
         <em className="font-newsreader font-normal italic text-text-primary">
-          email.
+          a different email.
         </em>
       </>
     ),
     sub: (
       <>
-        This invite was sent to a different address. Sign in with the email the
-        invite was sent to.
+        Sign out of your current Open42 account, then open the invite link again
+        to accept it.
       </>
     ),
     quote: (
@@ -112,7 +94,7 @@ const COPY: Record<AcceptState['kind'], StateCopy> = {
       </>
     ),
     attribution: '— A NOTE TO THE READER',
-    showCta: true,
+    showCta: false,
   },
   error: {
     heading: (
@@ -144,71 +126,119 @@ const COPY: Record<AcceptState['kind'], StateCopy> = {
 export default function AcceptInvitePage() {
   const router = useRouter();
   const [state, setState] = useState<AcceptState>({ kind: 'verifying' });
+  const [signingOut, setSigningOut] = useState(false);
 
   useEffect(() => {
     if (!router.isReady) return;
 
-    const inviteId = String(router.query.invite_id ?? '');
+    // 1. Reconstruct pending state if we just signed out (read-then-delete).
+    let stashed: Pending | null = null;
+    if (typeof window !== 'undefined') {
+      const raw = window.sessionStorage.getItem(PENDING_KEY);
+      if (raw) {
+        try {
+          stashed = JSON.parse(raw) as Pending;
+        } catch {
+          stashed = null;
+        }
+        window.sessionStorage.removeItem(PENDING_KEY);
+      }
+    }
+
+    // 2. Resolve credentials: stash wins, then query, then hash.
+    const inviteIdFromQuery = String(router.query.invite_id ?? '');
     const tokenHashFromQuery = String(router.query.token_hash ?? '');
     const hashParams = new URLSearchParams(
       typeof window !== 'undefined'
         ? window.location.hash.replace(/^#/, '')
         : '',
     );
-    const tokenHashFromHash = hashParams.get('token_hash') ?? '';
-    const accessTokenFromHash = hashParams.get('access_token') ?? '';
-    const tokenHash = tokenHashFromQuery || tokenHashFromHash;
-    const type = String(
-      router.query.type ?? hashParams.get('type') ?? 'invite',
-    );
+    const inviteId = stashed?.inviteId || inviteIdFromQuery;
+    const tokenHash =
+      stashed?.tokenHash ||
+      tokenHashFromQuery ||
+      hashParams.get('token_hash') ||
+      '';
+    const type =
+      stashed?.type ||
+      String(router.query.type ?? '') ||
+      hashParams.get('type') ||
+      'invite';
+    const accessToken = hashParams.get('access_token') ?? null;
 
-    if (!inviteId || (!tokenHash && !accessTokenFromHash)) {
-      setState({ kind: 'error', message: 'invalid_link' });
+    // 3. Strip token material from the visible URL so refresh, history, and
+    //    referrers do not retain it.
+    if (typeof window !== 'undefined') {
+      if (window.location.hash || tokenHashFromQuery) {
+        const clean = new URL(window.location.href);
+        for (const key of [
+          'token_hash',
+          'tokenHash',
+          'access_token',
+          'refresh_token',
+          'type',
+        ]) {
+          clean.searchParams.delete(key);
+        }
+        clean.hash = '';
+        window.history.replaceState(
+          null,
+          '',
+          clean.pathname + (clean.search ? clean.search : ''),
+        );
+      }
+    }
+
+    if (!inviteId) {
+      setState({ kind: 'error', message: 'missing_invite_id' });
       return;
     }
 
-    // Strip token material from URL so refresh, history, and referrers do not retain it.
-    if (typeof window !== 'undefined') {
-      const clean = new URL(window.location.href);
-      for (const key of ['token_hash', 'tokenHash', 'access_token', 'refresh_token', 'type']) {
-        clean.searchParams.delete(key);
-      }
-      clean.hash = '';
-      window.history.replaceState(
-        null,
-        '',
-        clean.pathname + (clean.search ? clean.search : ''),
+    // 4. Write the stash NOW (before branching). If the user hits B2 and
+    //    clicks "Sign out", sessionStorage already carries the magic-link
+    //    credentials so the reloaded tab can fall back into Path A.
+    // Stash the magic-link credentials so a B2 sign-out + reload picks them
+    // up on the next mount and runs Path A. tokenHash is the SHA-hashed
+    // Supabase verifier (single-use, short-lived) — NOT a raw bearer
+    // token — so sessionStorage is acceptable. access_token (when present
+    // in the URL hash fragment) is intentionally NOT stashed: a present
+    // access_token means Supabase has already authenticated the user, and
+    // stashing it would widen the XSS attack surface unnecessarily.
+    if (tokenHash && typeof window !== 'undefined') {
+      window.sessionStorage.setItem(
+        PENDING_KEY,
+        JSON.stringify({ inviteId, tokenHash, type }),
       );
     }
 
     let cancelled = false;
-    void fetch('/api/auth/verify', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(
-        accessTokenFromHash
-          ? { accessToken: accessTokenFromHash, inviteId }
-          : { tokenHash, type, inviteId },
-      ),
-    })
-      .then(async (res) => {
+    runAcceptFlow(
+      { inviteId, tokenHash, type, accessToken },
+      {
+        clearPendingStash: () => {
+          if (typeof window !== 'undefined') {
+            window.sessionStorage.removeItem(PENDING_KEY);
+          }
+        },
+      },
+    )
+      .then(async (outcome) => {
         if (cancelled) return;
-        const body = await res.json().catch(() => ({}));
-        if (res.ok) {
-          setState({ kind: 'redirecting' });
-          await router.replace(body.redirectTo ?? '/');
-          return;
+        switch (outcome.kind) {
+          case 'redirect':
+            setState({ kind: 'redirecting' });
+            await router.replace(outcome.to);
+            return;
+          case 'mismatch':
+            setState({ kind: 'mismatch' });
+            return;
+          case 'expired':
+            setState({ kind: 'expired' });
+            return;
+          case 'error':
+            setState({ kind: 'error', message: outcome.message });
+            return;
         }
-        if (body?.error === 'invite_expired') setState({ kind: 'expired' });
-        else if (body?.error === 'invite_blocked')
-          setState({ kind: 'blocked' });
-        else if (body?.error === 'invite_email_mismatch')
-          setState({ kind: 'mismatch' });
-        else
-          setState({
-            kind: 'error',
-            message: body?.error ?? 'unknown',
-          });
       })
       .catch(() => {
         if (cancelled) return;
@@ -218,9 +248,32 @@ export default function AcceptInvitePage() {
     return () => {
       cancelled = true;
     };
-  }, [router]);
+    // Run once when router becomes ready. We intentionally only depend on
+    // router.isReady; do NOT add router.query, router.query.invite_id, or
+    // router to this array. Next's router instance changes on every
+    // navigation, causing this effect to refire and loop infinitely. The
+    // closure captures router.query at the moment isReady flips true,
+    // which is the only run that matters.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [router.isReady]);
 
   const copy = useMemo(() => COPY[state.kind], [state.kind]);
+
+  const handleSignOut = async () => {
+    if (signingOut) return;
+    setSigningOut(true);
+    try {
+      // Codex round-2 P2: backend enforces CSRF on /auth/signout — without
+      // the header the request 403s as csrf_token_invalid, the catch
+      // swallows it, and the user is stuck on the invite-mismatch screen.
+      await fetch('/api/auth/signout', { method: 'POST', headers: csrfHeaders() });
+    } catch {
+      // ignore — we still want to reload so a fresh mount can re-evaluate.
+    }
+    if (typeof window !== 'undefined') {
+      window.location.reload();
+    }
+  };
 
   return (
     <>
@@ -272,7 +325,18 @@ export default function AcceptInvitePage() {
                     </p>
                   ) : null}
 
-                  {copy.showCta ? (
+                  {state.kind === 'mismatch' ? (
+                    <div className="mt-7">
+                      <button
+                        type="button"
+                        onClick={handleSignOut}
+                        disabled={signingOut}
+                        className="inline-flex h-11 items-center justify-center rounded-xl bg-gradient-to-b from-neutral-800 to-neutral-950 px-6 text-[15px] font-medium tracking-[-0.01em] text-white shadow-[inset_0_1px_0_rgba(255,255,255,0.18),0_1px_2px_rgba(0,0,0,0.18),0_8px_20px_rgba(0,0,0,0.12)] transition-all duration-200 hover:brightness-110 active:translate-y-px disabled:cursor-not-allowed disabled:opacity-60"
+                      >
+                        {signingOut ? 'Signing out\u2026' : 'Sign out'}
+                      </button>
+                    </div>
+                  ) : copy.showCta ? (
                     <div className="mt-7">
                       <Link
                         href="/sign_in"

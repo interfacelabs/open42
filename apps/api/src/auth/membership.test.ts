@@ -18,7 +18,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 interface MembershipRow {
   userId: string;
   workspaceId: string;
-  role: 'owner' | 'member';
+  role: 'owner' | 'admin' | 'member';
 }
 
 interface WorkspaceRow {
@@ -27,7 +27,7 @@ interface WorkspaceRow {
 }
 
 const state = vi.hoisted(() => ({
-  memberships: [] as Array<{ userId: string; workspaceId: string; role: 'owner' | 'member' }>,
+  memberships: [] as Array<{ userId: string; workspaceId: string; role: 'owner' | 'admin' | 'member' }>,
   workspaces: [] as Array<{ id: string; deletedAt: Date | null }>,
   predicate: null as null | ((row: { membership: MembershipRow; workspace: WorkspaceRow }) => boolean),
   capturedSelection: null as null | 'role' | 'workspaceId',
@@ -131,7 +131,8 @@ function evalPredicate(
   }
 }
 
-const { resolveOwnerWorkspaceId, assertWorkspaceMembership } = await import('./membership.js');
+const { resolveOwnerWorkspaceId, assertWorkspaceMembership, assertCanInvite, assertCanManageMembers } =
+  await import('./membership.js');
 
 describe('membership-gated workspace resolution', () => {
   beforeEach(() => {
@@ -208,6 +209,56 @@ describe('membership-gated workspace resolution', () => {
       await expect(assertWorkspaceMembership('user-B', 'ws-A')).rejects.toThrow(
         'workspace_membership_required',
       );
+    });
+  });
+
+  describe('assertCanInvite', () => {
+    it('returns the role for owner', async () => {
+      state.memberships = [{ userId: 'u1', workspaceId: 'w1', role: 'owner' }];
+      state.workspaces = [{ id: 'w1', deletedAt: null }];
+      const { role } = await assertCanInvite('u1', 'w1');
+      expect(role).toBe('owner');
+    });
+    it('returns the role for admin', async () => {
+      state.memberships = [{ userId: 'u1', workspaceId: 'w1', role: 'admin' }];
+      state.workspaces = [{ id: 'w1', deletedAt: null }];
+      const { role } = await assertCanInvite('u1', 'w1');
+      expect(role).toBe('admin');
+    });
+    it('throws 403 for member', async () => {
+      state.memberships = [{ userId: 'u1', workspaceId: 'w1', role: 'member' }];
+      state.workspaces = [{ id: 'w1', deletedAt: null }];
+      await expect(assertCanInvite('u1', 'w1')).rejects.toMatchObject({ status: 403 });
+    });
+    it('throws 403 when not a member', async () => {
+      state.memberships = [];
+      state.workspaces = [{ id: 'w1', deletedAt: null }];
+      await expect(assertCanInvite('u1', 'w1')).rejects.toMatchObject({ status: 403 });
+    });
+  });
+
+  describe('assertCanManageMembers', () => {
+    it('returns the role for owner', async () => {
+      state.memberships = [{ userId: 'u1', workspaceId: 'w1', role: 'owner' }];
+      state.workspaces = [{ id: 'w1', deletedAt: null }];
+      const { role } = await assertCanManageMembers('u1', 'w1');
+      expect(role).toBe('owner');
+    });
+    it('returns the role for admin', async () => {
+      state.memberships = [{ userId: 'u1', workspaceId: 'w1', role: 'admin' }];
+      state.workspaces = [{ id: 'w1', deletedAt: null }];
+      const { role } = await assertCanManageMembers('u1', 'w1');
+      expect(role).toBe('admin');
+    });
+    it('throws 403 for member', async () => {
+      state.memberships = [{ userId: 'u1', workspaceId: 'w1', role: 'member' }];
+      state.workspaces = [{ id: 'w1', deletedAt: null }];
+      await expect(assertCanManageMembers('u1', 'w1')).rejects.toMatchObject({ status: 403 });
+    });
+    it('throws 403 when not a member', async () => {
+      state.memberships = [];
+      state.workspaces = [{ id: 'w1', deletedAt: null }];
+      await expect(assertCanManageMembers('u1', 'w1')).rejects.toMatchObject({ status: 403 });
     });
   });
 });

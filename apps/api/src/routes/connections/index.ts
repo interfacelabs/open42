@@ -1,26 +1,23 @@
-import { Router, type Request } from 'express';
+import { Router } from 'express';
 import { and, eq, sql } from 'drizzle-orm';
 
-import { resolveOwnerWorkspaceId } from '../../auth/membership.js';
-import { validateSession } from '../../auth/sessions.js';
 import type { ComposioClient } from '../../composio/client.js';
 import { db, schema } from '../../db/client.js';
 
+/**
+ * Connections router — list and disconnect, scoped to the workspace named in
+ * the parent path (`/workspaces/:id/connections`). The `requireMembership`
+ * middleware (mounted on the parent path in `apps/api/src/index.ts`) has
+ * already validated the session and asserted membership, so handlers can
+ * read `req.workspace!.id` directly. `mergeParams: true` is required so the
+ * parent `:id` is visible from within this nested router.
+ */
 export function buildConnectionsRouter(deps: { composio?: ComposioClient | null } = {}) {
-  const router = Router();
+  const router = Router({ mergeParams: true });
 
   router.get('/', async (req, res, next) => {
     try {
-      const session = await sessionFromRequest(req);
-      if (!session) {
-        res.status(401).json({ error: 'unauthorized' });
-        return;
-      }
-      const workspaceId = await callerWorkspaceId(session.userId);
-      if (!workspaceId) {
-        res.status(403).json({ error: 'no_workspace' });
-        return;
-      }
+      const workspaceId = req.workspace!.id;
       const rows = await db
         .select()
         .from(schema.connections)
@@ -36,23 +33,14 @@ export function buildConnectionsRouter(deps: { composio?: ComposioClient | null 
     }
   });
 
-  router.delete('/:id', async (req, res, next) => {
+  router.delete('/:connectionId', async (req, res, next) => {
     try {
-      const session = await sessionFromRequest(req);
-      if (!session) {
-        res.status(401).json({ error: 'unauthorized' });
-        return;
-      }
-      const workspaceId = await callerWorkspaceId(session.userId);
-      if (!workspaceId) {
-        res.status(403).json({ error: 'no_workspace' });
-        return;
-      }
+      const workspaceId = req.workspace!.id;
 
       const [row] = await db
         .select()
         .from(schema.connections)
-        .where(and(eq(schema.connections.id, req.params.id), eq(schema.connections.workspaceId, workspaceId)))
+        .where(and(eq(schema.connections.id, req.params.connectionId), eq(schema.connections.workspaceId, workspaceId)))
         .limit(1);
       if (!row) {
         res.status(404).json({ error: 'not_found' });
@@ -77,18 +65,4 @@ export function buildConnectionsRouter(deps: { composio?: ComposioClient | null 
   });
 
   return router;
-}
-
-async function sessionFromRequest(req: Request) {
-  const sessionId = req.cookies?.[process.env.SESSION_COOKIE_NAME ?? 'open42_session'];
-  if (!sessionId) return null;
-  return validateSession(sessionId, { userAgent: req.header('user-agent'), ip: req.ip });
-}
-
-async function callerWorkspaceId(userId: string): Promise<string | null> {
-  // Authorization claim comes from `memberships`, NOT `users.currentWorkspaceId`.
-  // See apps/api/src/auth/membership.ts (Codex ship-blocker #1). P1 ships
-  // owner-only workspaces; once member roles can manage connections, switch
-  // to assertWorkspaceMembership against a route-supplied workspaceId.
-  return resolveOwnerWorkspaceId(userId);
 }

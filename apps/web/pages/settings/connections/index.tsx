@@ -9,6 +9,7 @@ import { HorizonGlyph } from '@/components/HorizonGlyph';
 import { PageHeader } from '@/components/PageHeader';
 import { SettingsNav } from '@/components/SettingsNav';
 import { Button } from '@/components/ui/button';
+import { csrfHeaders } from '@/lib/csrf';
 import { connectionKindToSlug, providerLogo } from '@/lib/provider-logos';
 import { cn } from '@/lib/utils';
 
@@ -28,19 +29,37 @@ interface ConnectionsPayload {
   connections: Connection[];
 }
 
+interface CurrentResponse {
+  workspace?: { id: string } | null;
+}
+
 export const getServerSideProps: GetServerSideProps<{
   initialData: ConnectionsPayload;
 }> = async ({ req }) => {
-  const response = await fetch(`${apiUrlServer()}/connections`, {
-    headers: {
-      Cookie: req.headers.cookie ?? '',
-      'User-Agent': req.headers['user-agent'] ?? '',
-    },
+  // Two round-trips: first resolve the caller's workspace from /workspaces/current,
+  // then list connections under that workspace. The connections route now lives
+  // under /workspaces/:id/connections (gated by requireMembership).
+  const forwardHeaders = {
+    Cookie: req.headers.cookie ?? '',
+    'User-Agent': req.headers['user-agent'] ?? '',
+  };
+  const currentRes = await fetch(`${apiUrlServer()}/workspaces/current`, {
+    headers: forwardHeaders,
   }).catch(() => null);
+  const current =
+    currentRes && currentRes.ok ? ((await currentRes.json()) as CurrentResponse) : null;
+  const workspaceId = current?.workspace?.id ?? null;
+  if (!workspaceId) {
+    return { props: { initialData: { workspaceId: null, connections: [] } } };
+  }
+  const response = await fetch(
+    `${apiUrlServer()}/workspaces/${encodeURIComponent(workspaceId)}/connections`,
+    { headers: forwardHeaders },
+  ).catch(() => null);
   const initialData =
     response && response.ok
       ? ((await response.json()) as ConnectionsPayload)
-      : { workspaceId: null, connections: [] };
+      : { workspaceId, connections: [] };
   return { props: { initialData } };
 };
 
@@ -51,8 +70,9 @@ export default function ConnectionsPage({
 }: {
   initialData: ConnectionsPayload;
 }) {
+  const workspaceId = initialData.workspaceId;
   const { data, mutate } = useSWR<ConnectionsPayload>(
-    '/api/connections',
+    workspaceId ? `/api/workspaces/${workspaceId}/connections` : null,
     fetcher,
     {
       fallbackData: initialData,
@@ -61,6 +81,7 @@ export default function ConnectionsPage({
   const payload = data ?? initialData;
 
   async function disconnect(connection: Connection) {
+    if (!workspaceId) return;
     await mutate(
       {
         ...payload,
@@ -70,10 +91,13 @@ export default function ConnectionsPage({
       },
       false,
     );
-    const response = await fetch(`/api/connections/${connection.id}`, {
-      method: 'DELETE',
-      headers: csrfHeaders(),
-    });
+    const response = await fetch(
+      `/api/workspaces/${workspaceId}/connections/${connection.id}`,
+      {
+        method: 'DELETE',
+        headers: csrfHeaders(),
+      },
+    );
     if (!response.ok) {
       await mutate();
     }
@@ -305,14 +329,6 @@ function EmptyState() {
 
 function kindLabel(kind: Connection['kind']) {
   return kind === 'notion-composio' ? 'Live · Notion' : 'Upload · Notion';
-}
-
-function csrfHeaders(): HeadersInit {
-  const csrf = document.cookie
-    .split('; ')
-    .find((part) => part.startsWith('open42_csrf='))
-    ?.split('=')[1];
-  return csrf ? { 'X-CSRF-Token': csrf } : {};
 }
 
 function apiUrlServer() {

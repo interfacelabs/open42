@@ -2,6 +2,8 @@ export type OnboardStep = 'workspace' | 'invite' | 'provisioning' | 'connect';
 
 export type WorkspaceRuntime = 'provisioning' | 'overdue' | 'ready' | 'failed';
 
+export type OnboardMode = 'first' | 'create';
+
 export interface CurrentPayload {
   workspace: { id: string; name: string; runtime: WorkspaceRuntime } | null;
   connections: Array<unknown>;
@@ -16,11 +18,22 @@ export interface CurrentPayload {
  * - When no urlStep is set, fall through to the next undone step based on real
  *   state: workspace exists? runtime ready? at least one connection?
  * - Returns `null` when onboarding is fully complete — callers redirect to `/`.
+ *
+ * In `mode='create'` (the in-app "+ Create new workspace" flow), the page must
+ * always show the workspace-name step regardless of any existing workspace,
+ * because the user already has one and is explicitly creating another. The
+ * only transition is to the provisioning step (via `?step=provisioning`) while
+ * the newly-created workspace spins up; there is no invite/connect step.
  */
 export function deriveOnboardStep(
   current: CurrentPayload,
   urlStep: string | null,
+  mode: OnboardMode = 'first',
 ): OnboardStep | null {
+  if (mode === 'create') {
+    if (urlStep === 'provisioning') return 'provisioning';
+    return 'workspace';
+  }
   if (!current.workspace) return 'workspace';
   if (urlStep === 'workspace') return 'workspace';
   if (urlStep === 'invite') return 'invite';

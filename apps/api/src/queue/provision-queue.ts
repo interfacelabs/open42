@@ -9,11 +9,15 @@
  * no recovery path. BullMQ persists the job in Redis, so process death just
  * means "another worker picks it up after the stalled-job timeout".
  *
- * Idempotency: the BullMQ jobId is the workspace owner's userId. Enqueueing
- * twice for the same owner is rejected by BullMQ (returns the existing job
- * unchanged). The provision worker itself is idempotent — see provision.ts
- * `provisionTenantResources` (docker rm -f before run, volume create is
- * no-op if exists, reserveWorkspaceForOwner returns existing row).
+ * Idempotency: the BullMQ jobId is the workspaceId. Enqueueing twice for
+ * the same workspace is rejected by BullMQ (returns the existing job
+ * unchanged). A user creating a second workspace gets a fresh jobId — the
+ * previous owner-keyed scheme silently dropped second-workspace jobs when
+ * a prior job for the same owner was still in the 24h retention window
+ * (BullMQ B2 multi-workspace bug). The provision worker itself is
+ * idempotent — see provision.ts `provisionTenantResources` (docker rm -f
+ * before run, volume create is no-op if exists, reserveWorkspaceForOwner
+ * returns existing row).
  *
  * Retries: 3 attempts with exponential backoff. Each attempt re-runs the
  * full provisioning function; partial state from a prior attempt (e.g. a
@@ -58,19 +62,23 @@ export function getProvisionQueue(): Queue<ProvisionJobData> {
 }
 
 /**
- * Enqueue a provisioning job. Uses `ownerUserId` as the BullMQ jobId so a
- * second enqueue for the same owner is a no-op (returns the existing job).
+ * Enqueue a provisioning job. Uses `workspaceId` as the BullMQ jobId so a
+ * second enqueue for the same workspace is a no-op (returns the existing
+ * job). A user creating multiple workspaces gets a fresh job per workspace —
+ * the prior owner-keyed scheme silently dropped the second-workspace job
+ * during BullMQ's 24h retention window (Chunk-5 multi-workspace bug).
  *
- * If a prior job for this owner has already failed (no remaining attempts)
- * or completed, BullMQ rejects the duplicate ID — caller should call
- * `removeAndEnqueueProvisionJob` for an explicit retry from a terminal state.
+ * If a prior job for this workspace has already failed (no remaining
+ * attempts) or completed, BullMQ rejects the duplicate ID — caller should
+ * call `removeAndEnqueueProvisionJob` for an explicit retry from a terminal
+ * state.
  */
 export async function enqueueProvisionJob(
   data: ProvisionJobData,
   options: JobsOptions = {},
 ): Promise<{ jobId: string; alreadyEnqueued: boolean }> {
   const queue = getProvisionQueue();
-  const jobId = data.ownerUserId;
+  const jobId = data.workspaceId;
   const existing = await queue.getJob(jobId);
   if (existing) {
     return { jobId, alreadyEnqueued: true };
@@ -80,15 +88,15 @@ export async function enqueueProvisionJob(
 }
 
 /**
- * Drop any prior job (terminal or in-flight) for this owner and enqueue a
- * fresh one. Used by the explicit retry endpoint — the user has decided the
- * previous attempt is dead and wants to start over from scratch.
+ * Drop any prior job (terminal or in-flight) for this workspace and enqueue
+ * a fresh one. Used by the explicit retry endpoint — the user has decided
+ * the previous attempt is dead and wants to start over from scratch.
  */
 export async function removeAndEnqueueProvisionJob(
   data: ProvisionJobData,
 ): Promise<{ jobId: string }> {
   const queue = getProvisionQueue();
-  const jobId = data.ownerUserId;
+  const jobId = data.workspaceId;
   const existing = await queue.getJob(jobId);
   if (existing) {
     // remove() works for any state including active — BullMQ docs note that
@@ -102,7 +110,7 @@ export async function removeAndEnqueueProvisionJob(
 }
 
 export async function getProvisionJobState(
-  ownerUserId: string,
+  workspaceId: string,
 ): Promise<
   | {
       state: string;
@@ -114,7 +122,7 @@ export async function getProvisionJobState(
   | null
 > {
   const queue = getProvisionQueue();
-  const job = await queue.getJob(ownerUserId);
+  const job = await queue.getJob(workspaceId);
   if (!job) return null;
   const state = await job.getState();
   return {

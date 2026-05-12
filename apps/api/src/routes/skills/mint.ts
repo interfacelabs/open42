@@ -1,10 +1,8 @@
 import AdmZip from 'adm-zip';
 import { and, desc, eq } from 'drizzle-orm';
-import { Router, type Request } from 'express';
+import { Router } from 'express';
 
-import { resolveOwnerWorkspaceId } from '../../auth/membership.js';
 import { resolveLlmKey } from '../../auth/llm-keys.js';
-import { validateSession } from '../../auth/sessions.js';
 import { isUuid } from '../../auth/uuid.js';
 import { db, schema } from '../../db/client.js';
 import { GbrainCitationChunk, GbrainClient } from '../../gbrain/client.js';
@@ -17,7 +15,21 @@ import {
 import type { SkillDraftResponse } from '../../skills/contract.js';
 import { checkWorkspaceChatBudget } from '../chat-budget.js';
 
-export const skillsRouter = Router();
+/**
+ * Skills router — list / read / mint / revise / export, scoped to the
+ * workspace named in the parent path (`/workspaces/:id/skills`).
+ * `requireMembership` (mounted on the parent path in `apps/api/src/index.ts`)
+ * has already validated the session and asserted membership, so handlers
+ * read `req.workspace!.id` and `req.session!.userId` directly.
+ * `mergeParams: true` is required so the parent `:id` is visible from within
+ * this nested router.
+ *
+ * Previously this router lived at `/skills` and resolved the workspace via
+ * `resolveOwnerWorkspaceId(session.userId)` — that returned "first owned
+ * workspace" non-deterministically (LIMIT 1, undefined ordering), which is
+ * broken under multi-workspace.
+ */
+export const skillsRouter = Router({ mergeParams: true });
 
 const MAX_REHYDRATED_EXCERPT_CHARS = 6_000;
 
@@ -28,12 +40,7 @@ const MAX_REHYDRATED_EXCERPT_CHARS = 6_000;
  */
 skillsRouter.get('/', async (req, res, next) => {
   try {
-    const session = await sessionFromRequest(req);
-    if (!session) {
-      res.status(401).json({ error: 'unauthorized' });
-      return;
-    }
-    const workspace = await workspaceForUser(session.userId);
+    const workspace = await loadWorkspaceRuntime(req.workspace!.id);
     if (!workspace) {
       res.status(409).json({ error: 'workspace_not_ready' });
       return;
@@ -51,20 +58,15 @@ skillsRouter.get('/', async (req, res, next) => {
  * shape `bundleToDraft` returns for the legacy refund-policy path so the web
  * SkillPanel renders both uniformly.
  */
-skillsRouter.get('/:id/draft', async (req, res, next) => {
+skillsRouter.get('/:skillId/draft', async (req, res, next) => {
   try {
-    const session = await sessionFromRequest(req);
-    if (!session) {
-      res.status(401).json({ error: 'unauthorized' });
-      return;
-    }
-    const workspace = await workspaceForUser(session.userId);
+    const workspace = await loadWorkspaceRuntime(req.workspace!.id);
     if (!workspace) {
       res.status(409).json({ error: 'workspace_not_ready' });
       return;
     }
 
-    const id = req.params.id;
+    const id = req.params.skillId;
     if (!id) {
       res.status(400).json({ error: 'missing_id' });
       return;
@@ -91,20 +93,16 @@ skillsRouter.get('/:id/draft', async (req, res, next) => {
  * context, persist a new version + brain revision, return the updated
  * draft.
  */
-skillsRouter.post('/:id/revise', async (req, res, next) => {
+skillsRouter.post('/:skillId/revise', async (req, res, next) => {
   try {
-    const session = await sessionFromRequest(req);
-    if (!session) {
-      res.status(401).json({ error: 'unauthorized' });
-      return;
-    }
-    const workspace = await workspaceForUser(session.userId);
+    const session = req.session!;
+    const workspace = await loadWorkspaceRuntime(req.workspace!.id);
     if (!workspace) {
       res.status(409).json({ error: 'workspace_not_ready' });
       return;
     }
 
-    const id = req.params.id;
+    const id = req.params.skillId;
     if (!id) {
       res.status(400).json({ error: 'missing_id' });
       return;
@@ -201,20 +199,16 @@ skillsRouter.post('/:id/revise', async (req, res, next) => {
  * Same archive shape as the legacy refund-policy export (SKILL.md +
  * frontmatter.yaml + manifest.json) so consumers don't have to branch.
  */
-skillsRouter.post('/:id', async (req, res, next) => {
+skillsRouter.post('/:skillId', async (req, res, next) => {
   try {
-    const session = await sessionFromRequest(req);
-    if (!session) {
-      res.status(401).json({ error: 'unauthorized' });
-      return;
-    }
-    const workspace = await workspaceForUser(session.userId);
+    const session = req.session!;
+    const workspace = await loadWorkspaceRuntime(req.workspace!.id);
     if (!workspace) {
       res.status(409).json({ error: 'workspace_not_ready' });
       return;
     }
 
-    const id = req.params.id;
+    const id = req.params.skillId;
     if (!id) {
       res.status(400).json({ error: 'missing_id' });
       return;
@@ -248,12 +242,8 @@ skillsRouter.post('/:id', async (req, res, next) => {
 
 skillsRouter.post('/', async (req, res, next) => {
   try {
-    const session = await sessionFromRequest(req);
-    if (!session) {
-      res.status(401).json({ error: 'unauthorized' });
-      return;
-    }
-    const workspace = await workspaceForUser(session.userId);
+    const session = req.session!;
+    const workspace = await loadWorkspaceRuntime(req.workspace!.id);
     if (!workspace) {
       res.status(409).json({ error: 'workspace_not_ready' });
       return;
@@ -790,18 +780,14 @@ function formatScalar(value: unknown): string {
   return JSON.stringify(value);
 }
 
-async function sessionFromRequest(req: Request) {
-  const sessionId = req.cookies?.[process.env.SESSION_COOKIE_NAME ?? 'open42_session'];
-  if (!sessionId) return null;
-  return validateSession(sessionId, {
-    userAgent: req.header('user-agent'),
-    ip: req.ip,
-  });
-}
-
-async function workspaceForUser(userId: string) {
-  const workspaceId = await resolveOwnerWorkspaceId(userId);
-  if (!workspaceId) return null;
+/**
+ * Load the workspace runtime fields needed to talk to the per-tenant gbrain.
+ * Membership has already been asserted by `requireMembership`; this helper
+ * only checks whether the tenant runtime is provisioned (gbrain credentials
+ * populated) so handlers can 409 fast when the workspace exists but isn't
+ * up yet (e.g. provisioning still in flight).
+ */
+async function loadWorkspaceRuntime(workspaceId: string) {
   const [workspace] = await db
     .select()
     .from(schema.workspaces)

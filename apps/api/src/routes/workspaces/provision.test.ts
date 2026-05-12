@@ -1,4 +1,4 @@
-import express from 'express';
+import express, { type Request, type Response, type NextFunction } from 'express';
 import cookieParser from 'cookie-parser';
 import request from 'supertest';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -17,6 +17,19 @@ const mocks = vi.hoisted(() => ({
   generateInviteLink: vi.fn(),
 }));
 
+// requireRole pulls in requireMembership which validates the session cookie
+// AND asserts a real membership row. Both go through the DB. Mock both at
+// the module level — the retry-provision tests below drive auth state via
+// `retryAuthMock.impl` (same pattern as members.test.ts).
+const retryAuthMock = vi.hoisted(() => ({
+  impl: (req: Request, _res: Response, next: NextFunction) => {
+    const wsId = (req.body as { workspace_id?: string } | undefined)?.workspace_id ?? 'ws-1';
+    req.workspace = { id: wsId, role: 'owner' };
+    req.session = { id: 'sess-1', userId: 'user-1' };
+    next();
+  },
+}));
+
 vi.mock('../../auth/sessions.js', () => ({
   validateSession: mocks.validateSession,
 }));
@@ -24,6 +37,12 @@ vi.mock('../../auth/sessions.js', () => ({
 vi.mock('../../tenants/provision.js', () => ({
   provisionTenant: mocks.provisionTenant,
   safelyProvisionTenant: mocks.safelyProvisionTenant,
+}));
+
+vi.mock('../../middleware/require-role.js', () => ({
+  requireRole: () => [
+    (req: Request, res: Response, next: NextFunction) => retryAuthMock.impl(req, res, next),
+  ],
 }));
 
 describe('workspace provision route', () => {
@@ -153,7 +172,10 @@ describe('workspace provision route', () => {
       expect(res.status).toBe(200);
       await new Promise((r) => setImmediate(r));
       expect(mocks.safelyProvisionTenant).toHaveBeenCalledTimes(1);
-      expect(mocks.safelyProvisionTenant).toHaveBeenCalledWith({ ownerUserId: 'user-1' });
+      expect(mocks.safelyProvisionTenant).toHaveBeenCalledWith({
+        workspaceId: 'workspace-1',
+        ownerUserId: 'user-1',
+      });
     });
 
     it('returns existing workspace and does NOT re-provision when name matches', async () => {
@@ -301,6 +323,175 @@ describe('workspace provision route', () => {
       expect(res.status).toBe(200);
       expect(res.body.sent).toBe(1);
       expect(res.body.failed).toBe(1);
+    });
+  });
+
+  describe('POST /workspaces/onboarding/retry-provision (codex round-4 P2)', () => {
+    beforeEach(() => {
+      // Default: owner of ws-1.
+      retryAuthMock.impl = (req, _res, next) => {
+        const wsId = (req.body as { workspace_id?: string } | undefined)?.workspace_id ?? 'ws-1';
+        req.workspace = { id: wsId, role: 'owner' };
+        req.session = { id: 'sess-1', userId: 'user-1' };
+        next();
+      };
+    });
+
+    it('returns 400 workspace_id_required when body has no workspace_id', async () => {
+      // Mirror requireMembership's 400 response (the real middleware returns
+      // this; the test mock has to simulate it explicitly).
+      retryAuthMock.impl = (_req, res, _next) => {
+        res.status(400).json({ error: 'workspace_id_required' });
+      };
+      const repo = makeRepo({
+        workspace: {
+          id: 'workspace-1',
+          name: 'Speedrun Labs',
+          plan: null,
+          status: 'failed',
+          gbrainReady: false,
+          runtime: 'failed',
+          lastError: 'docker_unavailable',
+          provisionAttempts: 1,
+          provisioningStartedAt: new Date('2026-05-07T10:00:00Z'),
+          createdAt: new Date('2026-05-07T10:00:00Z'),
+        },
+      });
+      const app = makeApp(repo);
+
+      const res = await request(app)
+        .post('/workspaces/onboarding/retry-provision')
+        .set('Cookie', 'open42_session=session-1')
+        .send({});
+
+      expect(res.status).toBe(400);
+      expect(res.body.error).toBe('workspace_id_required');
+      expect(repo.markWorkspaceProvisioning).not.toHaveBeenCalled();
+    });
+
+    it('returns 403 forbidden_cannot_retry when caller is not the owner', async () => {
+      // The real requireRole responds 403 for non-owners; mock that response.
+      retryAuthMock.impl = (_req, res, _next) => {
+        res.status(403).json({ error: 'forbidden_cannot_retry' });
+      };
+      const repo = makeRepo({
+        workspace: {
+          id: 'ws-1',
+          name: 'Speedrun Labs',
+          plan: null,
+          status: 'failed',
+          gbrainReady: false,
+          runtime: 'failed',
+          lastError: 'docker_unavailable',
+          provisionAttempts: 1,
+          provisioningStartedAt: new Date('2026-05-07T10:00:00Z'),
+          createdAt: new Date('2026-05-07T10:00:00Z'),
+        },
+      });
+      const app = makeApp(repo);
+
+      const res = await request(app)
+        .post('/workspaces/onboarding/retry-provision')
+        .set('Cookie', 'open42_session=session-1')
+        .send({ workspace_id: 'ws-1' });
+
+      expect(res.status).toBe(403);
+      expect(res.body.error).toBe('forbidden_cannot_retry');
+      expect(repo.markWorkspaceProvisioning).not.toHaveBeenCalled();
+    });
+
+    it('returns 404 workspace_not_found when the workspace was soft-deleted mid-flight', async () => {
+      const repo = makeRepo();
+      repo.findRetryableWorkspace.mockResolvedValueOnce(null);
+      const app = makeApp(repo);
+
+      const res = await request(app)
+        .post('/workspaces/onboarding/retry-provision')
+        .set('Cookie', 'open42_session=session-1')
+        .send({ workspace_id: 'ws-deleted' });
+
+      expect(res.status).toBe(404);
+      expect(res.body.error).toBe('workspace_not_found');
+      expect(repo.markWorkspaceProvisioning).not.toHaveBeenCalled();
+    });
+
+    it("short-circuits with 200 ok status='ready' when the targeted workspace is already ready", async () => {
+      const repo = makeRepo();
+      repo.findRetryableWorkspace.mockResolvedValueOnce({ id: 'ws-1', status: 'ready' });
+      const app = makeApp(repo);
+
+      const res = await request(app)
+        .post('/workspaces/onboarding/retry-provision')
+        .set('Cookie', 'open42_session=session-1')
+        .send({ workspace_id: 'ws-1' });
+
+      expect(res.status).toBe(200);
+      expect(res.body).toEqual({ ok: true, status: 'ready' });
+      expect(repo.markWorkspaceProvisioning).not.toHaveBeenCalled();
+      expect(mocks.safelyProvisionTenant).not.toHaveBeenCalled();
+    });
+
+    it('retries the specific workspace_id passed in the body (multi-workspace)', async () => {
+      // Codex round-4 P2 regression guard: pre-fix the handler ignored the
+      // body and used resolveOwnerWorkspaceId with LIMIT 1. Confirm the
+      // worker is called with the workspace_id we sent, not some other
+      // workspace the user owns.
+      mocks.safelyProvisionTenant.mockResolvedValue({
+        workspaceId: 'ws-target',
+        flyMachineId: 'machine-target',
+        flyPrivateIp: '127.0.0.1:18099',
+        gbrainBaseUrl: 'http://127.0.0.1:18099',
+      });
+      const repo = makeRepo();
+      repo.findRetryableWorkspace.mockResolvedValueOnce({
+        id: 'ws-target',
+        status: 'failed',
+      });
+      const app = makeApp(repo);
+
+      const res = await request(app)
+        .post('/workspaces/onboarding/retry-provision')
+        .set('Cookie', 'open42_session=session-1')
+        .send({ workspace_id: 'ws-target' });
+
+      expect(res.status).toBe(202);
+      expect(res.body).toEqual({ ok: true, status: 'provisioning' });
+      expect(repo.findRetryableWorkspace).toHaveBeenCalledWith('ws-target');
+      expect(repo.markWorkspaceProvisioning).toHaveBeenCalledWith('ws-target');
+      // Wait for the inline `void safelyProvisionTenant` to flush.
+      await new Promise((r) => setImmediate(r));
+      expect(mocks.safelyProvisionTenant).toHaveBeenCalledWith({
+        workspaceId: 'ws-target',
+        ownerUserId: 'user-1',
+      });
+    });
+  });
+
+  // (re-open the parent describe for the original empty-array test below)
+  describe('POST /workspaces/onboarding/invites (continued)', () => {
+    it('returns 200 + sent=0 (not 500) when emails is an empty array', async () => {
+      // Codex round-3 P2: pre-refactor, the onboarding UX could POST
+      // `{ emails: [] }` to skip the invite step. After moving the send
+      // loop into sendInvitesForWorkspace, an empty array slipped past
+      // normalizeInviteEmails into the helper, which threw
+      // `invite_emails_required` and the global error handler mapped it
+      // to 500. The route now short-circuits to a 200 no-op.
+      mocks.validateSession.mockResolvedValue({ userId: 'user-1' });
+      const repo = makeRepo();
+      const app = makeApp(repo);
+
+      const res = await request(app)
+        .post('/workspaces/onboarding/invites')
+        .set('Cookie', 'open42_session=session-1')
+        .send({ emails: [] });
+
+      expect(res.status).toBe(200);
+      expect(res.body.sent).toBe(0);
+      expect(res.body.failed).toBe(0);
+      // No upsert / send activity should have fired for an empty batch.
+      expect(repo.upsertInvites).not.toHaveBeenCalled();
+      expect(mocks.generateInviteLink).not.toHaveBeenCalled();
+      expect(mocks.sendEmail).not.toHaveBeenCalled();
     });
   });
 
@@ -470,6 +661,7 @@ function makeApp(repo = makeRepo()) {
     '/workspaces',
     buildWorkspaceProvisionRouter({
       provisionTenant: mocks.provisionTenant,
+      safelyProvisionTenant: mocks.safelyProvisionTenant,
       repo,
       sendEmail: mocks.sendEmail,
       generateInviteLink: mocks.generateInviteLink,
@@ -531,5 +723,11 @@ function makeRepo(currentOverride: Partial<MockCurrent> = {}) {
       inviterEmail: current.user.email,
       invites: emails.map((email, idx) => ({ id: `invite-${idx}`, email })),
     })),
+    findRetryableWorkspace: vi.fn(async (workspaceId: string) =>
+      current.workspace && current.workspace.id === workspaceId
+        ? { id: current.workspace.id, status: current.workspace.status }
+        : null,
+    ),
+    markWorkspaceProvisioning: vi.fn(async () => {}),
   };
 }

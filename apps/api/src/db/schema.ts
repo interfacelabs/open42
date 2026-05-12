@@ -36,7 +36,7 @@ const bytea = customType<{ data: Buffer; default: false }>({
 // Enums
 // =====================================================================
 
-export const membershipRoleEnum = pgEnum('membership_role', ['owner', 'member']);
+export const membershipRoleEnum = pgEnum('membership_role', ['owner', 'admin', 'member']);
 export const workspaceStatusEnum = pgEnum('workspace_status', [
   'provisioning',
   'ready',
@@ -80,6 +80,9 @@ export const users = pgTable('users', {
   id: uuid('id').primaryKey().defaultRandom(),
   supabaseUserId: text('supabase_user_id').unique(),
   email: text('email').notNull().unique(),
+  // NOTE: current_workspace_id is a UI hint and is NEVER trusted for authorization.
+  // Every tenant-scoped route reads workspace_id from the request and gates with
+  // requireMembership / assertWorkspaceMembership. See docs/superpowers/specs/2026-05-11-workspace-invite-flow-design.md.
   currentWorkspaceId: uuid('current_workspace_id'),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 });
@@ -123,7 +126,6 @@ export const workspaces = pgTable(
       'workspaces_ingest_interval_hours_range',
       sql`${t.ingestIntervalHours} BETWEEN 1 AND 168`,
     ),
-    ownerUserIdUnique: uniqueIndex('workspaces_owner_user_id_uniq').on(t.ownerUserId),
   }),
 );
 

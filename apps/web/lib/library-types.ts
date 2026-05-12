@@ -1,9 +1,9 @@
 /**
  * Shape of a single document surfaced in the Library.
  *
- * Today these are served by the web-side stub at /pages/api/library — the real
- * implementation will proxy to gbrain via apps/api once the gbrain query
- * surface lands (see thoughts/2026-05-09/dashboard-redesign.md, P4c).
+ * Served by the web proxy at /pages/api/workspaces/[id]/library, which forwards
+ * to apps/api `/workspaces/:id/library` (gbrain-backed; membership enforced via
+ * requireMembership). See thoughts/2026-05-09/dashboard-redesign.md, P4c.
  */
 export interface LibraryDoc {
   id: string;

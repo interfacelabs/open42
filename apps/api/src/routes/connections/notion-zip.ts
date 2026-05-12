@@ -2,14 +2,10 @@ import { rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 
 import { and, eq, sql } from 'drizzle-orm';
-import { Router, type Request } from 'express';
+import { Router } from 'express';
 import multer from 'multer';
 
-import {
-  getWorkspaceReadiness,
-  resolveOwnerWorkspaceId,
-} from '../../auth/membership.js';
-import { validateSession } from '../../auth/sessions.js';
+import { getWorkspaceReadiness } from '../../auth/membership.js';
 import { db, schema } from '../../db/client.js';
 
 const MAX_UPLOAD_BYTES = 100 * 1024 * 1024;
@@ -22,21 +18,19 @@ const upload = multer({
   limits: { fileSize: MAX_UPLOAD_BYTES, files: 1, fields: 0 },
 });
 
+/**
+ * Notion zip upload route, scoped to the workspace named in the parent path
+ * (`/workspaces/:id/connections/notion-zip`). The `requireMembership`
+ * middleware (mounted on the parent path) has already asserted membership,
+ * so the handler reads `req.workspace!.id` directly. `mergeParams: true`
+ * keeps the parent `:id` visible inside this router.
+ */
 export function buildNotionZipRouter(deps: { kick: (workspaceId: string) => Promise<void> }) {
-  const router = Router();
+  const router = Router({ mergeParams: true });
 
   router.post('/', upload.single('file'), async (req, res, next) => {
     try {
-      const session = await sessionFromRequest(req);
-      if (!session) {
-        res.status(401).json({ error: 'unauthorized' });
-        return;
-      }
-      const workspaceId = await ownerWorkspaceId(session.userId);
-      if (!workspaceId) {
-        res.status(403).json({ error: 'no_workspace' });
-        return;
-      }
+      const workspaceId = req.workspace!.id;
       if (!req.file) {
         res.status(400).json({ error: 'file_required' });
         return;
@@ -94,18 +88,6 @@ export function buildNotionZipRouter(deps: { kick: (workspaceId: string) => Prom
   });
 
   return router;
-}
-
-async function sessionFromRequest(req: Request) {
-  const sessionId = req.cookies?.[process.env.SESSION_COOKIE_NAME ?? 'open42_session'];
-  if (!sessionId) return null;
-  return validateSession(sessionId, { userAgent: req.header('user-agent'), ip: req.ip });
-}
-
-async function ownerWorkspaceId(userId: string): Promise<string | null> {
-  // Authorization claim comes from `memberships`, NOT `users.currentWorkspaceId`.
-  // See apps/api/src/auth/membership.ts (Codex ship-blocker #1).
-  return resolveOwnerWorkspaceId(userId);
 }
 
 async function hasActiveNotionConnection(workspaceId: string): Promise<boolean> {

@@ -1,9 +1,9 @@
 /**
  * Shape of a draftable skill bundle as surfaced in the SkillPanel.
  *
- * Today this is served by the web-side stub at /pages/api/skills/[id]/draft —
- * the real implementation will come from apps/api once skill drafting moves
- * server-side (P6c).
+ * Served by the proxy at /pages/api/workspaces/[id]/skills/[skillId]/draft,
+ * which forwards to apps/api `/workspaces/:id/skills/:skillId/draft`
+ * (workspace-scoped; membership enforced via requireMembership).
  */
 
 export type SkillRevisionRole = 'you' | 'brain';

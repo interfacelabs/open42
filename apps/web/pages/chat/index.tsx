@@ -16,7 +16,10 @@ import { SkillPanel } from '@/components/SkillPanel';
 import { SlashMenu } from '@/components/SlashMenu';
 import { Transcript } from '@/components/Transcript';
 import { fetcher } from '@/lib/api';
+import { csrfHeaders } from '@/lib/csrf';
 import type { SkillDraft } from '@/lib/skill-types';
+import { useWorkspaceStore } from '@/lib/workspaces/store';
+import { recoverFromTenant403 } from '@/lib/workspaces/with-recovery';
 
 interface ChatWorkspaceConnection {
   id: string;
@@ -38,15 +41,28 @@ export default function ChatPage() {
   const [skillDraftId, setSkillDraftId] = useState<string | null>(null);
   const [skillError, setSkillError] = useState<string | null>(null);
   const [skillifying, setSkillifying] = useState(false);
+  const [recoveryToast, setRecoveryToast] = useState<string | null>(null);
   const currentAssistantId = useRef<string | null>(null);
   const hydratedRef = useRef(false);
+
+  // Resolve the caller's workspace so chat can send `workspace_id` in the
+  // body. We read directly from the Zustand workspace store: switchTo()
+  // updates the store synchronously, while /api/workspaces/current resolves
+  // via currentWorkspaceForUser and may lag behind a recent switch (the
+  // dashboard polls every few seconds). Sourcing from the store removes
+  // that race so post-switch chat sends carry the right workspace_id.
+  // The API still enforces membership via requireMembership — a stale id
+  // here returns 403, which the recovery path below handles.
+  const workspaceId = useWorkspaceStore((s) => s.currentWorkspaceId);
 
   // Active skill mode — if `?skill=<id>` is in the URL, every question in
   // this thread runs against that skill's body as a binding policy. Loaded
   // via SWR so the badge can show name + version without a route change.
   const activeSkillId = firstQueryParam(router.query.skill);
   const { data: activeSkillData } = useSWR<{ draft: SkillDraft }>(
-    activeSkillId ? `/api/skills/${encodeURIComponent(activeSkillId)}/draft` : null,
+    activeSkillId && workspaceId
+      ? `/api/workspaces/${encodeURIComponent(workspaceId)}/skills/${encodeURIComponent(activeSkillId)}/draft`
+      : null,
     fetcher,
   );
   const activeSkill = activeSkillData?.draft ?? null;
@@ -107,8 +123,34 @@ export default function ChatPage() {
     const response = await fetch('/api/chat', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', ...csrfHeaders() },
-      body: JSON.stringify(activeSkillId ? { query, skillId: activeSkillId } : { query }),
+      body: JSON.stringify({
+        query,
+        workspace_id: workspaceId,
+        ...(activeSkillId ? { skillId: activeSkillId } : {}),
+      }),
     });
+
+    // Tenant-scoped recovery: the cookie's current workspace no longer matches
+    // anything the user is a member of. The shared helper refreshes the
+    // membership list, switches workspaces (or bounces to onboard), and routes
+    // — we layer the chat-specific toast on top.
+    if (response.status === 403) {
+      setThinking(false);
+      setMessages((current) =>
+        current.map((message) =>
+          message.id === assistantId
+            ? { ...message, text: 'Recovering workspace…' }
+            : message,
+        ),
+      );
+      const outcome = await recoverFromTenant403();
+      if (outcome.kind === 'no_workspaces') {
+        setRecoveryToast("You're not in any workspace — please create one.");
+      } else {
+        setRecoveryToast('You were removed from this workspace — switched to another.');
+      }
+      return;
+    }
 
     if (!response.ok || !response.body) {
       setThinking(false);
@@ -159,10 +201,17 @@ export default function ChatPage() {
 
   async function downloadSkill(draft: SkillDraft) {
     setSkillError(null);
-    const response = await fetch(`/api/skills/${draft.id}`, {
-      method: 'POST',
-      headers: csrfHeaders(),
-    });
+    if (!workspaceId) {
+      setSkillError('no_active_workspace');
+      return;
+    }
+    const response = await fetch(
+      `/api/workspaces/${encodeURIComponent(workspaceId)}/skills/${encodeURIComponent(draft.id)}`,
+      {
+        method: 'POST',
+        headers: csrfHeaders(),
+      },
+    );
     if (!response.ok) {
       const payload = (await response.json().catch(() => ({}))) as {
         error?: string;
@@ -193,12 +242,20 @@ export default function ChatPage() {
 
     setSkillError(null);
     setSkillifying(true);
+    if (!workspaceId) {
+      setSkillError('no_active_workspace');
+      setSkillifying(false);
+      return;
+    }
     try {
-      const response = await fetch('/api/skills', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', ...csrfHeaders() },
-        body: JSON.stringify({ intent, threadCitations }),
-      });
+      const response = await fetch(
+        `/api/workspaces/${encodeURIComponent(workspaceId)}/skills`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', ...csrfHeaders() },
+          body: JSON.stringify({ intent, threadCitations }),
+        },
+      );
       const payload = (await response.json().catch(() => ({}))) as {
         draft?: SkillDraft;
         error?: string;
@@ -309,14 +366,6 @@ export default function ChatPage() {
       </div>
     </>
   );
-}
-
-function csrfHeaders(): HeadersInit {
-  const csrf = document.cookie
-    .split('; ')
-    .find((part) => part.startsWith('open42_csrf='))
-    ?.split('=')[1];
-  return csrf ? { 'X-CSRF-Token': csrf } : {};
 }
 
 function firstQueryParam(value: string | string[] | undefined): string | null {

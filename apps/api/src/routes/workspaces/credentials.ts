@@ -3,13 +3,18 @@
  *
  * Lets the workspace owner upsert / delete / list per-tenant LLM provider
  * credentials. The route is the backend half of the Settings UI flow; the
- * web proxy at apps/web/pages/api/workspaces/credentials.ts (Lane E4) calls
- * these endpoints on the user's behalf.
+ * web proxy at apps/web/pages/api/workspaces/[id]/credentials.ts (Lane E4)
+ * calls these endpoints on the user's behalf.
  *
  * Design notes:
- *   - Authorization is via `resolveOwnerWorkspaceId(session.userId)` —
- *     never `users.currentWorkspaceId`. See apps/api/src/auth/membership.ts
- *     for the rationale (Codex ship-blocker #1).
+ *   - The workspace id is taken from the route param. `requireMembership`
+ *     (mounted on the parent path in apps/api/src/index.ts) asserts the
+ *     caller has a membership row on that workspace, so the handler can read
+ *     `req.workspace!.id` directly. The previous `resolveOwnerWorkspaceId`
+ *     path returned "some owned workspace" non-deterministically when a user
+ *     owned multiple — that broke multi-workspace semantics, hence this move.
+ *   - Authorization is via the membership table — never `users.currentWorkspaceId`.
+ *     See apps/api/src/auth/membership.ts for the rationale (Codex ship-blocker #1).
  *   - GET intentionally never returns the secret or its length. The UI only
  *     needs to know which (provider, scope) pairs are configured.
  *   - DELETE is idempotent: 200 even when no row exists.
@@ -20,17 +25,15 @@
  *     The proxy resolves keys at request time. See
  *     apps/api/src/tenants/provision.ts for the long-form justification.
  */
-import { and, eq } from 'drizzle-orm';
-import { Router, type Request } from 'express';
+import { eq } from 'drizzle-orm';
+import { Router } from 'express';
 
-import { resolveOwnerWorkspaceId } from '../../auth/membership.js';
 import {
   deleteLlmKey as defaultDeleteLlmKey,
   upsertLlmKey as defaultUpsertLlmKey,
   type LlmProvider,
   type LlmScope,
 } from '../../auth/llm-keys.js';
-import { validateSession } from '../../auth/sessions.js';
 import { db as defaultDb, schema } from '../../db/client.js';
 
 const VALID_PROVIDERS: readonly LlmProvider[] = ['openai', 'anthropic'] as const;
@@ -42,7 +45,6 @@ export interface WorkspaceCredentialsRouterDeps {
   upsertLlmKey?: typeof defaultUpsertLlmKey;
   deleteLlmKey?: typeof defaultDeleteLlmKey;
   db?: typeof defaultDb;
-  resolveOwnerWorkspaceId?: typeof resolveOwnerWorkspaceId;
 }
 
 export function buildWorkspaceCredentialsRouter(
@@ -51,22 +53,14 @@ export function buildWorkspaceCredentialsRouter(
   const upsertLlmKey = deps.upsertLlmKey ?? defaultUpsertLlmKey;
   const deleteLlmKey = deps.deleteLlmKey ?? defaultDeleteLlmKey;
   const db = deps.db ?? defaultDb;
-  const resolveOwner = deps.resolveOwnerWorkspaceId ?? resolveOwnerWorkspaceId;
 
-  const router = Router();
+  // `mergeParams: true` so the `:id` from the parent mount
+  // (`/workspaces/:id/credentials`) is visible inside this nested router.
+  const router = Router({ mergeParams: true });
 
   router.get('/', async (req, res, next) => {
     try {
-      const session = await sessionFromRequest(req);
-      if (!session) {
-        res.status(401).json({ error: 'unauthorized' });
-        return;
-      }
-      const workspaceId = await resolveOwner(session.userId);
-      if (!workspaceId) {
-        res.status(403).json({ error: 'no_workspace' });
-        return;
-      }
+      const workspaceId = req.workspace!.id;
 
       // Explicit column list — never `select()` the row, since that would
       // pull `secretCiphertext`. The shape returned to the client must NEVER
@@ -89,16 +83,7 @@ export function buildWorkspaceCredentialsRouter(
 
   router.post('/', async (req, res, next) => {
     try {
-      const session = await sessionFromRequest(req);
-      if (!session) {
-        res.status(401).json({ error: 'unauthorized' });
-        return;
-      }
-      const workspaceId = await resolveOwner(session.userId);
-      if (!workspaceId) {
-        res.status(403).json({ error: 'no_workspace' });
-        return;
-      }
+      const workspaceId = req.workspace!.id;
 
       const parsed = parseProviderScope(req.body);
       if (!parsed) {
@@ -141,16 +126,7 @@ export function buildWorkspaceCredentialsRouter(
 
   router.delete('/', async (req, res, next) => {
     try {
-      const session = await sessionFromRequest(req);
-      if (!session) {
-        res.status(401).json({ error: 'unauthorized' });
-        return;
-      }
-      const workspaceId = await resolveOwner(session.userId);
-      if (!workspaceId) {
-        res.status(403).json({ error: 'no_workspace' });
-        return;
-      }
+      const workspaceId = req.workspace!.id;
 
       const parsed = parseProviderScope(req.body);
       if (!parsed) {
@@ -219,13 +195,4 @@ function parseModel(body: unknown): string | null | undefined {
   if (!trimmed) return undefined;
   if (trimmed.length > MODEL_MAX) return undefined;
   return trimmed;
-}
-
-async function sessionFromRequest(req: Request) {
-  const sessionId = req.cookies?.[process.env.SESSION_COOKIE_NAME ?? 'open42_session'];
-  if (!sessionId) return null;
-  return validateSession(sessionId, {
-    userAgent: req.header('user-agent'),
-    ip: req.ip,
-  });
 }

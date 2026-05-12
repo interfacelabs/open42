@@ -9,6 +9,7 @@ vi.mock('next/router', () => ({
     push: vi.fn(),
     asPath: '/library?c=most-cited',
     pathname: '/library',
+    events: { on: () => {}, off: () => {} },
   }),
 }));
 
@@ -19,6 +20,24 @@ vi.mock('swr', async () => {
     default: vi.fn(),
   };
 });
+
+// The page now builds its library SWR key off the current workspace id from
+// the Zustand store. Stub the store so the URL is deterministic and the
+// hydrate hook is a no-op (we don't want the test to fire real fetches).
+const MOCK_WORKSPACE_STATE = {
+  workspaces: [{ id: 'ws1', name: 'Speedrun', role: 'owner', status: 'ready' }],
+  currentWorkspaceId: 'ws1' as string | null,
+  loading: false,
+  lastError: null as string | null,
+  refresh: async () => undefined,
+  switchTo: async () => undefined,
+  recoverFromForbidden: async () => ({ kind: 'no_workspaces' as const }),
+};
+vi.mock('@/lib/workspaces/store', () => ({
+  useWorkspaceStore: (selector?: (s: typeof MOCK_WORKSPACE_STATE) => unknown) =>
+    typeof selector === 'function' ? selector(MOCK_WORKSPACE_STATE) : MOCK_WORKSPACE_STATE,
+  useHydrateWorkspaceStore: () => undefined,
+}));
 
 import useSWR from 'swr';
 import LibraryPage from '@/pages/library';
@@ -55,7 +74,10 @@ describe('LibraryPage', () => {
     // Both useSWR call sites resolve through the same mock; the page handles
     // missing fields gracefully so a single response shape is enough.
     mockSWR.mockImplementation((key: unknown) => {
-      if (typeof key === 'string' && key.startsWith('/api/library')) {
+      if (
+        typeof key === 'string' &&
+        key.startsWith('/api/workspaces/ws1/library')
+      ) {
         return {
           data: { docs: FIXTURE_DOCS },
           error: null,

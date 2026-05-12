@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/button';
 import { fetcher, formatRelative, type FetchError } from '@/lib/api';
 import { freshnessOf, type LibraryDoc } from '@/lib/library-types';
 import { cn } from '@/lib/utils';
+import { useWorkspaceStore } from '@/lib/workspaces/store';
 
 /**
  * Right-side slide-over showing one document with full body + tags + receipts
@@ -19,8 +20,17 @@ export function DocPanel({
   docId: string | null;
   onClose: () => void;
 }) {
+  // The doc-detail endpoint is workspace-scoped: the API mounts it at
+  // `/workspaces/:id/library/doc/:docId` so membership is enforced via
+  // `requireMembership({ from: 'param' })`. Without a current workspace id we
+  // have nothing to fetch — SWR receives `null` and stays idle.
+  const workspaceId = useWorkspaceStore((s) => s.currentWorkspaceId);
+  const docUrl =
+    docId && workspaceId
+      ? `/api/workspaces/${encodeURIComponent(workspaceId)}/library/doc/${encodeURIComponent(docId)}`
+      : null;
   const { data, isLoading, error } = useSWR<{ doc: LibraryDoc }, FetchError>(
-    docId ? `/api/library/doc/${encodeURIComponent(docId)}` : null,
+    docUrl,
     fetcher,
   );
 

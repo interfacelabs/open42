@@ -7,8 +7,10 @@ import { AppShell } from '@/components/AppShell';
 import { PageHeader } from '@/components/PageHeader';
 import { SettingsNav } from '@/components/SettingsNav';
 import { Button } from '@/components/ui/button';
+import { csrfHeaders } from '@/lib/csrf';
 import { providerLogo } from '@/lib/provider-logos';
 import { cn } from '@/lib/utils';
+import { useWorkspaceStore } from '@/lib/workspaces/store';
 
 interface Connection {
   id: string;
@@ -23,7 +25,11 @@ interface ConnectionsPayload {
 const fetcher = (url: string) => fetch(url).then((res) => res.json());
 
 export default function AddConnectionPage() {
-  const { data } = useSWR<ConnectionsPayload>('/api/connections', fetcher);
+  const workspaceId = useWorkspaceStore((s) => s.currentWorkspaceId);
+  const { data } = useSWR<ConnectionsPayload>(
+    workspaceId ? `/api/workspaces/${workspaceId}/connections` : null,
+    fetcher,
+  );
   const [modalOpen, setModalOpen] = useState(false);
   const [uploadState, setUploadState] = useState<
     'idle' | 'uploading' | 'done' | 'error'
@@ -37,7 +43,8 @@ export default function AddConnectionPage() {
   );
 
   async function connectOAuth() {
-    const response = await fetch('/api/connections/init', {
+    if (!workspaceId) return;
+    const response = await fetch(`/api/workspaces/${workspaceId}/connections/init`, {
       method: 'POST',
       headers: { ...csrfHeaders(), 'Content-Type': 'application/json' },
       body: JSON.stringify({ kind: 'notion-composio' }),
@@ -50,11 +57,11 @@ export default function AddConnectionPage() {
 
   async function uploadZip(event: ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0];
-    if (!file) return;
+    if (!file || !workspaceId) return;
     setUploadState('uploading');
     const form = new FormData();
     form.set('file', file);
-    const response = await fetch('/api/connections/notion-zip', {
+    const response = await fetch(`/api/workspaces/${workspaceId}/connections/notion-zip`, {
       method: 'POST',
       headers: csrfHeaders(),
       body: form,
@@ -276,10 +283,3 @@ function NotionModal({
   );
 }
 
-function csrfHeaders(): HeadersInit {
-  const csrf = document.cookie
-    .split('; ')
-    .find((part) => part.startsWith('open42_csrf='))
-    ?.split('=')[1];
-  return csrf ? { 'X-CSRF-Token': csrf } : {};
-}

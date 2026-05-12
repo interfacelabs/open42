@@ -39,7 +39,9 @@ import {
   deriveDashboardState,
 } from '@/lib/onboarding/derive';
 import { formatRelative } from '@/lib/api';
+import { csrfHeaders } from '@/lib/csrf';
 import { EASE_ENTER, EASE_EXIT } from '@/lib/motion';
+import { recoverFromTenant403 } from '@/lib/workspaces/with-recovery';
 
 interface DashboardWorkspace {
   id: string;
@@ -107,6 +109,27 @@ export default function DashboardPage() {
       void router.replace('/sign_in');
     }
   }, [error, isValidating, router]);
+
+  // 403 on the cold-load fetch → the caller lost membership in the workspace
+  // the cookie pointed to. Run the workspace recovery flow per spec D7. The
+  // shared helper routes the user to /auth/onboard (no workspaces) or to /
+  // (switched to another workspace) — we re-mutate after a successful switch
+  // so the dashboard fetches with the freshly-set cookie.
+  useEffect(() => {
+    if (isValidating) return;
+    if (!error || (error as { status?: number }).status !== 403) return;
+    let cancelled = false;
+    void (async () => {
+      const outcome = await recoverFromTenant403();
+      if (cancelled) return;
+      if (outcome.kind === 'switched') {
+        await mutate();
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [error, isValidating, mutate]);
 
   useEffect(() => {
     if (state?.kind === 'redirect-onboard') {
@@ -492,15 +515,6 @@ function ErrorCard({
       </button>
     </div>
   );
-}
-
-function csrfHeaders(): HeadersInit {
-  if (typeof document === 'undefined') return {};
-  const csrf = document.cookie
-    .split('; ')
-    .find((part) => part.startsWith('open42_csrf='))
-    ?.split('=')[1];
-  return csrf ? { 'X-CSRF-Token': csrf } : {};
 }
 
 function humanizeError(code: string): string {

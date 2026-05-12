@@ -117,7 +117,7 @@ describeDb('chat skill mode', () => {
       .post('/api/chat')
       .set('User-Agent', 'chat-agent')
       .set('Cookie', `open42_session=${sessionId}`)
-      .send({ query: 'What is the refund window?', skillId: skill.id });
+      .send({ query: 'What is the refund window?', skillId: skill.id, workspace_id: workspaceId });
 
     expect(res.status).toBe(200);
     expect(res.text).toContain('"type":"citations"');
@@ -138,21 +138,53 @@ describeDb('chat skill mode', () => {
       .post('/api/chat')
       .set('User-Agent', 'agent-b')
       .set('Cookie', `open42_session=${b.sessionId}`)
-      .send({ query: 'Use the other tenant skill', skillId: skill.id });
+      .send({ query: 'Use the other tenant skill', skillId: skill.id, workspace_id: b.workspaceId });
 
     expect(res.status).toBe(404);
     expect(res.body).toEqual({ error: 'skill_not_found' });
     expect(mocks.query).not.toHaveBeenCalled();
   });
 
-  it('returns 404 for a non-uuid skill id', async () => {
+  it('returns 403 when caller is not a member of the requested workspace', async () => {
+    // userA has their own workspace, but tries to chat in workspace B which
+    // belongs to userX. The session cookie is valid, but membership for B
+    // doesn't exist — requireMembership must reject before the handler runs.
+    const a = await makeOwnerWorkspace('agent-a');
+    const b = await makeOwnerWorkspace('agent-b');
+
+    const res = await request(buildApp())
+      .post('/api/chat')
+      .set('User-Agent', 'agent-a')
+      .set('Cookie', `open42_session=${a.sessionId}`)
+      .send({ query: 'cross tenant attempt', workspace_id: b.workspaceId });
+
+    expect(res.status).toBe(403);
+    expect(res.body).toEqual({ error: 'workspace_membership_required' });
+    expect(mocks.query).not.toHaveBeenCalled();
+  });
+
+  it('returns 400 when workspace_id is missing from the body', async () => {
     const { sessionId } = await makeOwnerWorkspace('chat-agent');
 
     const res = await request(buildApp())
       .post('/api/chat')
       .set('User-Agent', 'chat-agent')
       .set('Cookie', `open42_session=${sessionId}`)
-      .send({ query: 'Try a malformed skill id', skillId: 'not-a-uuid' });
+      .send({ query: 'no workspace id' });
+
+    expect(res.status).toBe(400);
+    expect(res.body).toEqual({ error: 'workspace_id_required' });
+    expect(mocks.query).not.toHaveBeenCalled();
+  });
+
+  it('returns 404 for a non-uuid skill id', async () => {
+    const { workspaceId, sessionId } = await makeOwnerWorkspace('chat-agent');
+
+    const res = await request(buildApp())
+      .post('/api/chat')
+      .set('User-Agent', 'chat-agent')
+      .set('Cookie', `open42_session=${sessionId}`)
+      .send({ query: 'Try a malformed skill id', skillId: 'not-a-uuid', workspace_id: workspaceId });
 
     expect(res.status).toBe(404);
     expect(res.body).toEqual({ error: 'skill_not_found' });
@@ -168,7 +200,7 @@ describeDb('chat skill mode', () => {
       .post('/api/chat')
       .set('User-Agent', 'chat-agent')
       .set('Cookie', `open42_session=${sessionId}`)
-      .send({ query: 'short', skillId: skill.id });
+      .send({ query: 'short', skillId: skill.id, workspace_id: workspaceId });
 
     expect(res.status).toBe(429);
     expect(res.body).toEqual({ error: 'chat_budget_exceeded' });

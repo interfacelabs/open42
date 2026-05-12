@@ -8,7 +8,9 @@ import { AppShell } from '@/components/AppShell';
 import { PageHeader } from '@/components/PageHeader';
 import { SettingsNav } from '@/components/SettingsNav';
 import { Button } from '@/components/ui/button';
+import { csrfHeaders } from '@/lib/csrf';
 import { cn } from '@/lib/utils';
+import { useWorkspaceStore } from '@/lib/workspaces/store';
 
 type Provider = 'openai' | 'anthropic';
 type Scope = 'chat' | 'embed';
@@ -48,19 +50,18 @@ function isUnsupportedCombo(provider: Provider, scope: Scope): boolean {
   return provider === 'anthropic' && scope === 'embed';
 }
 
-function csrfHeaders(): HeadersInit {
-  if (typeof document === 'undefined') return {};
-  const csrf = document.cookie
-    .split('; ')
-    .find((part) => part.startsWith('open42_csrf='))
-    ?.split('=')[1];
-  return csrf ? { 'X-CSRF-Token': csrf } : {};
-}
-
 export default function ApiKeysSettingsPage() {
   const router = useRouter();
+  // Workspace id comes from the Zustand store (which hydrates from
+  // `/api/workspaces` + `/api/auth/me`). The credentials API is mounted under
+  // `/workspaces/:id/credentials` so we have to thread the id through every
+  // request — there is no "first owned" fallback any more.
+  const workspaceId = useWorkspaceStore((s) => s.currentWorkspaceId);
+  const credentialsUrl = workspaceId
+    ? `/api/workspaces/${encodeURIComponent(workspaceId)}/credentials`
+    : null;
   const { data, error, mutate } = useSWR<CredentialsPayload>(
-    '/api/workspaces/credentials',
+    credentialsUrl,
     fetcher,
   );
 
@@ -103,13 +104,14 @@ export default function ApiKeysSettingsPage() {
                   <SectionHeading>Configured keys</SectionHeading>
                   <CredentialsList
                     credentials={credentials}
+                    workspaceId={workspaceId}
                     onRemoved={() => mutate()}
                   />
                 </section>
 
                 <section className="mt-12">
                   <SectionHeading>Add a key</SectionHeading>
-                  <AddKeyForm onSaved={() => mutate()} />
+                  <AddKeyForm workspaceId={workspaceId} onSaved={() => mutate()} />
                 </section>
               </>
             )}
@@ -130,9 +132,11 @@ function SectionHeading({ children }: { children: React.ReactNode }) {
 
 function CredentialsList({
   credentials,
+  workspaceId,
   onRemoved,
 }: {
   credentials: CredentialEntry[];
+  workspaceId: string | null;
   onRemoved: () => void;
 }) {
   if (credentials.length === 0) {
@@ -154,6 +158,7 @@ function CredentialsList({
         <CredentialCard
           key={`${cred.provider}:${cred.scope}`}
           credential={cred}
+          workspaceId={workspaceId}
           onRemoved={onRemoved}
         />
       ))}
@@ -163,9 +168,11 @@ function CredentialsList({
 
 function CredentialCard({
   credential,
+  workspaceId,
   onRemoved,
 }: {
   credential: CredentialEntry;
+  workspaceId: string | null;
   onRemoved: () => void;
 }) {
   const [removing, setRemoving] = useState(false);
@@ -177,6 +184,10 @@ function CredentialCard({
 
   async function remove() {
     if (typeof window === 'undefined') return;
+    if (!workspaceId) {
+      setError('No active workspace.');
+      return;
+    }
     const confirmed = window.confirm(
       'Remove this key? Your workspace will fall back to the shared Open42 key.',
     );
@@ -184,14 +195,17 @@ function CredentialCard({
     setRemoving(true);
     setError(null);
     try {
-      const res = await fetch('/api/workspaces/credentials', {
-        method: 'DELETE',
-        headers: { 'Content-Type': 'application/json', ...csrfHeaders() },
-        body: JSON.stringify({
-          provider: credential.provider,
-          scope: credential.scope,
-        }),
-      });
+      const res = await fetch(
+        `/api/workspaces/${encodeURIComponent(workspaceId)}/credentials`,
+        {
+          method: 'DELETE',
+          headers: { 'Content-Type': 'application/json', ...csrfHeaders() },
+          body: JSON.stringify({
+            provider: credential.provider,
+            scope: credential.scope,
+          }),
+        },
+      );
       if (!res.ok) {
         setError('Failed to remove. Try again.');
         setRemoving(false);
@@ -263,7 +277,13 @@ function Tag({
   );
 }
 
-function AddKeyForm({ onSaved }: { onSaved: () => void }) {
+function AddKeyForm({
+  workspaceId,
+  onSaved,
+}: {
+  workspaceId: string | null;
+  onSaved: () => void;
+}) {
   const [provider, setProvider] = useState<Provider>('openai');
   const [scope, setScope] = useState<Scope>('chat');
   const [apiKey, setApiKey] = useState('');
@@ -278,7 +298,8 @@ function AddKeyForm({ onSaved }: { onSaved: () => void }) {
     [provider, scope],
   );
 
-  const canSubmit = !submitting && !unsupported && apiKey.trim().length > 0;
+  const canSubmit =
+    !submitting && !unsupported && apiKey.trim().length > 0 && !!workspaceId;
 
   async function onSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -292,6 +313,10 @@ function AddKeyForm({ onSaved }: { onSaved: () => void }) {
       setFormError('API key is required.');
       return;
     }
+    if (!workspaceId) {
+      setFormError('No active workspace.');
+      return;
+    }
     setSubmitting(true);
     try {
       const body: Record<string, unknown> = {
@@ -300,11 +325,14 @@ function AddKeyForm({ onSaved }: { onSaved: () => void }) {
         apiKey: apiKey.trim(),
       };
       if (model.trim()) body.model = model.trim();
-      const res = await fetch('/api/workspaces/credentials', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', ...csrfHeaders() },
-        body: JSON.stringify(body),
-      });
+      const res = await fetch(
+        `/api/workspaces/${encodeURIComponent(workspaceId)}/credentials`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', ...csrfHeaders() },
+          body: JSON.stringify(body),
+        },
+      );
       const payload = (await res.json().catch(() => ({}))) as {
         error?: string;
         detail?: string;

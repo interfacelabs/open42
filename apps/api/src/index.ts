@@ -7,6 +7,8 @@ import pino from 'pino';
 
 import { csrfMiddleware } from './middleware/csrf.js';
 import { PINO_ERROR_REDACT_PATHS, sanitizeErrorForLog } from './middleware/error-sanitize.js';
+import { requireMembership } from './middleware/require-membership.js';
+import { requireRole } from './middleware/require-role.js';
 import {
   COMPOSIO_API_KEY,
   COMPOSIO_BASE_URL,
@@ -33,7 +35,11 @@ import { buildComposioRouter } from './routes/connections/composio.js';
 import { buildConnectionsRouter } from './routes/connections/index.js';
 import { buildAnthropicProxy, buildOpenAIProxy } from './routes/proxy/index.js';
 import { workspaceCredentialsRouter } from './routes/workspaces/credentials.js';
+import { buildAcceptRouter } from './routes/workspaces/accept.js';
 import { buildIngestRouter } from './routes/workspaces/ingest.js';
+import { buildWorkspaceIndexRouter } from './routes/workspaces/index-router.js';
+import { buildInvitesRouter } from './routes/workspaces/invites.js';
+import { buildMembersRouter } from './routes/workspaces/members.js';
 import { buildWorkspaceProvisionRouter } from './routes/workspaces/provision.js';
 import { buildHealthzRouter } from './routes/healthz.js';
 import { libraryRouter } from './routes/library/index.js';
@@ -131,11 +137,54 @@ app.use(
 // Routes
 app.use('/healthz', buildHealthzRouter({ notReady: () => !scheduler }));
 app.use('/auth', authRouter);
-app.use('/connections', buildConnectionsRouter(connectionRouteDeps));
-app.use('/connections', buildComposioRouter({ kick: kickWorkspaceIngest }));
-app.use('/connections/notion-zip', buildNotionZipRouter({ kick: kickWorkspaceIngest }));
+// Connections live under `/workspaces/:id/connections/...` so the workspace
+// is supplied via the path and `requireMembership` can assert the caller is
+// a member before the handler runs. The previous flat `/connections/*`
+// mounts read `users.currentWorkspaceId` for authorization — a cross-tenant
+// hole, since that column is writable and not the legitimate auth claim.
+app.use(
+  '/workspaces/:id/connections',
+  requireMembership({ from: 'param' }),
+  buildConnectionsRouter(connectionRouteDeps),
+);
+app.use(
+  '/workspaces/:id/connections',
+  requireMembership({ from: 'param' }),
+  buildComposioRouter({ kick: kickWorkspaceIngest }),
+);
+app.use(
+  '/workspaces/:id/connections/notion-zip',
+  requireMembership({ from: 'param' }),
+  buildNotionZipRouter({ kick: kickWorkspaceIngest }),
+);
 app.use('/workspaces', buildWorkspaceProvisionRouter());
-app.use('/workspaces/credentials', workspaceCredentialsRouter);
+// Top-level workspace CRUD (list / create / switch). Mounted AFTER the
+// onboarding-specific provision router so onboarding paths (`/onboarding/...`,
+// `/current`, `/onboarding/retry-provision`) keep winning for their exact
+// URLs; the index router only declares `/`, `/:id/switch` so there is no
+// collision.
+app.use('/workspaces', buildWorkspaceIndexRouter());
+app.use('/workspaces', buildInvitesRouter());
+app.use('/workspaces', buildMembersRouter());
+// Signed-in invite-accept fast path (Path B). Lives under `/workspaces` to
+// keep all workspace-shaped URLs together. No `requireMembership` here —
+// acceptance is what CREATES the membership row.
+app.use('/workspaces', buildAcceptRouter());
+// Workspace BYOK credentials live under `/workspaces/:id/credentials`. The
+// route is owner-only: BYOK keys are billing-sensitive secrets, and the
+// pre-migration `/workspaces/credentials` mount (resolveOwnerWorkspaceId)
+// already restricted to workspaces the caller owned. The intermediate
+// migration to `requireMembership({ from: 'param' })` silently downgraded
+// this gate to "any member", letting non-owner members view, add, and
+// delete keys. `requireRole(['owner'])` restores the original owner-only
+// invariant. The web UI at apps/web/pages/auth/settings/api-keys.tsx
+// already handles the 403 path by showing a "Only workspace owners can
+// manage API keys" notice (data-testid=api-keys-forbidden).
+app.use(
+  '/workspaces/:id/credentials',
+  requireRole(['owner'], { from: 'param' }, 'forbidden_owner_only'),
+  workspaceCredentialsRouter,
+);
 app.use(
   '/workspaces',
   buildIngestRouter({
@@ -146,8 +195,22 @@ app.use(
   }),
 );
 app.use('/chat', chatRouter);
-app.use('/library', libraryRouter);
-app.use('/skills', skillsRouter);
+// Library lives under `/workspaces/:id/library` so the caller's membership is
+// asserted via `requireMembership` instead of falling back to "first owned
+// workspace" — broken for users who own 2+.
+app.use(
+  '/workspaces/:id/library',
+  requireMembership({ from: 'param' }),
+  libraryRouter,
+);
+// Same shape for skills (list / read / mint / revise / export). Was
+// previously mounted at `/skills` and resolved "first owned workspace" via
+// resolveOwnerWorkspaceId — broken under multi-workspace ownership.
+app.use(
+  '/workspaces/:id/skills',
+  requireMembership({ from: 'param' }),
+  skillsRouter,
+);
 
 // Fallback 404
 app.use((_req, res) => {

@@ -1,13 +1,12 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { and, desc, eq } from 'drizzle-orm';
-import { Router, type Request } from 'express';
+import { Router } from 'express';
 
 import { resolveLlmKey, type ResolvedLlmKey } from '../auth/llm-keys.js';
-import { resolveOwnerWorkspaceId } from '../auth/membership.js';
-import { validateSession } from '../auth/sessions.js';
 import { isUuid } from '../auth/uuid.js';
 import { db, schema } from '../db/client.js';
 import { GbrainCitationChunk, GbrainClient } from '../gbrain/client.js';
+import { requireMembership } from '../middleware/require-membership.js';
 import { checkWorkspaceChatBudget } from './chat-budget.js';
 import { buildSystemPrompt, type SkillContext } from './chat-prompt.js';
 
@@ -15,7 +14,7 @@ export { buildSystemPrompt, type SkillContext } from './chat-prompt.js';
 
 export const chatRouter = Router();
 
-chatRouter.post('/', async (req, res, next) => {
+chatRouter.post('/', requireMembership({ from: 'body' }), async (req, res, next) => {
   try {
     const query = String(req.body?.query ?? '').trim();
     if (!query) {
@@ -27,13 +26,12 @@ chatRouter.post('/', async (req, res, next) => {
         ? req.body.skillId.trim()
         : null;
 
-    const session = await sessionFromRequest(req);
-    if (!session) {
-      res.status(401).json({ error: 'unauthorized' });
-      return;
-    }
+    // `requireMembership` validated the session cookie and asserted membership
+    // in the body-supplied workspace_id. Both are guaranteed to be set here.
+    const session = req.session!;
+    const workspaceId = req.workspace!.id;
 
-    const workspace = await workspaceForUser(session.userId);
+    const workspace = await loadWorkspaceRuntime(workspaceId);
     if (!workspace) {
       res.status(409).json({ error: 'workspace_not_ready' });
       return;
@@ -231,25 +229,21 @@ async function streamAnthropicAnswer(options: {
   }
 }
 
-async function sessionFromRequest(req: Request) {
-  const sessionId = req.cookies?.[process.env.SESSION_COOKIE_NAME ?? 'open42_session'];
-  if (!sessionId) return null;
-  return validateSession(sessionId, { userAgent: req.header('user-agent'), ip: req.ip });
-}
-
-async function workspaceForUser(userId: string) {
-  // Authorization claim comes from `memberships`, NOT `users.currentWorkspaceId`.
-  // See apps/api/src/auth/membership.ts (Codex ship-blocker #1).
-  const workspaceId = await resolveOwnerWorkspaceId(userId);
-  if (!workspaceId) return null;
-
+/**
+ * Load workspace runtime fields needed to talk to the per-tenant gbrain.
+ * Membership has already been asserted by `requireMembership`; this only
+ * reads the gbrain credentials and falls back to `flyPrivateIp` when no
+ * public baseUrl is configured (legacy ingest path).
+ */
+async function loadWorkspaceRuntime(workspaceId: string) {
   const [workspace] = await db
     .select()
     .from(schema.workspaces)
     .where(eq(schema.workspaces.id, workspaceId))
     .limit(1);
   if (
-    !(workspace?.gbrainBaseUrl || workspace?.flyPrivateIp) ||
+    !workspace ||
+    !(workspace.gbrainBaseUrl || workspace.flyPrivateIp) ||
     !workspace.gbrainOauthClientId ||
     !workspace.gbrainOauthClientSecretCiphertext
   ) {

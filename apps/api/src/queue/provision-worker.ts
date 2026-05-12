@@ -23,7 +23,7 @@
  * guarantee that replaces our crash-prone fire-and-forget Promise.
  */
 import { Worker, type Job } from 'bullmq';
-import { eq } from 'drizzle-orm';
+import { and, desc, eq, sql } from 'drizzle-orm';
 import pino from 'pino';
 
 import { db, schema } from '../db/client.js';
@@ -35,6 +35,52 @@ import {
 } from './provision-queue.js';
 
 const logger = pino({ name: 'provision-worker' });
+
+/**
+ * Backward-compat for jobs enqueued by the previous worker (Chunk-5 deploy
+ * boundary). Older jobs were keyed by `ownerUserId` only — their `job.data`
+ * has no `workspaceId`. On the cross-deploy boundary those jobs are still
+ * persisted in Redis; without this fallback the new worker would call
+ * `provisionTenant({ workspaceId: undefined, ... })` and silently strand
+ * the workspace. Resolve the owner's most recently-created provisioning
+ * workspace and proceed with that id.
+ */
+export async function resolveLegacyProvisioningWorkspaceId(
+  ownerUserId: string,
+): Promise<string | null> {
+  const rows = await db
+    .select({ id: schema.workspaces.id })
+    .from(schema.workspaces)
+    .where(
+      and(
+        eq(schema.workspaces.ownerUserId, ownerUserId),
+        eq(schema.workspaces.status, 'provisioning'),
+        sql`${schema.workspaces.deletedAt} IS NULL`,
+      ),
+    )
+    .orderBy(desc(schema.workspaces.createdAt))
+    .limit(1);
+  return rows[0]?.id ?? null;
+}
+
+/**
+ * Read job.data.workspaceId if present; otherwise resolve via the legacy
+ * fallback. Returns null when neither path produces a workspace — caller
+ * should log + return without flipping any DB state.
+ */
+async function resolveJobWorkspaceId(
+  job: Pick<Job<ProvisionJobData>, 'id' | 'data'>,
+): Promise<string | null> {
+  if (job.data.workspaceId) return job.data.workspaceId;
+  const resolved = await resolveLegacyProvisioningWorkspaceId(job.data.ownerUserId);
+  if (!resolved) {
+    logger.warn(
+      { jobId: job.id, ownerUserId: job.data.ownerUserId },
+      'provision_job_missing_workspace_id_and_no_provisioning_row',
+    );
+  }
+  return resolved;
+}
 
 let cachedWorker: Worker<ProvisionJobData> | null = null;
 
@@ -85,7 +131,13 @@ export function startProvisionWorker(): Worker<ProvisionJobData> {
       { jobId: job.id, err: err?.message },
       'provision_job_failed_terminal',
     );
-    await markWorkspaceFailed(job.data.ownerUserId, classifyProvisioningError(err));
+    // Resolve workspaceId with the legacy fallback so the failure handler
+    // still flips the DB row to 'failed' for jobs enqueued by the old worker
+    // (which only carried ownerUserId). Without this the workspace would
+    // stay 'provisioning' forever after the deploy boundary.
+    const workspaceId = await resolveJobWorkspaceId(job);
+    if (!workspaceId) return;
+    await markWorkspaceFailed(workspaceId, classifyProvisioningError(err));
   });
 
   worker.on('error', (err) => {
@@ -98,35 +150,50 @@ export function startProvisionWorker(): Worker<ProvisionJobData> {
   return worker;
 }
 
-async function processProvisionJob(job: Job<ProvisionJobData>): Promise<void> {
+export async function processProvisionJob(job: Job<ProvisionJobData>): Promise<void> {
   const { ownerUserId } = job.data;
+  // Backward-compat for jobs enqueued by the previous worker (which only
+  // stored ownerUserId). Resolve the owner's currently-provisioning
+  // workspace and proceed with that id; bail out cleanly when nothing
+  // matches (e.g. workspace was cleaned up in the meantime).
+  const workspaceId = await resolveJobWorkspaceId(job);
+  if (!workspaceId) return;
+
   const attempt = job.attemptsMade + 1;
   // On any retry (attempt 2+), reset the workspace row so its
   // `provisioning_started_at` reflects this attempt — the UI's "overdue"
   // threshold is keyed off it, and stale timestamps would make a fresh
   // attempt look overdue from the start.
   if (attempt > 1 || job.data.manualRetry) {
-    await resetWorkspaceProvisioningRow(ownerUserId);
+    await resetWorkspaceProvisioningRow(workspaceId);
   }
   // The bulk of the work — Docker, gbrain, OAuth, encrypted secret persist,
   // status='ready'. Throws on any failure; BullMQ converts that to retry-or-
   // permanent-failure based on attempts.
-  await provisionTenant({ ownerUserId });
+  await provisionTenant({ workspaceId, ownerUserId });
 }
 
-async function resetWorkspaceProvisioningRow(ownerUserId: string): Promise<void> {
+export async function resetWorkspaceProvisioningRow(
+  workspaceId: string,
+): Promise<void> {
   await db
     .update(schema.workspaces)
     .set({
       status: 'provisioning',
       lastError: null,
+      // Reset the attempt counter alongside the timestamp — this row is
+      // about to be re-tried as a fresh attempt, so the user-visible
+      // "attempt N of M" UI on the provisioning screen should restart at 0.
+      // (Without this reset, the counter monotonically climbed across
+      // manual retries.)
+      provisionAttempts: 0,
       provisioningStartedAt: new Date(),
     })
-    .where(eq(schema.workspaces.ownerUserId, ownerUserId));
+    .where(eq(schema.workspaces.id, workspaceId));
 }
 
-async function markWorkspaceFailed(
-  ownerUserId: string,
+export async function markWorkspaceFailed(
+  workspaceId: string,
   errorCode: string,
 ): Promise<void> {
   try {
@@ -136,10 +203,10 @@ async function markWorkspaceFailed(
         status: 'failed',
         lastError: errorCode,
       })
-      .where(eq(schema.workspaces.ownerUserId, ownerUserId));
+      .where(eq(schema.workspaces.id, workspaceId));
   } catch (err) {
     logger.error(
-      { ownerUserId, err: err instanceof Error ? err.message : String(err) },
+      { workspaceId, err: err instanceof Error ? err.message : String(err) },
       'mark_workspace_failed_db_write_failed',
     );
   }

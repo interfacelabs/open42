@@ -47,6 +47,37 @@ describe('deriveOnboardStep', () => {
   });
 });
 
+describe('deriveOnboardStep — mode=create', () => {
+  it('returns workspace step regardless of existing workspace', () => {
+    const current = {
+      workspace: { id: 'w1', name: 'Existing', runtime: 'ready' as const },
+      connections: [],
+      lastJob: null,
+    };
+    expect(deriveOnboardStep(current, null, 'create')).toBe('workspace');
+  });
+  it('returns provisioning step when urlStep=provisioning', () => {
+    const current = {
+      workspace: { id: 'w1', name: 'Existing', runtime: 'ready' as const },
+      connections: [],
+      lastJob: null,
+    };
+    expect(deriveOnboardStep(current, 'provisioning', 'create')).toBe('provisioning');
+  });
+  it('ignores connections + connect step (no connect step in create mode)', () => {
+    const current = {
+      workspace: { id: 'w1', name: 'Existing', runtime: 'ready' as const },
+      connections: [{}],
+      lastJob: null,
+    };
+    expect(deriveOnboardStep(current, 'connect', 'create')).toBe('workspace');
+  });
+  it('returns workspace step even when current.workspace is null', () => {
+    const current = { workspace: null, connections: [], lastJob: null };
+    expect(deriveOnboardStep(current, null, 'create')).toBe('workspace');
+  });
+});
+
 describe('deriveDashboardState', () => {
   it('returns redirect-onboard when no workspace', () => {
     expect(deriveDashboardState({ workspace: null } as any).kind).toBe('redirect-onboard');

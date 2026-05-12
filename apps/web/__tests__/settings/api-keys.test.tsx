@@ -8,6 +8,8 @@ vi.mock('next/router', () => ({
     replace: vi.fn(),
     push: vi.fn(),
     pathname: '/settings/api-keys',
+    asPath: '/settings/api-keys',
+    events: { on: () => {}, off: () => {} },
   }),
 }));
 
@@ -16,8 +18,31 @@ vi.mock('swr', async () => {
   return { ...actual, default: vi.fn() };
 });
 
+// The page reads the current workspace id from the Zustand store. Tests stub
+// it with a fixed id so URL assertions can pin the workspace-scoped path. The
+// store hook is also called both with and without a selector (selector form
+// from the page, no-arg form from WorkspaceSwitcher/Sidebar) — mock both.
+// `useHydrateWorkspaceStore` is a no-op so the test doesn't trigger live
+// fetches against the workspace list.
+const MOCK_WORKSPACE_STATE = {
+  workspaces: [{ id: 'ws-test-1', name: 'Test', role: 'owner', status: 'ready' }],
+  currentWorkspaceId: 'ws-test-1' as string | null,
+  loading: false,
+  lastError: null as string | null,
+  refresh: async () => undefined,
+  switchTo: async () => undefined,
+  recoverFromForbidden: async () => ({ kind: 'no_workspaces' as const }),
+};
+vi.mock('@/lib/workspaces/store', () => ({
+  useWorkspaceStore: (selector?: (s: typeof MOCK_WORKSPACE_STATE) => unknown) =>
+    typeof selector === 'function' ? selector(MOCK_WORKSPACE_STATE) : MOCK_WORKSPACE_STATE,
+  useHydrateWorkspaceStore: () => undefined,
+}));
+
 import useSWR from 'swr';
 import ApiKeysSettingsPage from '@/pages/settings/api-keys';
+
+const WORKSPACE_PATH = '/api/workspaces/ws-test-1/credentials';
 
 interface MockCredential {
   provider: 'openai' | 'anthropic';
@@ -146,7 +171,7 @@ describe('ApiKeysSettingsPage', () => {
     });
 
     const [url, init] = fetchMock.mock.calls[0]!;
-    expect(url).toBe('/api/workspaces/credentials');
+    expect(url).toBe(WORKSPACE_PATH);
     expect((init as RequestInit).method).toBe('POST');
     const body = JSON.parse(String((init as RequestInit).body));
     expect(body).toEqual({
@@ -197,7 +222,7 @@ describe('ApiKeysSettingsPage', () => {
     });
 
     const [url, init] = fetchMock.mock.calls[0]!;
-    expect(url).toBe('/api/workspaces/credentials');
+    expect(url).toBe(WORKSPACE_PATH);
     expect((init as RequestInit).method).toBe('DELETE');
     const body = JSON.parse(String((init as RequestInit).body));
     expect(body).toEqual({ provider: 'openai', scope: 'chat' });

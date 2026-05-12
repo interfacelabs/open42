@@ -1,11 +1,7 @@
-import { Router, type Request } from 'express';
+import { Router } from 'express';
 import { and, eq, sql } from 'drizzle-orm';
 
-import {
-  getWorkspaceReadiness,
-  resolveOwnerWorkspaceId,
-} from '../../auth/membership.js';
-import { validateSession } from '../../auth/sessions.js';
+import { getWorkspaceReadiness } from '../../auth/membership.js';
 import type { ComposioClient } from '../../composio/client.js';
 import { createComposioClient } from '../../composio/client.js';
 import { generateNonce, signState, verifyState } from '../../connections/state-hmac.js';
@@ -23,8 +19,15 @@ export interface ComposioRouterDeps {
   kick?: (workspaceId: string) => Promise<void>;
 }
 
+/**
+ * Composio OAuth init/finalize routes, scoped to the workspace named in the
+ * parent path (`/workspaces/:id/connections`). Membership has already been
+ * asserted by `requireMembership` — handlers read `req.workspace!.id` and
+ * `req.session!.userId` directly. `mergeParams: true` keeps the parent
+ * `:id` visible.
+ */
 export function buildComposioRouter(depsIn: ComposioRouterDeps = {}) {
-  const router = Router();
+  const router = Router({ mergeParams: true });
   const kick = depsIn.kick ?? (async () => undefined);
   let cachedComposio: Promise<ComposioClient> | null = null;
 
@@ -59,16 +62,8 @@ export function buildComposioRouter(depsIn: ComposioRouterDeps = {}) {
           .json({ error: 'composio_not_configured', detail: 'notion_auth_config_id_missing' });
         return;
       }
-      const session = await sessionFromRequest(req);
-      if (!session) {
-        res.status(401).json({ error: 'unauthorized' });
-        return;
-      }
-      const workspaceId = await ownerWorkspaceId(session.userId);
-      if (!workspaceId) {
-        res.status(403).json({ error: 'no_workspace' });
-        return;
-      }
+      const session = req.session!;
+      const workspaceId = req.workspace!.id;
       // Reject the request if the tenant runtime isn't ready yet — otherwise
       // we'd hand back an OAuth redirect that, after callback, tries to ingest
       // against a gbrain that doesn't exist yet. 425 Too Early lets the client
@@ -135,11 +130,7 @@ export function buildComposioRouter(depsIn: ComposioRouterDeps = {}) {
         return;
       }
 
-      const session = await sessionFromRequest(req);
-      if (!session) {
-        res.status(401).json({ error: 'unauthorized' });
-        return;
-      }
+      const session = req.session!;
 
       const state = typeof req.body?.state === 'string' ? req.body.state : '';
       const connectedAccountId =
@@ -156,6 +147,14 @@ export function buildComposioRouter(depsIn: ComposioRouterDeps = {}) {
       }
       if (payload.userId !== session.userId) {
         res.status(403).json({ error: 'state_user_mismatch' });
+        return;
+      }
+      // The OAuth state payload is signed against a specific workspaceId. The
+      // path-supplied workspaceId (already asserted by requireMembership) must
+      // match — otherwise an attacker with valid membership in workspace A
+      // could replay an HMAC for workspace B.
+      if (payload.workspaceId !== req.workspace!.id) {
+        res.status(400).json({ error: 'state_metadata_mismatch' });
         return;
       }
 
@@ -226,18 +225,6 @@ export function buildComposioRouter(depsIn: ComposioRouterDeps = {}) {
   });
 
   return router;
-}
-
-async function sessionFromRequest(req: Request) {
-  const sessionId = req.cookies?.[process.env.SESSION_COOKIE_NAME ?? 'open42_session'];
-  if (!sessionId) return null;
-  return validateSession(sessionId, { userAgent: req.header('user-agent'), ip: req.ip });
-}
-
-async function ownerWorkspaceId(userId: string): Promise<string | null> {
-  // Authorization claim comes from `memberships`, NOT `users.currentWorkspaceId`.
-  // See apps/api/src/auth/membership.ts (Codex ship-blocker #1).
-  return resolveOwnerWorkspaceId(userId);
 }
 
 async function hasActiveNotionConnection(workspaceId: string): Promise<boolean> {

@@ -17,7 +17,7 @@ describe('provisionTenant', () => {
     process.env.OPEN42_KEK = '2'.repeat(64);
     const stored: any[] = [];
     const repo: TenantProvisionRepo = {
-      async reserveWorkspaceForOwner() {
+      async ensureWorkspaceForProvisioning() {
         return { id: 'workspace-1' };
       },
       async createWorkspace(input) {
@@ -54,6 +54,7 @@ describe('provisionTenant', () => {
 
     await expect(
       provisionTenant({
+        workspaceId: 'workspace-1',
         ownerUserId: 'user-12345678',
         repo,
         fetch: fetchMock as typeof fetch,
@@ -89,7 +90,9 @@ describe('provisionTenant', () => {
     expect(stored[0].proxyTokenHash).toBeInstanceOf(Buffer);
     expect(stored[0].proxyTokenHash).toHaveLength(32);
     const volumeRequest = flyRequests.find((request) => request.href.endsWith('/volumes'));
-    expect(volumeRequest?.body.name).toBe('open42_gbrain_user_12345678');
+    // Resource naming is keyed by workspaceId (codex round-3 P1). Hyphens
+    // collapse to underscores under tenantVolumeName's sanitizer.
+    expect(volumeRequest?.body.name).toBe('open42_gbrain_workspace_1');
     const machineRequest = flyRequests.find((request) => request.href.endsWith('/machines'));
     expect(machineRequest?.body.config.mounts).toEqual([{ path: '/data', volume: 'volume-1' }]);
     expect(machineRequest?.body.config.env).not.toHaveProperty('GBRAIN_DATABASE_URL');
@@ -113,7 +116,7 @@ describe('provisionTenant', () => {
     const commands: Array<{ file: string; args: string[] }> = [];
     const envFileBodies: string[] = [];
     const repo: TenantProvisionRepo = {
-      async reserveWorkspaceForOwner() {
+      async ensureWorkspaceForProvisioning() {
         return { id: 'workspace-local' };
       },
       async createWorkspace(input) {
@@ -137,6 +140,7 @@ describe('provisionTenant', () => {
 
     await expect(
       provisionTenant({
+        workspaceId: 'workspace-local',
         ownerUserId: 'user-local99',
         repo,
         fetch: fetchMock as typeof fetch,
@@ -164,7 +168,7 @@ describe('provisionTenant', () => {
       }),
     ).resolves.toEqual({
       workspaceId: 'workspace-local',
-      flyMachineId: 'open42-gbrain-user-loc',
+      flyMachineId: 'open42-gbrain-workspac',
       flyPrivateIp: '127.0.0.1:19001',
       gbrainBaseUrl: 'http://127.0.0.1:19001',
     });
@@ -198,7 +202,7 @@ describe('provisionTenant', () => {
       expect.stringMatching(/^ANTHROPIC_BASE_URL=http:\/\/.+\/proxy\/anthropic$/),
     );
     expect(stored[0]).toMatchObject({
-      flyMachineId: 'open42-gbrain-user-loc',
+      flyMachineId: 'open42-gbrain-workspac',
       flyPrivateIp: '127.0.0.1:19001',
       gbrainBaseUrl: 'http://127.0.0.1:19001',
       gbrainOauthClientId: 'client-local',
@@ -217,7 +221,7 @@ describe('provisionTenant', () => {
     process.env.OPEN42_KEK = '4'.repeat(64);
     const stored: any[] = [];
     const repo: TenantProvisionRepo = {
-      async reserveWorkspaceForOwner() {
+      async ensureWorkspaceForProvisioning() {
         return { id: 'workspace-local-with-fly-env' };
       },
       async createWorkspace(input) {
@@ -241,6 +245,7 @@ describe('provisionTenant', () => {
 
     await expect(
       provisionTenant({
+        workspaceId: 'workspace-local-with-fly-env',
         ownerUserId: 'user-flyenv1',
         repo,
         fetch: fetchMock as typeof fetch,
@@ -255,12 +260,12 @@ describe('provisionTenant', () => {
       }),
     ).resolves.toMatchObject({
       workspaceId: 'workspace-local-with-fly-env',
-      flyMachineId: 'open42-gbrain-user-fly',
+      flyMachineId: 'open42-gbrain-workspac',
       flyPrivateIp: '127.0.0.1:19002',
     });
 
     expect(stored[0]).toMatchObject({
-      flyMachineId: 'open42-gbrain-user-fly',
+      flyMachineId: 'open42-gbrain-workspac',
       gbrainBaseUrl: 'http://127.0.0.1:19002',
       gbrainOauthClientId: 'client-local-fly-env',
     });
@@ -268,8 +273,8 @@ describe('provisionTenant', () => {
 
   it('returns an existing workspace without provisioning another tenant', async () => {
     const repo: TenantProvisionRepo = {
-      async findWorkspaceForOwner(ownerUserId) {
-        expect(ownerUserId).toBe('user-existing');
+      async findWorkspaceById(workspaceId) {
+        expect(workspaceId).toBe('workspace-existing');
         return {
           workspaceId: 'workspace-existing',
           flyMachineId: 'machine-existing',
@@ -285,6 +290,7 @@ describe('provisionTenant', () => {
 
     await expect(
       provisionTenant({
+        workspaceId: 'workspace-existing',
         ownerUserId: 'user-existing',
         repo,
         fetch: fetchMock as typeof fetch,
@@ -353,19 +359,20 @@ describe('classifyProvisioningError', () => {
 
 describe('safelyProvisionTenant', () => {
   it('marks workspace failed and returns the classified error code on exception', async () => {
-    const calls: Array<{ ownerUserId: string; errorCode: string }> = [];
+    const calls: Array<{ workspaceId: string; errorCode: string }> = [];
     const repo: TenantProvisionRepo = {
-      async reserveWorkspaceForOwner() {
+      async ensureWorkspaceForProvisioning() {
         return { id: 'workspace-error' };
       },
       async createWorkspace() {
         throw new Error('not reached');
       },
-      async markWorkspaceFailedForOwner(ownerUserId, errorCode) {
-        calls.push({ ownerUserId, errorCode });
+      async markWorkspaceFailedById(workspaceId, errorCode) {
+        calls.push({ workspaceId, errorCode });
       },
     };
     const result = await safelyProvisionTenant({
+      workspaceId: 'workspace-error',
       ownerUserId: 'user-9',
       repo,
       env: {
@@ -381,7 +388,7 @@ describe('safelyProvisionTenant', () => {
     });
     expect(result).toEqual({ error: 'docker_unavailable' });
     expect(calls).toHaveLength(1);
-    expect(calls[0]?.ownerUserId).toBe('user-9');
+    expect(calls[0]?.workspaceId).toBe('workspace-error');
     expect(calls[0]?.errorCode).toBe('docker_unavailable');
   });
 });

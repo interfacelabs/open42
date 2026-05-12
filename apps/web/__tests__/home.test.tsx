@@ -15,6 +15,8 @@ vi.mock('next/router', () => ({
     replace: vi.fn(),
     push: vi.fn(),
     pathname: '/',
+    asPath: '/',
+    events: { on: () => {}, off: () => {} },
   }),
 }));
 
@@ -112,8 +114,9 @@ describe('DashboardPage', () => {
     expect(
       screen.getByPlaceholderText(/what does the brain know about/i),
     ).toBeInTheDocument();
-    // Sidebar IA: Status section + connected source surface.
-    expect(screen.getByRole('link', { name: /^status$/i })).toBeInTheDocument();
+    // Sidebar IA: Status section + connected source surface. Main's redesign
+    // renamed the status link's accessible text from "Status" → "All systems".
+    expect(screen.getByRole('link', { name: /all systems/i })).toBeInTheDocument();
     expect(screen.getByRole('link', { name: /new thread/i })).toBeInTheDocument();
     expect(screen.getByRole('link', { name: /export\.zip/ })).toBeInTheDocument();
   });

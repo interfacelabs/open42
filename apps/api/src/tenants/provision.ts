@@ -34,10 +34,31 @@ export interface TenantProvisionEnv {
 }
 
 export interface TenantProvisionRepo {
-  findWorkspaceForOwner?(ownerUserId: string): Promise<ProvisionTenantResult | null>;
-  reserveWorkspaceForOwner?(ownerUserId: string, gbrainVersion: string): Promise<{ id: string }>;
-  withOwnerProvisioningLock?(
+  /**
+   * Look up an already-provisioned workspace by id. Returning a non-null
+   * result short-circuits provisionTenant — used for idempotency on retry
+   * (a job re-runs against a row that already finished in a prior attempt).
+   */
+  findWorkspaceById?(workspaceId: string): Promise<ProvisionTenantResult | null>;
+  /**
+   * Verify the workspace row exists, is owned by `ownerUserId`, and is not
+   * soft-deleted. For legacy callers (dev script) that operate by owner and
+   * may not have a row yet, the default Drizzle repo also creates a
+   * provisioning row when missing.
+   */
+  ensureWorkspaceForProvisioning?(
+    workspaceId: string,
     ownerUserId: string,
+    gbrainVersion: string,
+  ): Promise<{ id: string }>;
+  /**
+   * Advisory lock keyed by workspaceId so retries / concurrent enqueues for
+   * the same workspace serialize. Owner-scoped locks broke multi-workspace
+   * provisioning — a second workspace for the same owner waited behind the
+   * first instead of running independently.
+   */
+  withWorkspaceProvisioningLock?(
+    workspaceId: string,
     provision: () => Promise<ProvisionTenantResult>,
   ): Promise<ProvisionTenantResult>;
   createWorkspace(input: {
@@ -51,8 +72,8 @@ export interface TenantProvisionRepo {
     proxyTokenHash: Buffer;
     gbrainVersion: string;
   }): Promise<{ id: string }>;
-  markWorkspaceFailedForOwner?(ownerUserId: string, errorCode: string): Promise<void>;
-  resetWorkspaceForOwner?(ownerUserId: string): Promise<void>;
+  markWorkspaceFailedById?(workspaceId: string, errorCode: string): Promise<void>;
+  resetWorkspaceById?(workspaceId: string): Promise<void>;
 }
 
 export type ProvisioningErrorCode =
@@ -110,7 +131,7 @@ export async function safelyProvisionTenant(
   } catch (err) {
     const code = classifyProvisioningError(err);
     try {
-      await repo.markWorkspaceFailedForOwner?.(options.ownerUserId, code);
+      await repo.markWorkspaceFailedById?.(options.workspaceId, code);
     } catch (markErr) {
       // Last-resort: log to stderr. The startup sweep will catch this row eventually.
       console.error('[provision] failed to mark workspace failed', markErr);
@@ -120,6 +141,14 @@ export async function safelyProvisionTenant(
 }
 
 export interface ProvisionTenantOptions {
+  /**
+   * The workspace row being provisioned. The row is created upfront by the
+   * route handler (createWorkspaceForUser / saveWorkspaceName) before the
+   * provision job is enqueued. The worker passes both `workspaceId` and
+   * `ownerUserId` so provisioning is scoped to *this* workspace — owner
+   * scoping silently dropped second-workspace jobs (Chunk-7 codex round-3 P1).
+   */
+  workspaceId: string;
   ownerUserId: string;
   env?: TenantProvisionEnv;
   fetch?: Fetch;
@@ -148,7 +177,7 @@ export async function provisionTenant(
   const provider = selectProvisioner(env);
 
   const provision = async (): Promise<ProvisionTenantResult> => {
-    const existing = await repo.findWorkspaceForOwner?.(options.ownerUserId);
+    const existing = await repo.findWorkspaceById?.(options.workspaceId);
     if (existing) return existing;
 
     return provisionTenantResources({
@@ -156,6 +185,7 @@ export async function provisionTenant(
       fetchImpl,
       gbrainVersion,
       ownerUserId: options.ownerUserId,
+      workspaceId: options.workspaceId,
       provider,
       repo,
       runCommand: options.runCommand ?? runCommand,
@@ -164,8 +194,8 @@ export async function provisionTenant(
     });
   };
 
-  return repo.withOwnerProvisioningLock
-    ? repo.withOwnerProvisioningLock(options.ownerUserId, provision)
+  return repo.withWorkspaceProvisioningLock
+    ? repo.withWorkspaceProvisioningLock(options.workspaceId, provision)
     : provision();
 }
 
@@ -174,25 +204,33 @@ async function provisionTenantResources(options: {
   fetchImpl: Fetch;
   gbrainVersion: string;
   ownerUserId: string;
+  workspaceId: string;
   provider: 'fly' | 'local-docker';
   repo: TenantProvisionRepo;
   runCommand: CommandRunner;
   allocatePort: (startAt: number) => Promise<number>;
   sleep: (ms: number) => Promise<void>;
 }): Promise<ProvisionTenantResult> {
-  const workspaceReservation = await options.repo.reserveWorkspaceForOwner?.(
+  const reservation = await options.repo.ensureWorkspaceForProvisioning?.(
+    options.workspaceId,
     options.ownerUserId,
     options.gbrainVersion,
   );
-  if (!workspaceReservation?.id) {
+  // ensureWorkspaceForProvisioning returns `{ id }` whose value MUST equal
+  // the workspaceId passed in. Tests sometimes return a stub id; honor that
+  // for backwards compatibility but treat the option's workspaceId as the
+  // canonical identity for resource naming and encryption AAD.
+  const workspaceId = reservation?.id ?? options.workspaceId;
+  if (!workspaceId) {
     throw new Error('workspace_reservation_required');
   }
-  const proxyToken = generateProxyToken(workspaceReservation.id);
+  const proxyToken = generateProxyToken(workspaceId);
   const tenant =
     options.provider === 'fly'
       ? await createFlyTenant({
           env: options.env,
           gbrainVersion: options.gbrainVersion,
+          workspaceId,
           ownerUserId: options.ownerUserId,
           proxyToken: proxyToken.token,
           fetch: options.fetchImpl,
@@ -200,6 +238,7 @@ async function provisionTenantResources(options: {
       : await createLocalDockerTenant({
           env: options.env,
           gbrainVersion: options.gbrainVersion,
+          workspaceId,
           ownerUserId: options.ownerUserId,
           proxyToken: proxyToken.token,
           runCommand: options.runCommand,
@@ -222,11 +261,11 @@ async function provisionTenantResources(options: {
   );
 
   const encryptedSecret = encryptSecret(oauth.client_secret, {
-    workspaceId: workspaceReservation.id,
+    workspaceId,
     purpose: 'gbrain_oauth_secret',
   });
   const workspace = await options.repo.createWorkspace({
-    id: workspaceReservation.id,
+    id: workspaceId,
     ownerUserId: options.ownerUserId,
     flyMachineId: tenant.machineId,
     flyPrivateIp: tenant.privateIp,
@@ -272,6 +311,7 @@ async function provisionTenantResources(options: {
 async function createFlyTenant(options: {
   env: TenantProvisionEnv;
   gbrainVersion: string;
+  workspaceId: string;
   ownerUserId: string;
   proxyToken: string;
   fetch: Fetch;
@@ -282,7 +322,7 @@ async function createFlyTenant(options: {
   const volume = await createFlyVolume({
     appName,
     fetch: options.fetch,
-    ownerUserId: options.ownerUserId,
+    workspaceId: options.workspaceId,
     region,
     sizeGb: Number(options.env.GBRAIN_TENANT_VOLUME_SIZE_GB ?? 3),
     token,
@@ -292,7 +332,7 @@ async function createFlyTenant(options: {
     token,
     image: tenantImage(options.env, options.gbrainVersion),
     gbrainVersion: options.gbrainVersion,
-    ownerUserId: options.ownerUserId,
+    workspaceId: options.workspaceId,
     postgresDb: options.env.GBRAIN_POSTGRES_DB ?? 'gbrain',
     postgresPassword: options.env.GBRAIN_POSTGRES_PASSWORD,
     postgresUser: options.env.GBRAIN_POSTGRES_USER ?? 'gbrain',
@@ -312,7 +352,7 @@ async function createFlyTenant(options: {
 async function createFlyVolume(options: {
   appName: string;
   token: string;
-  ownerUserId: string;
+  workspaceId: string;
   region?: string;
   sizeGb: number;
   fetch: Fetch;
@@ -326,7 +366,7 @@ async function createFlyVolume(options: {
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        name: tenantVolumeName(options.ownerUserId),
+        name: tenantVolumeName(options.workspaceId),
         region: options.region,
         size_gb: options.sizeGb,
       }),
@@ -348,7 +388,7 @@ async function createFlyMachine(options: {
   token: string;
   image: string;
   gbrainVersion: string;
-  ownerUserId: string;
+  workspaceId: string;
   open42ApiBaseUrl: string;
   postgresDb: string;
   postgresPassword?: string;
@@ -367,7 +407,7 @@ async function createFlyMachine(options: {
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        name: `open42-${options.ownerUserId.slice(0, 8)}`,
+        name: `open42-${options.workspaceId.slice(0, 8)}`,
         region: options.region,
         skip_launch: false,
         config: {
@@ -421,6 +461,7 @@ async function createFlyMachine(options: {
 async function createLocalDockerTenant(options: {
   env: TenantProvisionEnv;
   gbrainVersion: string;
+  workspaceId: string;
   ownerUserId: string;
   proxyToken: string;
   runCommand: CommandRunner;
@@ -428,7 +469,7 @@ async function createLocalDockerTenant(options: {
 }): Promise<{ machineId: string; privateIp: string; gbrainBaseUrl: string }> {
   const image = tenantImage(options.env, options.gbrainVersion);
   const gitRef = gbrainGitRef(options.env);
-  const containerName = `open42-gbrain-${options.ownerUserId.slice(0, 8)}`;
+  const containerName = `open42-gbrain-${options.workspaceId.slice(0, 8)}`;
   const port = await options.allocatePort(Number(options.env.GBRAIN_LOCAL_PORT_START ?? 18080));
   const baseUrl = `http://127.0.0.1:${port}`;
   const dataVolume = `${containerName}-data`;
@@ -546,17 +587,21 @@ async function waitForGbrainHealth(
   throw new Error(`gbrain tenant did not become healthy: ${String(lastError)}`);
 }
 
-function createDrizzleTenantRepo(): TenantProvisionRepo {
+// Exported for DB-level tests (provision.db.test.ts). Production callers go
+// through provisionTenant / safelyProvisionTenant which resolve the default
+// repo internally.
+export function createDrizzleTenantRepo(): TenantProvisionRepo {
   return {
-    async findWorkspaceForOwner(ownerUserId) {
+    async findWorkspaceById(workspaceId) {
       const { db: defaultDb, schema } = await import('../db/client.js');
       const [workspace] = await defaultDb
         .select()
         .from(schema.workspaces)
         .where(
           and(
-            eq(schema.workspaces.ownerUserId, ownerUserId),
+            eq(schema.workspaces.id, workspaceId),
             eq(schema.workspaces.status, 'ready'),
+            sql`${schema.workspaces.deletedAt} IS NULL`,
           ),
         )
         .limit(1);
@@ -574,34 +619,36 @@ function createDrizzleTenantRepo(): TenantProvisionRepo {
         gbrainBaseUrl: workspace.gbrainBaseUrl ?? formatGbrainBaseUrl(workspace.flyPrivateIp ?? ''),
       };
     },
-    async reserveWorkspaceForOwner(ownerUserId, gbrainVersion) {
+    async ensureWorkspaceForProvisioning(workspaceId, ownerUserId, gbrainVersion) {
       const { db: defaultDb, schema } = await import('../db/client.js');
       return defaultDb.transaction(async (tx) => {
-        // Resolve the existing workspace via memberships (NOT users.currentWorkspaceId).
-        // currentWorkspaceId is a UI hint — it can be stale or, in adversarial
-        // scenarios, point at a workspace the user no longer / never owned.
-        // Source of truth: the memberships row for role='owner' against a
-        // non-deleted workspace. See ENGINEERING.md §"Tenant resolution".
+        // Primary path: the workspace row was created upfront by the route
+        // handler (createWorkspaceForUser / saveWorkspaceName). Validate it
+        // exists, belongs to ownerUserId, and is not soft-deleted.
         const [existing] = await tx
-          .select({ workspaceId: schema.memberships.workspaceId })
-          .from(schema.memberships)
-          .innerJoin(schema.workspaces, eq(schema.memberships.workspaceId, schema.workspaces.id))
+          .select({ id: schema.workspaces.id, ownerUserId: schema.workspaces.ownerUserId })
+          .from(schema.workspaces)
           .where(
             and(
-              eq(schema.memberships.userId, ownerUserId),
-              eq(schema.memberships.role, 'owner'),
+              eq(schema.workspaces.id, workspaceId),
               sql`${schema.workspaces.deletedAt} IS NULL`,
             ),
           )
           .limit(1);
-
         if (existing) {
-          return { id: existing.workspaceId };
+          if (existing.ownerUserId !== ownerUserId) {
+            throw new Error('workspace_owner_mismatch');
+          }
+          return { id: existing.id };
         }
 
+        // Legacy fallback for callers that operate by owner only (dev script):
+        // create the row now. Production callers always create upfront, so
+        // this branch should never fire in normal operation.
         const [workspace] = await tx
           .insert(schema.workspaces)
           .values({
+            id: workspaceId,
             ownerUserId,
             gbrainVersion,
             status: 'provisioning',
@@ -612,7 +659,9 @@ function createDrizzleTenantRepo(): TenantProvisionRepo {
         await tx
           .update(schema.users)
           .set({ currentWorkspaceId: workspace.id })
-          .where(eq(schema.users.id, ownerUserId));
+          .where(
+            and(eq(schema.users.id, ownerUserId), sql`${schema.users.currentWorkspaceId} IS NULL`),
+          );
         await tx
           .insert(schema.memberships)
           .values({ userId: ownerUserId, workspaceId: workspace.id, role: 'owner' })
@@ -621,10 +670,10 @@ function createDrizzleTenantRepo(): TenantProvisionRepo {
         return { id: workspace.id };
       });
     },
-    async withOwnerProvisioningLock(ownerUserId, provision) {
+    async withWorkspaceProvisioningLock(workspaceId, provision) {
       const { db: defaultDb } = await import('../db/client.js');
       return defaultDb.transaction(async (tx) => {
-        await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${ownerUserId}))`);
+        await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${workspaceId}))`);
         return provision();
       });
     },
@@ -675,10 +724,21 @@ function createDrizzleTenantRepo(): TenantProvisionRepo {
           throw new Error('workspace insert returned no row');
         }
 
+        // Best-effort: set users.current_workspace_id when the user has none.
+        // Codex round-4 P2: guard with IS NULL so a background-provisioned
+        // workspace doesn't silently switch the active workspace out from
+        // under a user who's currently working in another one. The first
+        // workspace will still self-set because current_workspace_id starts
+        // null. Mirrors the guard in apps/api/src/workspaces/create.ts.
         await tx
           .update(schema.users)
           .set({ currentWorkspaceId: workspace.id })
-          .where(eq(schema.users.id, input.ownerUserId));
+          .where(
+            and(
+              eq(schema.users.id, input.ownerUserId),
+              sql`${schema.users.currentWorkspaceId} IS NULL`,
+            ),
+          );
 
         await tx
           .insert(schema.memberships)
@@ -692,7 +752,7 @@ function createDrizzleTenantRepo(): TenantProvisionRepo {
         return workspace;
       });
     },
-    async markWorkspaceFailedForOwner(ownerUserId, errorCode) {
+    async markWorkspaceFailedById(workspaceId, errorCode) {
       const { db: defaultDb, schema } = await import('../db/client.js');
       await defaultDb
         .update(schema.workspaces)
@@ -701,9 +761,9 @@ function createDrizzleTenantRepo(): TenantProvisionRepo {
           lastError: errorCode,
           provisionAttempts: sql`${schema.workspaces.provisionAttempts} + 1`,
         })
-        .where(eq(schema.workspaces.ownerUserId, ownerUserId));
+        .where(eq(schema.workspaces.id, workspaceId));
     },
-    async resetWorkspaceForOwner(ownerUserId) {
+    async resetWorkspaceById(workspaceId) {
       const { db: defaultDb, schema } = await import('../db/client.js');
       await defaultDb
         .update(schema.workspaces)
@@ -712,7 +772,7 @@ function createDrizzleTenantRepo(): TenantProvisionRepo {
           lastError: null,
           provisioningStartedAt: new Date(),
         })
-        .where(eq(schema.workspaces.ownerUserId, ownerUserId));
+        .where(eq(schema.workspaces.id, workspaceId));
     },
   };
 }
@@ -808,9 +868,9 @@ function dockerEnvValue(key: string, value: string): string {
   return value;
 }
 
-function tenantVolumeName(ownerUserId: string): string {
+function tenantVolumeName(workspaceId: string): string {
   const suffix =
-    ownerUserId
+    workspaceId
       .toLowerCase()
       .replace(/[^a-z0-9]+/g, '_')
       .replace(/^_+|_+$/g, '')

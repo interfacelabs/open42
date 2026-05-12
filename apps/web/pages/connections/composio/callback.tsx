@@ -6,7 +6,47 @@ import { motion } from 'motion/react';
 
 import { EditorialPane } from '@/components/onboarding/EditorialPane';
 import { CardCabinet } from '@/components/onboarding/illustrations/CardCabinet';
+import { csrfHeaders } from '@/lib/csrf';
 import { EASE_STANDARD } from '@/lib/motion';
+
+/**
+ * The Composio OAuth state is signed by the API as
+ *   `<base64url(JSON.stringify({ workspaceId, userId, nonce, expiresAt }))>.<hmac>`
+ * (see apps/api/src/connections/state-hmac.ts). The HMAC is the only thing
+ * the server trusts — we decode the JSON portion here only to address the
+ * right workspace-scoped finalize URL.
+ *
+ * Codex round-2 P2: previously the callback resolved the workspace from
+ * `/api/workspaces/current`, which can disagree with the workspace the OAuth
+ * was initiated in (the user may switch workspaces in another tab between
+ * init and callback). The API rejects that mismatch as
+ * `state_metadata_mismatch`. The state token already carries the right
+ * workspaceId — so use that, falling back to /workspaces/current only when
+ * the state can't be decoded (which the server will then reject anyway).
+ */
+export function extractWorkspaceIdFromState(stateToken: string): string | null {
+  const parts = stateToken.split('.');
+  if (parts.length !== 2) return null;
+  const [b64] = parts as [string, string];
+  if (!b64) return null;
+  try {
+    // base64url → base64 (the browser's atob speaks plain base64).
+    const padded = b64.replace(/-/g, '+').replace(/_/g, '/');
+    const padLen = (4 - (padded.length % 4)) % 4;
+    const json = atob(padded + '='.repeat(padLen));
+    const payload = JSON.parse(json) as { workspaceId?: unknown };
+    if (typeof payload.workspaceId === 'string' && payload.workspaceId.length > 0) {
+      return payload.workspaceId;
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+interface CurrentResponse {
+  workspace?: { id: string } | null;
+}
 
 type CallbackState =
   | { kind: 'verifying' }
@@ -194,13 +234,38 @@ export default function ComposioCallbackPage() {
     }
 
     let cancelled = false;
-    void fetch('/api/connections/composio/finalize', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', ...csrfHeaders() },
-      body: JSON.stringify({ state: stateToken, connectedAccountId }),
-    })
+    void (async () => {
+      // Codex round-2 P2: the workspace MUST come from the signed state, not
+      // from /api/workspaces/current. The user may have switched workspaces
+      // between init and callback (e.g. in another tab); using the state's
+      // workspaceId guarantees the path-supplied id matches the HMAC payload
+      // so finalize doesn't reject with state_metadata_mismatch.
+      //
+      // The server still verifies the HMAC — this client-side decode is just
+      // for URL addressing, never trusted on its own. If the state is
+      // malformed, fall back to /workspaces/current; the server will reject
+      // and surface a clean error either way.
+      let workspaceId = extractWorkspaceIdFromState(stateToken);
+      if (!workspaceId) {
+        const currentRes = await fetch('/api/workspaces/current').catch(() => null);
+        const current =
+          currentRes && currentRes.ok
+            ? ((await currentRes.json()) as CurrentResponse)
+            : null;
+        workspaceId = current?.workspace?.id ?? null;
+      }
+      if (!workspaceId) {
+        if (!cancelled) setState({ kind: 'verify_failed', code: 'no_workspace' });
+        return;
+      }
+      return fetch(`/api/workspaces/${workspaceId}/connections/composio/finalize`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...csrfHeaders() },
+        body: JSON.stringify({ state: stateToken, connectedAccountId }),
+      });
+    })()
       .then(async (res) => {
-        if (cancelled) return;
+        if (cancelled || !res) return;
         const body = await res.json().catch(() => ({}));
         if (res.ok || body?.error === 'already_connected') {
           setState({ kind: 'redirecting' });
@@ -333,11 +398,3 @@ export default function ComposioCallbackPage() {
   );
 }
 
-function csrfHeaders(): HeadersInit {
-  if (typeof document === 'undefined') return {};
-  const csrf = document.cookie
-    .split('; ')
-    .find((part) => part.startsWith('open42_csrf='))
-    ?.split('=')[1];
-  return csrf ? { 'X-CSRF-Token': csrf } : {};
-}

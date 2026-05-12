@@ -19,15 +19,22 @@ import { and, eq, isNull } from 'drizzle-orm';
 
 import { db, schema } from '../db/client.js';
 
-export type MembershipRole = 'owner' | 'member';
+export type MembershipRole = 'owner' | 'admin' | 'member';
 
 /**
- * Returns the workspace this user OWNS, or null if they own none.
+ * Returns one workspace owned by this user, or null if they own none.
  *
- * P1 invariant: every user owns at most one workspace
- * (workspaces_owner_user_id_uniq). The lookup goes through `memberships`
- * (role='owner') joined to `workspaces` (deleted_at IS NULL) so a corrupt
- * `users.currentWorkspaceId` cannot grant access.
+ * In v1 of the Slack-style multi-workspace model, users may own multiple
+ * workspaces. This helper does NOT enumerate them — it returns at most one
+ * (LIMIT 1, undefined ordering). Callers that need the full owned set must
+ * query `memberships` directly (`WHERE user_id = $1 AND role = 'owner'`).
+ *
+ * Used today only by code paths that need "do they own any?" (a yes/no
+ * question), not "which ones?". If a new caller appears that needs a
+ * deterministic single owner, this function should be renamed or replaced.
+ *
+ * The lookup goes through `memberships` (role='owner') joined to `workspaces`
+ * (deleted_at IS NULL) so a corrupt `users.currentWorkspaceId` cannot grant access.
  */
 export async function resolveOwnerWorkspaceId(userId: string): Promise<string | null> {
   const [row] = await db
@@ -89,7 +96,8 @@ export async function getWorkspaceReadiness(
 /**
  * Asserts the user has a membership row for the given workspaceId on a
  * non-deleted workspace. Returns the role on success; throws an Error with
- * message `'workspace_membership_required'` otherwise.
+ * message `'workspace_membership_required'`, `status: 403`, and
+ * `code: 'workspace_membership_required'` otherwise.
  *
  * Use this when the workspaceId arrives from a route param (or any
  * non-trusted source). The membership table is the only authorization claim
@@ -111,6 +119,68 @@ export async function assertWorkspaceMembership(
       ),
     )
     .limit(1);
-  if (!row) throw new Error('workspace_membership_required');
+  if (!row) {
+    const err = new Error('workspace_membership_required') as Error & {
+      status?: number;
+      code?: string;
+    };
+    err.status = 403;
+    err.code = 'workspace_membership_required';
+    throw err;
+  }
   return { role: row.role };
+}
+
+/**
+ * Roles permitted to invite new members to a workspace. Members may not invite.
+ */
+const INVITE_ROLES: ReadonlySet<MembershipRole> = new Set(['owner', 'admin']);
+
+/**
+ * Roles permitted to manage (add/remove/role-change) existing members.
+ */
+const MANAGE_ROLES: ReadonlySet<MembershipRole> = new Set(['owner', 'admin']);
+
+/**
+ * Asserts the user has membership in the workspace AND has a role permitted
+ * to invite new members. Returns the role on success.
+ *
+ * Throws an Error with `status: 403` and `code: 'forbidden_cannot_invite'`
+ * when the user is a member but lacks the role; propagates the underlying
+ * `assertWorkspaceMembership` error when there is no membership at all.
+ */
+export async function assertCanInvite(
+  userId: string,
+  workspaceId: string,
+): Promise<{ role: MembershipRole }> {
+  const { role } = await assertWorkspaceMembership(userId, workspaceId);
+  if (!INVITE_ROLES.has(role)) {
+    const err = new Error('forbidden_cannot_invite') as Error & { status?: number; code?: string };
+    err.status = 403;
+    err.code = 'forbidden_cannot_invite';
+    throw err;
+  }
+  return { role };
+}
+
+/**
+ * Asserts the user has membership in the workspace AND has a role permitted
+ * to manage members (add/remove/role changes). Returns the role on success.
+ *
+ * Throws an Error with `status: 403` and `code: 'forbidden_cannot_manage_members'`
+ * when the user is a member but lacks the role; propagates the underlying
+ * `assertWorkspaceMembership` error when there is no membership at all.
+ */
+export async function assertCanManageMembers(
+  userId: string,
+  workspaceId: string,
+): Promise<{ role: MembershipRole }> {
+  const { role } = await assertWorkspaceMembership(userId, workspaceId);
+  if (!MANAGE_ROLES.has(role)) {
+    const err = new Error('forbidden_cannot_manage_members') as Error & { status?: number; code?: string };
+    err.status = 403;
+    err.code = 'forbidden_cannot_manage_members';
+    throw err;
+  }
+  return { role };
 }

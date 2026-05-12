@@ -5,17 +5,10 @@ import useSWR from 'swr';
 import { SlideOver } from '@/components/SlideOver';
 import { Button } from '@/components/ui/button';
 import { fetcher, type FetchError } from '@/lib/api';
+import { csrfHeaders } from '@/lib/csrf';
 import type { SkillDraft, SkillRevision } from '@/lib/skill-types';
 import { cn } from '@/lib/utils';
-
-function csrfHeaders(): HeadersInit {
-  if (typeof document === 'undefined') return {};
-  const csrf = document.cookie
-    .split('; ')
-    .find((part) => part.startsWith('open42_csrf='))
-    ?.split('=')[1];
-  return csrf ? { 'X-CSRF-Token': csrf } : {};
-}
+import { useWorkspaceStore } from '@/lib/workspaces/store';
 
 interface SkillPanelProps {
   draftId: string | null;
@@ -33,8 +26,16 @@ interface SkillPanelProps {
  * round-trip). Real drafting is wired in P6c.
  */
 export function SkillPanel({ draftId, onClose, onDownload }: SkillPanelProps) {
+  // The skill draft endpoint is workspace-scoped (`/workspaces/:id/skills/...`).
+  // Read the workspace id from the Zustand store; SWR stays idle until both
+  // draftId and workspaceId are known.
+  const workspaceId = useWorkspaceStore((s) => s.currentWorkspaceId);
+  const draftUrl =
+    draftId && workspaceId
+      ? `/api/workspaces/${encodeURIComponent(workspaceId)}/skills/${encodeURIComponent(draftId)}/draft`
+      : null;
   const { data, isLoading, error, mutate } = useSWR<{ draft: SkillDraft }, FetchError>(
-    draftId ? `/api/skills/${encodeURIComponent(draftId)}/draft` : null,
+    draftUrl,
     fetcher,
   );
   const draft = data?.draft ?? null;
@@ -56,6 +57,7 @@ export function SkillPanel({ draftId, onClose, onDownload }: SkillPanelProps) {
         <PanelBody
           key={draft.id}
           draft={draft}
+          workspaceId={workspaceId}
           mutateDraft={mutate}
           onClose={onClose}
           onDownload={() => onDownload?.(draft)}
@@ -67,11 +69,13 @@ export function SkillPanel({ draftId, onClose, onDownload }: SkillPanelProps) {
 
 function PanelBody({
   draft,
+  workspaceId,
   mutateDraft,
   onClose,
   onDownload,
 }: {
   draft: SkillDraft;
+  workspaceId: string | null;
   mutateDraft: () => Promise<unknown>;
   onClose: () => void;
   onDownload: () => void;
@@ -84,6 +88,10 @@ function PanelBody({
 
   async function onRevise(text: string) {
     if (!text.trim() || revising) return;
+    if (!workspaceId) {
+      setReviseError('no_active_workspace');
+      return;
+    }
     const optimistic: SkillRevision = {
       id: `pending-${Date.now()}`,
       role: 'you',
@@ -93,11 +101,14 @@ function PanelBody({
     setReviseError(null);
     setRevising(true);
     try {
-      const response = await fetch(`/api/skills/${encodeURIComponent(draft.id)}/revise`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', ...csrfHeaders() },
-        body: JSON.stringify({ text: text.trim() }),
-      });
+      const response = await fetch(
+        `/api/workspaces/${encodeURIComponent(workspaceId)}/skills/${encodeURIComponent(draft.id)}/revise`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', ...csrfHeaders() },
+          body: JSON.stringify({ text: text.trim() }),
+        },
+      );
       const payload = (await response.json().catch(() => ({}))) as {
         draft?: SkillDraft;
         error?: string;
