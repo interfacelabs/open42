@@ -1,0 +1,49 @@
+site_name: Open42 Self-Hosted Docs
+site_description: Self-hosted Open42 community edition documentation.
+repo_url: https://github.com/interfacelabs/open42
+repo_name: interfacelabs/open42
+edit_uri: edit/main/public-docs/docs/
+strict: true
+
+docs_dir: docs
+site_dir: site
+
+theme:
+  name: material
+  language: en
+  features:
+    - navigation.instant
+    - navigation.sections
+    - navigation.top
+    - search.suggest
+    - search.highlight
+    - content.code.copy
+    - toc.follow
+  palette:
+    - scheme: default
+      primary: blue
+      accent: blue
+
+nav:
+  - Home: index.md
+  - Install: install.md
+  - Configuration: configuration.md
+  - Operations: operations.md
+  - Security: security.md
+  - Troubleshooting: troubleshooting.md
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - md_in_html
+  - tables
+  - toc:
+      permalink: true
+  - pymdownx.details
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.inlinehilite
+  - pymdownx.snippets
+  - pymdownx.superfences
+  - pymdownx.tabbed:
+      alternate_style: true
