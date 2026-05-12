@@ -19,6 +19,8 @@
     "docs:install": "python3 -m venv .venv-docs && .venv-docs/bin/python -m pip install -U pip && .venv-docs/bin/python -m pip install -r requirements-docs.txt",
     "docs:serve": ".venv-docs/bin/python -m mkdocs serve",
     "docs:build": ".venv-docs/bin/python -m mkdocs build --strict",
+    "docs:serve:public": ".venv-docs/bin/python -m mkdocs serve -f public-docs/mkdocs.yml",
+    "docs:build:public": ".venv-docs/bin/python -m mkdocs build -f public-docs/mkdocs.yml --strict",
     "tenant:build": "node scripts/build-tenant.mjs",
     "setup": "node scripts/setup.mjs",
     "build": "npm run build -w @open42/landing && npm run build -w @open42/web && npm run build -w @open42/api",
