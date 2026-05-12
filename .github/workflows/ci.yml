@@ -38,4 +38,4 @@ jobs:
         if: matrix.edition == 'community'
         run: |
           npm ls stripe || true
-          test ! -d node_modules/stripe
+          test -z "$(find node_modules -type d -name stripe -prune -print -quit)"
