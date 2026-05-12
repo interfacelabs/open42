@@ -1,0 +1,106 @@
+x-open42-common-env: &open42-common-env
+  OPEN42_EDITION: ${OPEN42_EDITION:-community}
+  OPEN42_ALLOW_MULTI_WORKSPACE: ${OPEN42_ALLOW_MULTI_WORKSPACE:-false}
+  OPEN42_ALLOW_SHARED_KEYS: ${OPEN42_ALLOW_SHARED_KEYS:-false}
+  OPEN42_DISABLE_COMPOSIO: ${OPEN42_DISABLE_COMPOSIO:-false}
+  OPEN42_KEK: ${OPEN42_KEK:-}
+  SESSION_SECRET: ${SESSION_SECRET:-}
+  OPEN42_SINGLE_WORKSPACE_ID: ${OPEN42_SINGLE_WORKSPACE_ID:-}
+  OPEN42_TENANT_PROXY_TOKEN: ${OPEN42_TENANT_PROXY_TOKEN:-}
+  SUPABASE_URL: ${SUPABASE_URL:-}
+  SUPABASE_ANON_KEY: ${SUPABASE_ANON_KEY:-}
+  SUPABASE_SERVICE_ROLE_KEY: ${SUPABASE_SERVICE_ROLE_KEY:-}
+  COMPOSIO_API_KEY: ${COMPOSIO_API_KEY:-}
+  COMPOSIO_BASE_URL: ${COMPOSIO_BASE_URL:-}
+  COMPOSIO_NOTION_AUTH_CONFIG_ID: ${COMPOSIO_NOTION_AUTH_CONFIG_ID:-}
+  COMPOSIO_WEBHOOK_SECRET: ${COMPOSIO_WEBHOOK_SECRET:-}
+  OPEN42_INGEST_HMAC_SECRET: ${OPEN42_INGEST_HMAC_SECRET:-}
+  ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+  OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+  GBRAIN_VERSION: ${GBRAIN_VERSION:-0.31.3}
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: open42
+      POSTGRES_PASSWORD: open42
+      POSTGRES_DB: open42
+    volumes:
+      - open42_postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U open42 -d open42']
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ['redis-server', '--appendonly', 'yes']
+    volumes:
+      - open42_redis:/data
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  api:
+    build:
+      context: .
+      dockerfile: infra/Dockerfile.api
+    environment:
+      <<: *open42-common-env
+      DATABASE_URL: postgres://open42:open42@postgres:5432/open42
+      REDIS_URL: redis://redis:6379
+      API_PUBLIC_URL: http://api:3001
+      WEB_PUBLIC_URL: http://localhost:3000
+      TENANT_PROVISIONER: compose
+      GBRAIN_BASE_URL: http://gbrain:8080
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    ports:
+      - '3001:3001'
+
+  web:
+    build:
+      context: .
+      dockerfile: infra/Dockerfile.web
+    environment:
+      <<: *open42-common-env
+      API_PUBLIC_URL: http://api:3001
+      NEXT_PUBLIC_API_PUBLIC_URL: http://localhost:3001
+      WEB_PUBLIC_URL: http://localhost:3000
+      NEXT_PUBLIC_OPEN42_APP_URL: http://localhost:3000
+      NEXT_PUBLIC_OPEN42_EDITION: community
+    depends_on:
+      - api
+    ports:
+      - '3000:3000'
+
+  gbrain:
+    image: ${GBRAIN_TENANT_IMAGE:-open42/gbrain-tenant:v0.31.3}
+    restart: unless-stopped
+    environment:
+      GBRAIN_HOME: /data/gbrain
+      GBRAIN_PUBLIC_URL: http://gbrain:8080
+      GBRAIN_POSTGRES_DB: ${GBRAIN_POSTGRES_DB:-gbrain}
+      GBRAIN_POSTGRES_USER: ${GBRAIN_POSTGRES_USER:-gbrain}
+      OPENAI_API_KEY: ${OPEN42_TENANT_PROXY_TOKEN:-}
+      OPENAI_BASE_URL: http://api:3001/proxy/openai/v1
+      ANTHROPIC_API_KEY: ${OPEN42_TENANT_PROXY_TOKEN:-}
+      ANTHROPIC_BASE_URL: http://api:3001/proxy/anthropic
+    volumes:
+      - open42_gbrain:/data
+    ports:
+      - '8080:8080'
+
+volumes:
+  open42_postgres:
+  open42_redis:
+  open42_gbrain:

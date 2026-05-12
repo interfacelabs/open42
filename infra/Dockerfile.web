@@ -1,0 +1,30 @@
+FROM node:20-alpine AS deps
+WORKDIR /app
+COPY package.json package-lock.json ./
+COPY apps/web/package.json apps/web/package.json
+COPY apps/api/package.json apps/api/package.json
+COPY apps/landing/package.json apps/landing/package.json
+COPY apps/mobile/package.json apps/mobile/package.json
+COPY packages/cloud/package.json packages/cloud/package.json
+COPY packages/cloud-stubs/package.json packages/cloud-stubs/package.json
+RUN npm ci
+
+FROM node:20-alpine AS build
+WORKDIR /app
+ENV OPEN42_EDITION=community
+ENV NEXT_PUBLIC_OPEN42_EDITION=community
+COPY --from=deps /app/node_modules ./node_modules
+COPY . .
+RUN npm run build -w @open42/web
+
+FROM node:20-alpine
+WORKDIR /app
+ENV NODE_ENV=production
+ENV OPEN42_EDITION=community
+ENV NEXT_PUBLIC_OPEN42_EDITION=community
+COPY --from=build /app/package.json ./package.json
+COPY --from=build /app/node_modules ./node_modules
+COPY --from=build /app/apps/web/package.json ./apps/web/package.json
+COPY --from=build /app/apps/web/.next ./apps/web/.next
+COPY --from=build /app/apps/web/next.config.js ./apps/web/next.config.js
+CMD ["npm", "run", "start", "-w", "@open42/web"]
