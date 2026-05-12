@@ -131,13 +131,9 @@ export async function recordLlmUsage(
     const [workspace] = await tx
       .select({
         id: coreSchema.workspaces.id,
-        stripeCustomerId: sql<
-          string | null
-        >`COALESCE(${legacyWorkspaceText('stripe_customer_id')}, ${workspaceBilling.stripeCustomerId})`,
-        stripeSubscriptionStatus: sql<
-          string | null
-        >`COALESCE(${legacyWorkspaceText('stripe_subscription_status')}, ${workspaceBilling.stripeSubscriptionStatus})`,
-        stripeSubscriptionCurrentPeriodStart: sql<Date | null>`COALESCE(${legacyWorkspaceTimestamp('stripe_subscription_current_period_start')}, ${workspaceBilling.stripeSubscriptionCurrentPeriodStart})`,
+        stripeCustomerId: workspaceBilling.stripeCustomerId,
+        stripeSubscriptionStatus: workspaceBilling.stripeSubscriptionStatus,
+        stripeSubscriptionCurrentPeriodStart: workspaceBilling.stripeSubscriptionCurrentPeriodStart,
       })
       .from(coreSchema.workspaces)
       .leftJoin(workspaceBilling, eq(workspaceBilling.workspaceId, coreSchema.workspaces.id))
@@ -317,26 +313,16 @@ export async function retryUnreportedBillingUsage(
           e.billable_units AS "billableUnits",
           e.stripe_meter_event_identifier AS "stripeMeterEventIdentifier",
           e.occurred_at AS "occurredAt",
-          COALESCE(to_jsonb(w)->>'stripe_customer_id', b.stripe_customer_id) AS "stripeCustomerId",
-          COALESCE(
-            to_jsonb(w)->>'stripe_subscription_status',
-            b.stripe_subscription_status
-          ) AS "stripeSubscriptionStatus"
+          b.stripe_customer_id AS "stripeCustomerId",
+          b.stripe_subscription_status AS "stripeSubscriptionStatus"
         FROM billing_usage_events e
-        INNER JOIN workspaces w ON w.id = e.workspace_id
-        LEFT JOIN workspace_billing b ON b.workspace_id = e.workspace_id
+        INNER JOIN workspace_billing b ON b.workspace_id = e.workspace_id
         WHERE e.status IN ('failed'::billing_usage_status, 'unreported'::billing_usage_status)
           AND e.billable_units > 0
           AND e.stripe_meter_event_identifier IS NOT NULL
-          AND COALESCE(to_jsonb(w)->>'stripe_customer_id', b.stripe_customer_id) IS NOT NULL
-          AND COALESCE(
-            NULLIF(to_jsonb(w)->>'stripe_subscription_current_period_start', '')::timestamptz,
-            b.stripe_subscription_current_period_start
-          ) IS NOT NULL
-          AND e.occurred_at >= COALESCE(
-            NULLIF(to_jsonb(w)->>'stripe_subscription_current_period_start', '')::timestamptz,
-            b.stripe_subscription_current_period_start
-          )
+          AND b.stripe_customer_id IS NOT NULL
+          AND b.stripe_subscription_current_period_start IS NOT NULL
+          AND e.occurred_at >= b.stripe_subscription_current_period_start
         ORDER BY e.occurred_at
         LIMIT ${limit}
         FOR UPDATE OF e SKIP LOCKED
@@ -461,14 +447,6 @@ function startOfUtcMonth(date: Date): Date {
 function errorMessage(err: unknown): string {
   if (err instanceof Error) return err.message.slice(0, 240);
   return String(err).slice(0, 240);
-}
-
-function legacyWorkspaceText(column: string) {
-  return sql<string | null>`to_jsonb("workspaces")->>${column}`;
-}
-
-function legacyWorkspaceTimestamp(column: string) {
-  return sql<Date | null>`NULLIF(${legacyWorkspaceText(column)}, '')::timestamptz`;
 }
 
 async function loadDefaultDb(): Promise<DbClient> {
