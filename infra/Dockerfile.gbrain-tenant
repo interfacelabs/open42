@@ -5,11 +5,11 @@ ARG BUN_VERSION=1.3.10
 ARG BUN_TARGET=bun-linux-x64-musl
 ARG BUN_SHA256=48a6c32277d343db0148ce066336472ffd380358a4d26bb1329714742492d824
 # Pinned to the immutable v0.31.3 release commit on garrytan/gbrain master.
-# Bumping is a deliberate Open42-release event — see ENGINEERING.md §gbrain
-# version pinning. Override at build time only for local development on a
-# feature branch (e.g. when contributing back to gbrain). Production images
-# MUST build from a SHA. gbrain >=0.31.0 requires Bun >=1.3.10 (see
-# gbrain/package.json engines field).
+# Bumping is a deliberate Open42-release event, not a transparent dependency
+# upgrade. Override at build time only for local development on a feature
+# branch (e.g. when contributing back to gbrain). Production images MUST build
+# from a SHA. gbrain >=0.31.0 requires Bun >=1.3.10 (see gbrain/package.json
+# engines field).
 ARG GBRAIN_GIT_REF=9c60b3a068849f695034d82eb6c2b99287f9a054
 
 RUN apk add --no-cache \

@@ -14,9 +14,8 @@ interface ReceiptsRailProps {
  * Persistent right-rail of source cards (R-B from 2026-05-09 dashboard design).
  *
  * Every cited source from the latest assistant turn is visible without a
- * click — the strongest expression of PHILOSOPHY.md's "the brain shows its
- * receipts". Hovering [n] in the prose calls `onActivate(n)`, which lifts the
- * matching card.
+ * click — the brain shows its receipts. Hovering [n] in the prose calls
+ * `onActivate(n)`, which lifts the matching card.
  */
 export const ReceiptsRail = memo(function ReceiptsRail({
   citations,
