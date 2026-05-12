@@ -2,12 +2,18 @@
 # Foundational design/engineering docs — kept local, not committed.
 # These reference internal product strategy and aesthetic comparisons.
 # The repo's public surface is README.md + code.
+#
+# Patterns use [Mm][Dd] so the rule survives case-sensitive filesystems
+# (Linux CI) as well as macOS's case-insensitive APFS. A file tracked
+# under one casing (e.g. AGENTS.MD) wouldn't be matched by a different-
+# casing pattern on Linux, which is how AGENTS.MD slipped into the
+# public history once already.
 # =====================================================================
-PHILOSOPHY.md
-DESIGN.md
-ENGINEERING.md
-CLAUDE.md
-AGENTS.md
+PHILOSOPHY.[Mm][Dd]
+DESIGN.[Mm][Dd]
+ENGINEERING.[Mm][Dd]
+CLAUDE.[Mm][Dd]
+AGENTS.[Mm][Dd]
 
 # =====================================================================
 # AI agent session artifacts — NEVER commit.
