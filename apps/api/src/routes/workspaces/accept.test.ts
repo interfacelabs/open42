@@ -1,4 +1,4 @@
-import express, { type Request, type Response, type NextFunction } from 'express';
+import express from 'express';
 import cookieParser from 'cookie-parser';
 import request from 'supertest';
 import { beforeEach, describe, expect, it, vi } from 'vitest';

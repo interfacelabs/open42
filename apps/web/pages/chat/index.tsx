@@ -1,4 +1,5 @@
 import Head from 'next/head';
+import Link from 'next/link';
 import { useRouter } from 'next/router';
 import { FormEvent, KeyboardEvent, useEffect, useRef, useState } from 'react';
 import { ArrowUp, Sparkles } from 'lucide-react';
@@ -466,9 +467,9 @@ function NoSourcesEmpty() {
         Connect Notion, Drive, or upload a zip first — then come back and the
         brain can answer with <span className="font-serif italic">citations.</span>
       </p>
-      <a href="/settings/connections/add" className="btn-primary mt-6">
+      <Link href="/settings/connections/add" className="btn-primary mt-6">
         Connect a source
-      </a>
+      </Link>
     </div>
   );
 }

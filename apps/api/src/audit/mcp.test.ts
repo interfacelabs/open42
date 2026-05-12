@@ -1,7 +1,7 @@
 import { sql } from 'drizzle-orm';
 import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { fingerprintArgs, recordMcpCall } from './mcp.js';
+import { fingerprintArgs } from './mcp.js';
 
 const TEST_KEK = 'a'.repeat(64);
 process.env.OPEN42_KEK = process.env.OPEN42_KEK ?? TEST_KEK;

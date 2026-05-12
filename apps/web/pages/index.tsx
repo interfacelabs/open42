@@ -88,20 +88,19 @@ const fetcher = async (url: string) => {
   return res.json();
 };
 
+function deriveRefreshState(current: DashboardCurrentPayload | undefined): DashboardState['kind'] | null {
+  return current ? deriveDashboardState(current).kind : null;
+}
+
 export default function DashboardPage() {
   const router = useRouter();
-  const [pollInterval, setPollInterval] = useState(0);
   const { data: current, error, mutate, isValidating } = useSWR<DashboardCurrentPayload>(
     '/api/workspaces/current',
     fetcher,
-    { refreshInterval: pollInterval },
+    { refreshInterval: (latest) => (deriveRefreshState(latest) === 'ingesting' ? 1000 : 0) },
   );
 
   const state: DashboardState | null = current ? deriveDashboardState(current) : null;
-
-  useEffect(() => {
-    setPollInterval(state?.kind === 'ingesting' ? 1000 : 0);
-  }, [state?.kind]);
 
   useEffect(() => {
     if (isValidating) return;

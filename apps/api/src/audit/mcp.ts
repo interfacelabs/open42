@@ -73,7 +73,6 @@ export async function recordMcpCall(input: McpAuditInput): Promise<void> {
       errorCode: input.errorCode ?? null,
     });
   } catch (err) {
-    // eslint-disable-next-line no-console
     console.error(
       '[mcp-audit] write failed (audit must not break user flow):',
       err instanceof Error ? err.message : String(err),

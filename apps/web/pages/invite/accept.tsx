@@ -190,7 +190,7 @@ export default function AcceptInvitePage() {
     }
 
     if (!inviteId) {
-      setState({ kind: 'error', message: 'missing_invite_id' });
+      queueMicrotask(() => setState({ kind: 'error', message: 'missing_invite_id' }));
       return;
     }
 

@@ -225,11 +225,11 @@ export default function ComposioCallbackPage() {
     }
 
     if (!stateToken || !connectedAccountId) {
-      setState({ kind: 'verify_failed', code: 'missing_params' });
+      queueMicrotask(() => setState({ kind: 'verify_failed', code: 'missing_params' }));
       return;
     }
     if (composioStatus !== 'success') {
-      setState({ kind: 'composio_failed' });
+      queueMicrotask(() => setState({ kind: 'composio_failed' }));
       return;
     }
 
@@ -397,4 +397,3 @@ export default function ComposioCallbackPage() {
     </>
   );
 }
-

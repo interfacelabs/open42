@@ -1,4 +1,5 @@
 import Head from 'next/head';
+import Link from 'next/link';
 import { RefreshCw } from 'lucide-react';
 import useSWR from 'swr';
 
@@ -293,10 +294,9 @@ function EmptyState() {
       <p className="mt-1.5 max-w-[42ch] text-[13.5px] text-text-subtle">
         Connect a source first, then come back to set how often the brain reads it.
       </p>
-      <a href="/settings/connections/add" className="btn-primary mt-6">
+      <Link href="/settings/connections/add" className="btn-primary mt-6">
         Connect a source
-      </a>
+      </Link>
     </div>
   );
 }
-

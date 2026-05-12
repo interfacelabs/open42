@@ -1,7 +1,6 @@
 import cookieParser from 'cookie-parser';
 import express, { type Request, type Response, type NextFunction } from 'express';
 import { eq } from 'drizzle-orm';
-import request from 'supertest';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 
 process.env.OPEN42_INGEST_HMAC_SECRET = process.env.OPEN42_INGEST_HMAC_SECRET || 'test-hmac-secret';

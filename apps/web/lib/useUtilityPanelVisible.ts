@@ -23,13 +23,11 @@ export function useUtilityPanelVisible(): {
   visible: boolean;
   setVisible: (value: boolean) => void;
 } {
-  // Start hidden=false on the server. Real value is read after mount to avoid
-  // SSR/CSR mismatch warnings; pages that mount the panel never render server-
-  // side either, so this is safe.
-  const [hidden, setHidden] = useState(false);
+  // Pages that mount the panel are client-only surfaces, so reading the
+  // browser value at initialization avoids an effect-only correction render.
+  const [hidden, setHidden] = useState(() => readHidden());
 
   useEffect(() => {
-    setHidden(readHidden());
     const sync = () => setHidden(readHidden());
     window.addEventListener(CHANGE_EVENT, sync);
     window.addEventListener('storage', sync);

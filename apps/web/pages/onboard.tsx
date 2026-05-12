@@ -1,6 +1,14 @@
 import Head from 'next/head';
 import { useRouter } from 'next/router';
-import { FormEvent, ReactNode, useCallback, useEffect, useMemo, useState } from 'react';
+import {
+  FormEvent,
+  ReactNode,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 import { motion } from 'motion/react';
 import useSWR from 'swr';
 
@@ -51,23 +59,31 @@ const fetcher = async (url: string) => {
   return res.json();
 };
 
+function deriveOnboardRefreshStep(
+  current: OnboardCurrentPayload | undefined,
+  urlStep: string | null,
+  mode: OnboardMode,
+): OnboardStep | null {
+  if (current) return deriveOnboardStep(current, urlStep, mode);
+  return mode === 'create' ? 'workspace' : null;
+}
+
 export default function OnboardPage() {
   const router = useRouter();
   const urlStep = typeof router.query.step === 'string' ? router.query.step : null;
   const mode: OnboardMode = router.query.mode === 'create' ? 'create' : 'first';
-  // On the provisioning step we need to poll until runtime flips to 'ready'.
-  // SWR's refreshInterval is read on every render, so we can flip it from a
-  // local state that updates as the derived step changes.
-  const [pollMs, setPollMs] = useState(0);
   const { data: current, error, mutate, isLoading, isValidating } = useSWR<OnboardCurrentPayload>(
     '/api/workspaces/current',
     fetcher,
-    { refreshInterval: pollMs },
+    {
+      refreshInterval: (latest) =>
+        deriveOnboardRefreshStep(latest, urlStep, mode) === 'provisioning' ? 1500 : 0,
+    },
   );
 
   // Lifted so the editorial pane reacts live to the form as the user types.
   const [workspaceName, setWorkspaceName] = useState<string>('');
-  const [seededFromServer, setSeededFromServer] = useState(false);
+  const seededFromServerRef = useRef(false);
   const [inviteText, setInviteText] = useState<string>('');
   // mode=create: id of the workspace we just POST'd /api/workspaces for. We
   // poll /api/workspaces (the list endpoint) for THIS workspace's status —
@@ -118,11 +134,11 @@ export default function OnboardPage() {
   // the user is creating a brand-new workspace.
   useEffect(() => {
     if (mode === 'create') return;
-    if (!seededFromServer && current?.workspace?.name) {
-      setWorkspaceName(current.workspace.name);
-      setSeededFromServer(true);
+    if (!seededFromServerRef.current && current?.workspace?.name) {
+      seededFromServerRef.current = true;
+      queueMicrotask(() => setWorkspaceName(current.workspace!.name));
     }
-  }, [current, seededFromServer, mode]);
+  }, [current, mode]);
 
   // In create mode, while SWR is still loading we should still show the
   // workspace-name step (the user has no need to wait on /workspaces/current
@@ -135,11 +151,6 @@ export default function OnboardPage() {
   const topbarWorkspaceName = current?.workspace?.name ?? '';
 
   const inviteLines = useMemo(() => parseInviteEmails(inviteText), [inviteText]);
-
-  // Poll on the provisioning step; idle otherwise.
-  useEffect(() => {
-    setPollMs(step === 'provisioning' ? 1500 : 0);
-  }, [step]);
 
   // First-time (mode='first') flow: when the runtime flips ready on the
   // provisioning step, hand off to the connect step. When derive returns

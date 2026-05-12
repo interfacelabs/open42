@@ -1,4 +1,5 @@
 import Head from 'next/head';
+import Link from 'next/link';
 import { useRouter } from 'next/router';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { motion } from 'motion/react';
@@ -386,12 +387,12 @@ function EmptyState({
             Clear filter
           </button>
         ) : (
-          <a
+          <Link
             href="/settings/connections/add"
             className="btn-primary"
           >
             Connect a source
-          </a>
+          </Link>
         )}
       </div>
     </motion.div>
