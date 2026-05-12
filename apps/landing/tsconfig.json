@@ -6,9 +6,10 @@
     "allowJs": true,
     "noEmit": true,
     "incremental": true,
+    "noUncheckedIndexedAccess": false,
     "plugins": [{ "name": "next" }],
     "paths": {
-      "@/*": ["./*"]
+      "@/*": ["./src/*"]
     }
   },
   "include": ["next-env.d.ts", "**/*.ts", "**/*.tsx", ".next/types/**/*.ts"],
