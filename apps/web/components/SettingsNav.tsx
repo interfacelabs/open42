@@ -8,7 +8,7 @@ const TABS: Array<{ id: SettingsTab; label: string; href: string }> = [
   { id: 'connections', label: 'Connections', href: '/settings/connections' },
   { id: 'ingest', label: 'Ingest', href: '/settings/ingest' },
   { id: 'api-keys', label: 'API keys', href: '/settings/api-keys' },
-  { id: 'plan', label: 'Plan', href: '/settings/plan' },
+  { id: 'plan', label: 'Billing', href: '/settings/plan' },
 ];
 
 /**

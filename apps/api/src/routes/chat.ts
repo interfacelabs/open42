@@ -3,6 +3,7 @@ import { and, desc, eq } from 'drizzle-orm';
 import { Router } from 'express';
 
 import { resolveLlmKey, type ResolvedLlmKey } from '../auth/llm-keys.js';
+import { recordLlmUsage } from '../billing/usage.js';
 import { isUuid } from '../auth/uuid.js';
 import { db, schema } from '../db/client.js';
 import { GbrainCitationChunk, GbrainClient } from '../gbrain/client.js';
@@ -102,13 +103,24 @@ chatRouter.post('/', requireMembership({ from: 'body' }), async (req, res, next)
       return;
     }
 
-    await streamAnthropicAnswer({
+    const usedSharedAnthropic = await streamAnthropicAnswer({
       resolvedAnthropic,
       query,
       chunks,
       skillContext,
       res,
     });
+    if (usedSharedAnthropic && resolvedAnthropic?.source === 'shared') {
+      void recordLlmUsage({
+        workspaceId: workspace.id,
+        provider: 'anthropic',
+        scope: 'chat',
+        keySource: 'shared',
+        units: 1,
+      }).catch(() => {
+        // Billing ledger writes must never corrupt a completed chat stream.
+      });
+    }
     res.end(JSON.stringify({ type: 'done' }) + '\n');
   } catch (err) {
     next(err);
@@ -182,7 +194,7 @@ async function streamAnthropicAnswer(options: {
   chunks: GbrainCitationChunk[];
   skillContext: SkillContext | null;
   res: { write: (chunk: string) => void };
-}) {
+}): Promise<boolean> {
   if (!options.resolvedAnthropic || options.resolvedAnthropic.apiKey === 'sk-ant-...') {
     const first = options.chunks[0];
     options.res.write(
@@ -197,7 +209,7 @@ async function streamAnthropicAnswer(options: {
         text: 'Review the cited source before acting on this policy.',
       }) + '\n',
     );
-    return;
+    return false;
   }
 
   const anthropic = new Anthropic({ apiKey: options.resolvedAnthropic.apiKey });
@@ -227,6 +239,7 @@ async function streamAnthropicAnswer(options: {
       options.res.write(JSON.stringify({ type: 'token', text: event.delta.text }) + '\n');
     }
   }
+  return true;
 }
 
 /**

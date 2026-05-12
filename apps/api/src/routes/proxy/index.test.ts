@@ -18,10 +18,18 @@ describe('LLM egress proxy routes', () => {
     info: vi.fn(),
     error: vi.fn(),
   };
+  const recordLlmUsage = vi.fn(async () => ({
+    status: 'metered' as const,
+    usageEventId: 'usage-1',
+    units: 1,
+    includedUnits: 0,
+    billableUnits: 1,
+  }));
 
   beforeEach(() => {
     logger.info.mockReset();
     logger.error.mockReset();
+    recordLlmUsage.mockClear();
   });
 
   it('authenticates an OpenAI proxy token, swaps upstream auth, and streams headers/body', async () => {
@@ -49,6 +57,7 @@ describe('LLM egress proxy routes', () => {
         verifyProxyToken: async (token) =>
           token === 'tnt_workspace_abc' ? { workspaceId: 'workspace-abc' } : null,
         resolveLlmKey: sharedResolver('upstream-openai'),
+        recordLlmUsage,
       }),
     );
 
@@ -89,6 +98,13 @@ describe('LLM egress proxy routes', () => {
       keySource: 'shared',
       durationMs: 0,
     });
+    expect(recordLlmUsage).toHaveBeenCalledWith({
+      workspaceId: 'workspace-abc',
+      provider: 'openai',
+      scope: 'chat',
+      keySource: 'shared',
+      units: 1,
+    });
   });
 
   it('accepts Anthropic x-api-key tenant auth and inserts Anthropic upstream headers', async () => {
@@ -103,6 +119,7 @@ describe('LLM egress proxy routes', () => {
         verifyProxyToken: async (token) =>
           token === 'tnt_workspace_xyz' ? { workspaceId: 'workspace-xyz' } : null,
         resolveLlmKey: sharedResolver('upstream-anthropic'),
+        recordLlmUsage,
       }),
     );
 
@@ -119,6 +136,13 @@ describe('LLM egress proxy routes', () => {
     expect(headers.get('x-api-key')).toBe('upstream-anthropic');
     expect(headers.get('anthropic-version')).toBe('2023-06-01');
     expect(headers.get('authorization')).toBeNull();
+    expect(recordLlmUsage).toHaveBeenCalledWith({
+      workspaceId: 'workspace-xyz',
+      provider: 'anthropic',
+      scope: 'chat',
+      keySource: 'shared',
+      units: 1,
+    });
   });
 
   it('returns 404 for provider endpoints outside the allowlist', async () => {
@@ -130,6 +154,7 @@ describe('LLM egress proxy routes', () => {
         logger,
         verifyProxyToken: async () => ({ workspaceId: 'workspace-abc' }),
         resolveLlmKey: sharedResolver('upstream-openai'),
+        recordLlmUsage,
       }),
     );
 
@@ -151,6 +176,7 @@ describe('LLM egress proxy routes', () => {
         logger,
         verifyProxyToken: async () => ({ workspaceId: 'workspace-abc' }),
         resolveLlmKey: sharedResolver('upstream-openai'),
+        recordLlmUsage,
       }),
     );
 
@@ -195,6 +221,7 @@ describe('LLM egress proxy routes', () => {
         logger,
         verifyProxyToken: async () => ({ workspaceId: 'workspace-abc' }),
         resolveLlmKey: vi.fn(async () => null),
+        recordLlmUsage,
       }),
     );
 
@@ -225,6 +252,7 @@ describe('LLM egress proxy routes', () => {
         now: () => 0,
         verifyProxyToken: async () => ({ workspaceId: 'workspace-abc' }),
         resolveLlmKey,
+        recordLlmUsage,
       }),
     );
 
@@ -248,6 +276,7 @@ describe('LLM egress proxy routes', () => {
         keySource: 'tenant',
       }),
     );
+    expect(recordLlmUsage).not.toHaveBeenCalled();
   });
 
   it('falls back to the shared env key when the resolver reports source=shared', async () => {
@@ -267,6 +296,7 @@ describe('LLM egress proxy routes', () => {
         now: () => 0,
         verifyProxyToken: async () => ({ workspaceId: 'workspace-xyz' }),
         resolveLlmKey,
+        recordLlmUsage,
       }),
     );
 
@@ -289,6 +319,13 @@ describe('LLM egress proxy routes', () => {
         keySource: 'shared',
       }),
     );
+    expect(recordLlmUsage).toHaveBeenCalledWith({
+      workspaceId: 'workspace-xyz',
+      provider: 'anthropic',
+      scope: 'chat',
+      keySource: 'shared',
+      units: 1,
+    });
   });
 
   it('returns 503 without calling upstream when the resolver returns null', async () => {
@@ -301,6 +338,7 @@ describe('LLM egress proxy routes', () => {
         logger,
         verifyProxyToken: async () => ({ workspaceId: 'workspace-abc' }),
         resolveLlmKey,
+        recordLlmUsage,
       }),
     );
 
@@ -331,6 +369,7 @@ describe('LLM egress proxy routes', () => {
         logger,
         verifyProxyToken: async () => ({ workspaceId: 'workspace-abc' }),
         resolveLlmKey,
+        recordLlmUsage,
       }),
     );
 
@@ -371,6 +410,7 @@ describe('LLM egress proxy routes', () => {
         now: () => 0,
         verifyProxyToken,
         resolveLlmKey: sharedResolver('upstream-openai'),
+        recordLlmUsage,
       }),
     );
 
@@ -406,6 +446,7 @@ describe('LLM egress proxy routes', () => {
         logger,
         verifyProxyToken: async () => ({ workspaceId: 'workspace-abc' }),
         resolveLlmKey: sharedResolver('upstream-openai'),
+        recordLlmUsage,
       }),
     );
 

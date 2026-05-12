@@ -36,7 +36,8 @@
     "pg": "^8.13.1",
     "pino": "^9.5.0",
     "pino-pretty": "^13.0.0",
-    "resend": "^4"
+    "resend": "^4",
+    "stripe": "^22.1.1"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.4",

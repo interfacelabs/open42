@@ -7,6 +7,7 @@ import {
   resolveLlmKey as defaultResolveLlmKey,
   type LlmScope,
 } from '../../auth/llm-keys.js';
+import { recordLlmUsage as defaultRecordLlmUsage } from '../../billing/usage.js';
 import { decryptSecret as defaultDecryptSecret } from '../../crypto/envelope.js';
 import { sanitizeErrorForLog } from '../../middleware/error-sanitize.js';
 import { verifyProxyToken as defaultVerifyProxyToken } from '../../proxy/token.js';
@@ -57,6 +58,7 @@ export interface ProviderProxyDeps {
   now?: () => number;
   verifyProxyToken?: VerifyProxyToken;
   resolveLlmKey?: typeof defaultResolveLlmKey;
+  recordLlmUsage?: typeof defaultRecordLlmUsage;
   decrypt?: typeof defaultDecryptSecret;
 }
 
@@ -73,6 +75,7 @@ export function buildProviderProxy(
     deps.logger ??
     pino({ name: `proxy/${config.name}`, level: process.env.LOG_LEVEL ?? 'info' });
   const resolveLlmKey = deps.resolveLlmKey ?? defaultResolveLlmKey;
+  const recordLlmUsage = deps.recordLlmUsage ?? defaultRecordLlmUsage;
   const decrypt = deps.decrypt ?? defaultDecryptSecret;
   const failedAuth = new Map<string, { count: number; resetAt: number }>();
 
@@ -147,6 +150,20 @@ export function buildProviderProxy(
 
     res.status(upstream.status);
     copyResponseHeaders(upstream.headers, res);
+    if (shouldRecordBillableRequest(req.method, upstream.status, resolved.source)) {
+      void recordLlmUsage({
+        workspaceId: auth.workspaceId,
+        provider: config.name,
+        scope,
+        keySource: resolved.source,
+        units: 1,
+      }).catch((err) => {
+        logger.error(
+          { err: sanitizeErrorForLog(err), workspaceId: auth.workspaceId, route: req.path },
+          'proxy_usage_record_failed',
+        );
+      });
+    }
     logOnResponseClose(logger, {
       workspaceId: auth.workspaceId,
       route: req.path,
@@ -308,6 +325,14 @@ function secondsUntil(resetAt: number, now: number): number {
 
 function isRateLimitHeader(name: string): boolean {
   return name.includes('ratelimit') || name.startsWith('rate-limit');
+}
+
+function shouldRecordBillableRequest(
+  method: string,
+  status: number,
+  keySource: 'tenant' | 'shared',
+): boolean {
+  return method === 'POST' && status >= 200 && status < 400 && keySource === 'shared';
 }
 
 function logOnResponseClose(

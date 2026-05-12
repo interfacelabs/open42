@@ -6,6 +6,7 @@ import cookieParser from 'cookie-parser';
 import pino from 'pino';
 
 import { csrfMiddleware } from './middleware/csrf.js';
+import { startBillingUsageRetryLoop, type BillingUsageRetryLoopHandle } from './billing/usage.js';
 import { PINO_ERROR_REDACT_PATHS, sanitizeErrorForLog } from './middleware/error-sanitize.js';
 import { requireMembership } from './middleware/require-membership.js';
 import { requireRole } from './middleware/require-role.js';
@@ -16,11 +17,7 @@ import {
   API_PUBLIC_URL,
   WEB_PUBLIC_URL,
 } from './env.js';
-import {
-  createComposioClient,
-  noopComposioStub,
-  type ComposioClient,
-} from './composio/client.js';
+import { createComposioClient, noopComposioStub, type ComposioClient } from './composio/client.js';
 import { makeConnectorRegistry } from './connectors/registry.js';
 import { buildGbrainForWorkspace } from './gbrain/factory.js';
 import { startScheduler, type SchedulerHandle } from './ingest/orchestrator.js';
@@ -40,12 +37,18 @@ import { buildIngestRouter } from './routes/workspaces/ingest.js';
 import { buildWorkspaceIndexRouter } from './routes/workspaces/index-router.js';
 import { buildInvitesRouter } from './routes/workspaces/invites.js';
 import { buildMembersRouter } from './routes/workspaces/members.js';
+import { buildWorkspaceBillingRouter } from './routes/workspaces/billing.js';
 import { buildWorkspaceProvisionRouter } from './routes/workspaces/provision.js';
 import { buildHealthzRouter } from './routes/healthz.js';
 import { libraryRouter } from './routes/library/index.js';
 import { skillsRouter } from './routes/skills/mint.js';
 import { buildComposioWebhookRouter } from './routes/webhooks/composio.js';
-import { runWorkspaceCycle, type OrchestratorDeps, type RunCycleOptions } from './ingest/orchestrator.js';
+import { buildStripeWebhookRouter } from './routes/webhooks/stripe.js';
+import {
+  runWorkspaceCycle,
+  type OrchestratorDeps,
+  type RunCycleOptions,
+} from './ingest/orchestrator.js';
 
 const logger = pino({
   level: process.env.LOG_LEVEL ?? 'info',
@@ -66,6 +69,7 @@ const port = Number(process.env.API_PORT ?? portFromUrl(process.env.API_PUBLIC_U
 
 export let composio: ComposioClient | null = null;
 export let scheduler: SchedulerHandle | null = null;
+export let billingUsageRetryLoop: BillingUsageRetryLoopHandle | null = null;
 let orchestratorDeps: OrchestratorDeps | null = null;
 const connectionRouteDeps: { composio: ComposioClient | null } = { composio: null };
 
@@ -123,14 +127,12 @@ app.use(
     kick: kickWorkspaceIngest,
   }),
 );
+app.use('/webhooks/stripe', buildStripeWebhookRouter());
 app.use(express.json({ limit: '1mb' }));
 app.use(cookieParser());
 app.use(
   csrfMiddleware({
-    allowedOrigins: [
-      WEB_PUBLIC_URL,
-      API_PUBLIC_URL,
-    ],
+    allowedOrigins: [WEB_PUBLIC_URL, API_PUBLIC_URL],
   }),
 );
 
@@ -186,6 +188,11 @@ app.use(
   workspaceCredentialsRouter,
 );
 app.use(
+  '/workspaces/:id/billing',
+  requireRole(['owner'], { from: 'param' }, 'forbidden_owner_only'),
+  buildWorkspaceBillingRouter(),
+);
+app.use(
   '/workspaces',
   buildIngestRouter({
     runCycle: async (workspaceId: string, opts?: RunCycleOptions) => {
@@ -198,19 +205,11 @@ app.use('/chat', chatRouter);
 // Library lives under `/workspaces/:id/library` so the caller's membership is
 // asserted via `requireMembership` instead of falling back to "first owned
 // workspace" — broken for users who own 2+.
-app.use(
-  '/workspaces/:id/library',
-  requireMembership({ from: 'param' }),
-  libraryRouter,
-);
+app.use('/workspaces/:id/library', requireMembership({ from: 'param' }), libraryRouter);
 // Same shape for skills (list / read / mint / revise / export). Was
 // previously mounted at `/skills` and resolved "first owned workspace" via
 // resolveOwnerWorkspaceId — broken under multi-workspace ownership.
-app.use(
-  '/workspaces/:id/skills',
-  requireMembership({ from: 'param' }),
-  skillsRouter,
-);
+app.use('/workspaces/:id/skills', requireMembership({ from: 'param' }), skillsRouter);
 
 // Fallback 404
 app.use((_req, res) => {
@@ -221,17 +220,10 @@ app.use((_req, res) => {
 // upstream) may echo tool args inside error payloads, which Pino's default
 // serializer would walk verbatim into our persistent logs. `sanitizeErrorForLog`
 // allow-lists name/message/code/status/bodyLength only.
-app.use(
-  (
-    err: Error,
-    _req: express.Request,
-    res: express.Response,
-    _next: express.NextFunction,
-  ) => {
-    logger.error({ err: sanitizeErrorForLog(err) }, 'unhandled_error');
-    res.status(500).json({ error: 'internal_error' });
-  },
-);
+app.use((err: Error, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
+  logger.error({ err: sanitizeErrorForLog(err) }, 'unhandled_error');
+  res.status(500).json({ error: 'internal_error' });
+});
 
 const server = app.listen(port, () => {
   logger.info(`open42-api listening on :${port}`);
@@ -241,6 +233,7 @@ const server = app.listen(port, () => {
   // another worker (or this same process on restart) picks the job back
   // up after the stalled-interval timeout. No DB sweep required.
   startProvisionWorker();
+  billingUsageRetryLoop = startBillingUsageRetryLoop({ logger });
 });
 
 // Graceful shutdown — drain in-flight jobs, close Redis sockets, then exit.
@@ -257,6 +250,7 @@ async function gracefulShutdown(signal: string): Promise<void> {
   if (scheduler) {
     await scheduler.stop();
   }
+  billingUsageRetryLoop?.stop();
   await stopProvisionWorker();
   await closeProvisionQueue();
   await closeAllRedisConnections();
