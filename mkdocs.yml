@@ -1,5 +1,5 @@
-site_name: Open42 Architecture
-site_description: Architecture and operations notes for Open42.
+site_name: Open42 Engineering Docs
+site_description: Code-derived architecture and operations notes for Open42.
 site_url: https://interfacelabs.github.io/open42/
 repo_url: https://github.com/interfacelabs/open42
 repo_name: interfacelabs/open42
@@ -24,14 +24,19 @@ theme:
 
 nav:
   - Home: index.md
+  - Source Map: source-map.md
   - Architecture:
-      - Overview: architecture/index.md
+      - System Overview: architecture/index.md
       - Runtime Boundaries: architecture/runtime-boundaries.md
       - Tenant Provisioning: architecture/tenant-provisioning.md
       - Data Model: architecture/data-model.md
+      - Connectors and Ingest: architecture/connectors-ingest.md
+      - Security Model: architecture/security.md
   - Operations:
       - Local Development: operations/local-development.md
-      - Fly Tenants: operations/fly-tenants.md
+      - Self-Hosting: operations/self-hosting.md
+      - Cloud Operations: operations/cloud.md
+      - Verification: operations/verification.md
 
 markdown_extensions:
   - admonition
