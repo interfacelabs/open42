@@ -14,17 +14,13 @@ const envPath = resolve(process.cwd(), envFileArg);
 const existing = printOnly ? new Map() : parseEnvFile(envPath);
 const workspaceId = valueOrGenerated(existing, 'OPEN42_SINGLE_WORKSPACE_ID', () => randomUUID());
 const generated = {
-  OPEN42_EDITION: 'community',
+  OPEN42_EDITION: process.env.OPEN42_EDITION ?? 'community',
   OPEN42_ALLOW_MULTI_WORKSPACE: 'false',
   OPEN42_ALLOW_SHARED_KEYS: 'false',
   OPEN42_KEK: valueOrGenerated(existing, 'OPEN42_KEK', randomHex32),
   SESSION_SECRET: valueOrGenerated(existing, 'SESSION_SECRET', randomHex32),
   OPEN42_SINGLE_WORKSPACE_ID: workspaceId,
-  OPEN42_TENANT_PROXY_TOKEN: valueOrGenerated(
-    existing,
-    'OPEN42_TENANT_PROXY_TOKEN',
-    () => `tnt_${workspaceId}_${randomBytes(16).toString('hex')}`,
-  ),
+  OPEN42_TENANT_PROXY_TOKEN: tenantProxyTokenForWorkspace(existing, workspaceId),
 };
 
 if (printOnly) {
@@ -94,6 +90,12 @@ function valueOrGenerated(existing, key, generate) {
   return isUsable(current) ? current : generate();
 }
 
+function tenantProxyTokenForWorkspace(existing, workspaceId) {
+  const current = existing.get('OPEN42_TENANT_PROXY_TOKEN');
+  if (isUsable(current) && current.startsWith(`tnt_${workspaceId}_`)) return current;
+  return `tnt_${workspaceId}_${randomBytes(16).toString('hex')}`;
+}
+
 async function askIfMissing(rl, existing, key, label) {
   const current = existing.get(key);
   if (isUsable(current)) return current;
@@ -123,6 +125,9 @@ async function upsertEnvFile(path, values) {
     if (!match?.[1] || !(match[1] in values)) return line;
     seen.add(match[1]);
     const current = match[2] ?? '';
+    if (match[1] === 'OPEN42_TENANT_PROXY_TOKEN' && current !== values[match[1]]) {
+      return `${match[1]}=${values[match[1]]}`;
+    }
     return isUsable(current) ? line : `${match[1]}=${values[match[1]]}`;
   });
   for (const [key, value] of Object.entries(values)) {
