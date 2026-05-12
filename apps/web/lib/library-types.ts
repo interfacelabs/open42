@@ -61,10 +61,10 @@ export function findCollection(id: string): LibraryCollection | undefined {
 }
 
 /**
- * Freshness bucket per PHILOSOPHY.md "Freshness is visible by default":
- *   <90d  → fresh
+ * Freshness bucket. Stale data flags itself; freshness is visible by default.
+ *   <90d   → fresh
  *   90–365d → soft warning
- *   >365d → strong warning
+ *   >365d  → strong warning
  */
 export type Freshness = 'fresh' | 'aging' | 'stale';
 

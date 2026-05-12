@@ -1,9 +1,8 @@
 /**
  * Open42 Postgres schema (Drizzle).
- * Matches the schema in ENGINEERING.md §"Database schema (P1)".
  *
+ * Open42's metadata only — auth, workspaces, audit, jobs.
  * gbrain has its own pgvector store inside each tenant runtime.
- * This schema is Open42's metadata only — auth, workspaces, audit, jobs.
  */
 import {
   pgTable,

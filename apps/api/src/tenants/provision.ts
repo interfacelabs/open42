@@ -713,10 +713,9 @@ export function gbrainGitRef(
 ): string {
   // Pinned to the immutable v0.31.3 release commit on garrytan/gbrain master.
   // Branches are mutable (a force-push would silently land in the next image
-  // rebuild), so we pin to the SHA. Bump
-  // deliberately as part of an Open42 release — see
-  // ENGINEERING.md §gbrain version pinning. Mirrors the default in
-  // infra/Dockerfile.gbrain-tenant.
+  // rebuild), so we pin to the SHA. Bumping gbrain is a deliberate
+  // Open42-release event, not a transparent dependency upgrade. Mirrors the
+  // default in infra/Dockerfile.gbrain-tenant.
   const ref = env.GBRAIN_GIT_REF ?? DEFAULT_GBRAIN_GIT_REF;
   // Production fail-loud: reject anything that isn't a 40-char SHA so a stray
   // branch ref (mutable, force-pushable) can't sneak into a production image
