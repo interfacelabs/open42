@@ -20,6 +20,7 @@ interface Connection {
 
 interface ConnectionsPayload {
   connections: Connection[];
+  composioEnabled?: boolean;
 }
 
 const fetcher = (url: string) => fetch(url).then((res) => res.json());
@@ -133,6 +134,7 @@ export default function AddConnectionPage() {
           <NotionModal
             onClose={() => setModalOpen(false)}
             onOAuth={connectOAuth}
+            composioEnabled={Boolean(data?.composioEnabled)}
             uploadState={uploadState}
             onUpload={uploadZip}
           />
@@ -204,11 +206,13 @@ function ProviderTile({
 function NotionModal({
   onClose,
   onOAuth,
+  composioEnabled,
   uploadState,
   onUpload,
 }: {
   onClose: () => void;
   onOAuth: () => void;
+  composioEnabled: boolean;
   uploadState: 'idle' | 'uploading' | 'done' | 'error';
   onUpload: (event: ChangeEvent<HTMLInputElement>) => void;
 }) {
@@ -236,21 +240,23 @@ function NotionModal({
           </Button>
         </div>
         <div className="mt-5 grid gap-3">
-          <button
-            type="button"
-            className="flex items-center justify-between rounded-xl border border-border-soft p-4 text-left transition-all duration-140 hover:-translate-y-px hover:border-blue-line hover:shadow-card"
-            onClick={onOAuth}
-          >
-            <span>
-              <span className="block text-[14px] font-medium text-text-primary">
-                Connect live
+          {composioEnabled ? (
+            <button
+              type="button"
+              className="flex items-center justify-between rounded-xl border border-border-soft p-4 text-left transition-all duration-140 hover:-translate-y-px hover:border-blue-line hover:shadow-card"
+              onClick={onOAuth}
+            >
+              <span>
+                <span className="block text-[14px] font-medium text-text-primary">
+                  Connect live
+                </span>
+                <span className="mt-0.5 block text-[12.5px] text-text-subtle">
+                  OAuth via Composio · keeps in sync
+                </span>
               </span>
-              <span className="mt-0.5 block text-[12.5px] text-text-subtle">
-                OAuth via Composio · keeps in sync
-              </span>
-            </span>
-            <PlugZap className="h-5 w-5 text-blue" strokeWidth={1.6} />
-          </button>
+              <PlugZap className="h-5 w-5 text-blue" strokeWidth={1.6} />
+            </button>
+          ) : null}
           <label className="flex cursor-pointer items-center justify-between rounded-xl border border-border-soft p-4 text-left transition-all duration-140 hover:-translate-y-px hover:border-blue-line hover:shadow-card">
             <span>
               <span className="block text-[14px] font-medium text-text-primary">
@@ -282,4 +288,3 @@ function NotionModal({
     </div>
   );
 }
-

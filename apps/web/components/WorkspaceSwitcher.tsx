@@ -17,7 +17,10 @@ import { useWorkspaceStore } from '@/lib/workspaces/store';
  */
 export default function WorkspaceSwitcher() {
   const router = useRouter();
-  const { workspaces, currentWorkspaceId, switchTo } = useWorkspaceStore();
+  const workspaces = useWorkspaceStore((s) => s.workspaces);
+  const currentWorkspaceId = useWorkspaceStore((s) => s.currentWorkspaceId);
+  const allowMultiWorkspace = useWorkspaceStore((s) => s.allowMultiWorkspace);
+  const switchTo = useWorkspaceStore((s) => s.switchTo);
   const [open, setOpen] = useState(false);
   const containerRef = useRef<HTMLDivElement | null>(null);
 
@@ -112,20 +115,22 @@ export default function WorkspaceSwitcher() {
               ))}
             </div>
           )}
-          <div className="border-t border-border px-1 py-1">
-            <button
-              type="button"
-              role="menuitem"
-              className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-sm text-text-primary hover:bg-secondary"
-              onClick={() => {
-                setOpen(false);
-                void router.push('/auth/onboard?mode=create');
-              }}
-            >
-              <Plus className="h-4 w-4" aria-hidden />
-              Create new workspace
-            </button>
-          </div>
+          {allowMultiWorkspace ? (
+            <div className="border-t border-border px-1 py-1">
+              <button
+                type="button"
+                role="menuitem"
+                className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-sm text-text-primary hover:bg-secondary"
+                onClick={() => {
+                  setOpen(false);
+                  void router.push('/auth/onboard?mode=create');
+                }}
+              >
+                <Plus className="h-4 w-4" aria-hidden />
+                Create new workspace
+              </button>
+            </div>
+          ) : null}
         </div>
       )}
     </div>

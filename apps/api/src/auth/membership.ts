@@ -71,7 +71,7 @@ export async function getWorkspaceReadiness(
     .select({
       status: schema.workspaces.status,
       gbrainBaseUrl: schema.workspaces.gbrainBaseUrl,
-      flyPrivateIp: schema.workspaces.flyPrivateIp,
+      gbrainPrivateAddress: schema.workspaces.gbrainPrivateAddress,
       gbrainOauthClientId: schema.workspaces.gbrainOauthClientId,
       gbrainOauthClientSecretCiphertext:
         schema.workspaces.gbrainOauthClientSecretCiphertext,
@@ -86,7 +86,7 @@ export async function getWorkspaceReadiness(
     .limit(1);
   if (!row) return null;
   const gbrainReady = Boolean(
-    (row.gbrainBaseUrl || row.flyPrivateIp) &&
+    (row.gbrainBaseUrl || row.gbrainPrivateAddress) &&
       row.gbrainOauthClientId &&
       row.gbrainOauthClientSecretCiphertext,
   );

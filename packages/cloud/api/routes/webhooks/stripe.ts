@@ -2,8 +2,7 @@ import express, { Router } from 'express';
 import pino from 'pino';
 import type Stripe from 'stripe';
 
-import { STRIPE_WEBHOOK_SECRET } from '../../env.js';
-import { sanitizeErrorForLog } from '../../middleware/error-sanitize.js';
+import { sanitizeErrorForLog } from '../../../../../apps/api/src/middleware/error-sanitize.js';
 import { getStripeClient } from '../../billing/stripe-client.js';
 import { syncCheckoutSession, syncSubscription } from '../../billing/service.js';
 import {
@@ -11,7 +10,7 @@ import {
   markStripeWebhookEventFailed,
   markStripeWebhookEventProcessed,
 } from '../../billing/webhook-events.js';
-import { db as defaultDb } from '../../db/client.js';
+import { db as defaultDb } from '../../../../../apps/api/src/db/client.js';
 
 const logger = pino({ name: 'routes/webhooks/stripe', level: process.env.LOG_LEVEL ?? 'info' });
 
@@ -24,7 +23,7 @@ export interface StripeWebhookRouterDeps {
 export function buildStripeWebhookRouter(deps: StripeWebhookRouterDeps = {}) {
   const router = Router();
   const stripe = deps.stripe === undefined ? getStripeClient() : deps.stripe;
-  const webhookSecret = deps.webhookSecret ?? STRIPE_WEBHOOK_SECRET;
+  const webhookSecret = deps.webhookSecret ?? process.env.STRIPE_WEBHOOK_SECRET ?? '';
 
   router.post('/', express.raw({ type: 'application/json' }), async (req, res, next) => {
     try {

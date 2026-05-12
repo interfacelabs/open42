@@ -7,7 +7,7 @@ import {
   resolveLlmKey as defaultResolveLlmKey,
   type LlmScope,
 } from '../../auth/llm-keys.js';
-import { recordLlmUsage as defaultRecordLlmUsage } from '../../billing/usage.js';
+import { recordCloudLlmUsage as defaultRecordLlmUsage } from '../../cloud-hooks.js';
 import { decryptSecret as defaultDecryptSecret } from '../../crypto/envelope.js';
 import { sanitizeErrorForLog } from '../../middleware/error-sanitize.js';
 import { verifyProxyToken as defaultVerifyProxyToken } from '../../proxy/token.js';

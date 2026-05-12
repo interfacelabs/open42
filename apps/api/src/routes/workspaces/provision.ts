@@ -5,6 +5,11 @@ import { resolveOwnerWorkspaceId } from '../../auth/membership.js';
 import { generateInviteLink as defaultGenerateInviteLink } from '../../auth/supabase.js';
 import { validateSession } from '../../auth/sessions.js';
 import { db, schema } from '../../db/client.js';
+import {
+  OPEN42_ALLOW_MULTI_WORKSPACE,
+  OPEN42_ALLOW_SHARED_KEYS,
+  OPEN42_SINGLE_WORKSPACE_ID,
+} from '../../env.js';
 import { sendInvitesForWorkspace } from '../../invites/send-invites.js';
 import { sendEmail as defaultSendEmail } from '../../integrations/resend.js';
 import { requireRole } from '../../middleware/require-role.js';
@@ -26,7 +31,6 @@ const SAFE_PROVISIONING_ERROR_CODES = new Set([
   'gbrain_health_timeout',
   'oauth_registration_failed',
   'gbrain_version_mismatch',
-  'fly_api_failed',
   'provisioning_failed',
 ]);
 
@@ -74,6 +78,11 @@ interface CurrentPayload {
   invites: Array<{ id: string; email: string; status: string; createdAt: Date }>;
   connections: Array<{ id: string; kind: string; status: string; displayName: string }>;
   lastJob: { id: string; status: string; pagesTotal: number; createdAt: Date } | null;
+  requiresProviderKeys: boolean;
+  providerKeys: {
+    anthropicChat: boolean;
+    openaiEmbed: boolean;
+  };
 }
 
 export interface InviteRow {
@@ -396,9 +405,21 @@ function createDrizzleWorkspaceLifecycleRepo(): WorkspaceLifecycleRepo {
           return false;
         }
 
+        const [workspaceCount] = await tx
+          .select({ count: sql<number>`COUNT(*)::int` })
+          .from(schema.workspaces)
+          .where(sql`${schema.workspaces.deletedAt} IS NULL`);
+        const fixedWorkspaceId =
+          !OPEN42_ALLOW_MULTI_WORKSPACE &&
+          Number(workspaceCount?.count ?? 0) === 0 &&
+          OPEN42_SINGLE_WORKSPACE_ID
+            ? OPEN42_SINGLE_WORKSPACE_ID
+            : undefined;
+
         const [workspace] = await tx
           .insert(schema.workspaces)
           .values({
+            id: fixedWorkspaceId,
             ownerUserId: userId,
             name,
             gbrainVersion: process.env.GBRAIN_VERSION ?? '0.31.3',
@@ -548,6 +569,19 @@ async function currentPayload(userId: string): Promise<CurrentPayload | null> {
         .orderBy(desc(schema.ingestJobs.createdAt))
         .limit(1)
     : [];
+  const credentials = workspace
+    ? await db
+        .select({
+          provider: schema.workspaceCredentials.provider,
+          scope: schema.workspaceCredentials.scope,
+        })
+        .from(schema.workspaceCredentials)
+        .where(eq(schema.workspaceCredentials.workspaceId, workspace.id))
+    : [];
+  const providerKeys = {
+    anthropicChat: credentials.some((row) => row.provider === 'anthropic' && row.scope === 'chat'),
+    openaiEmbed: credentials.some((row) => row.provider === 'openai' && row.scope === 'embed'),
+  };
 
   return {
     user: { id: user.id, email: user.email },
@@ -555,6 +589,8 @@ async function currentPayload(userId: string): Promise<CurrentPayload | null> {
     invites,
     connections,
     lastJob: lastJob ?? null,
+    requiresProviderKeys: !OPEN42_ALLOW_SHARED_KEYS,
+    providerKeys,
   };
 }
 
@@ -626,7 +662,7 @@ export async function currentWorkspaceForUser(userId: string): Promise<CurrentWo
 
 function toCurrentWorkspace(workspace: typeof schema.workspaces.$inferSelect): CurrentWorkspace {
   const gbrainReady = Boolean(
-    (workspace.gbrainBaseUrl || workspace.flyPrivateIp) &&
+    (workspace.gbrainBaseUrl || workspace.gbrainPrivateAddress) &&
     workspace.gbrainOauthClientId &&
     workspace.gbrainOauthClientSecretCiphertext,
   );

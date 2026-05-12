@@ -1,11 +1,4 @@
-import {
-  OPEN42_BASIC_INCLUDED_REQUESTS,
-  STRIPE_BASIC_MONTHLY_PRICE_ID,
-  STRIPE_PLATFORM_REQUEST_METERED_PRICE_ID,
-  STRIPE_PLATFORM_REQUEST_METER_EVENT_NAME,
-  STRIPE_SECRET_KEY,
-  WEB_PUBLIC_URL,
-} from '../env.js';
+import { WEB_PUBLIC_URL } from '../../../../apps/api/src/env.js';
 
 export type BillingMode = 'platform' | 'byok';
 
@@ -30,19 +23,12 @@ export function getBillingConfig(env: NodeJS.ProcessEnv = process.env): BillingC
 
 function readBillingConfig(env: NodeJS.ProcessEnv): BillingConfig {
   return {
-    stripeSecretKey: env.STRIPE_SECRET_KEY?.trim() || STRIPE_SECRET_KEY,
+    stripeSecretKey: env.STRIPE_SECRET_KEY?.trim() || '',
     webPublicUrl: (env.WEB_PUBLIC_URL ?? WEB_PUBLIC_URL).replace(/\/+$/, ''),
-    basicMonthlyPriceId: env.STRIPE_BASIC_MONTHLY_PRICE_ID?.trim() || STRIPE_BASIC_MONTHLY_PRICE_ID,
-    platformRequestMeteredPriceId:
-      env.STRIPE_PLATFORM_REQUEST_METERED_PRICE_ID?.trim() ||
-      STRIPE_PLATFORM_REQUEST_METERED_PRICE_ID,
-    platformRequestMeterEventName:
-      env.STRIPE_PLATFORM_REQUEST_METER_EVENT_NAME?.trim() ||
-      STRIPE_PLATFORM_REQUEST_METER_EVENT_NAME,
-    basicIncludedRequests: positiveInt(
-      env.OPEN42_BASIC_INCLUDED_REQUESTS ?? OPEN42_BASIC_INCLUDED_REQUESTS,
-      0,
-    ),
+    basicMonthlyPriceId: env.STRIPE_BASIC_MONTHLY_PRICE_ID?.trim() || '',
+    platformRequestMeteredPriceId: env.STRIPE_PLATFORM_REQUEST_METERED_PRICE_ID?.trim() || '',
+    platformRequestMeterEventName: env.STRIPE_PLATFORM_REQUEST_METER_EVENT_NAME?.trim() || '',
+    basicIncludedRequests: positiveInt(env.OPEN42_BASIC_INCLUDED_REQUESTS, 0),
   };
 }
 

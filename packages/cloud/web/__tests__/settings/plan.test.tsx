@@ -20,7 +20,7 @@ vi.mock('swr', async () => {
 });
 
 import useSWR from 'swr';
-import PlanSettingsPage from '@/pages/settings/plan';
+import PlanSettingsPage from '../../pages/settings/plan';
 
 describe('PlanSettingsPage', () => {
   const billing = {

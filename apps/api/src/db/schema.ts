@@ -2,7 +2,7 @@
  * Open42 Postgres schema (Drizzle).
  * Matches the schema in ENGINEERING.md §"Database schema (P1)".
  *
- * gbrain has its own pgvector store inside each tenant's Fly machine.
+ * gbrain has its own pgvector store inside each tenant runtime.
  * This schema is Open42's metadata only — auth, workspaces, audit, jobs.
  */
 import {
@@ -44,7 +44,6 @@ export const workspaceStatusEnum = pgEnum('workspace_status', [
   'deleted',
 ]);
 export const workspacePlanEnum = pgEnum('workspace_plan', ['starter', 'team', 'business']);
-export const workspaceBillingModeEnum = pgEnum('workspace_billing_mode', ['platform', 'byok']);
 export const workspaceInviteStatusEnum = pgEnum('workspace_invite_status', [
   'pending',
   'accepted',
@@ -68,13 +67,6 @@ export const connectionStatusEnum = pgEnum('connection_status', [
 export const ingestModeEnum = pgEnum('ingest_mode', ['import_once', 'periodic_pull']);
 export const llmProviderEnum = pgEnum('llm_provider', ['openai', 'anthropic']);
 export const llmScopeEnum = pgEnum('llm_scope', ['chat', 'embed']);
-export const billingUsageStatusEnum = pgEnum('billing_usage_status', [
-  'included',
-  'metered',
-  'unreported',
-  'failed',
-  'ignored',
-]);
 export const skillRevisionRoleEnum = pgEnum('skill_revision_role', ['you', 'brain']);
 
 // =====================================================================
@@ -102,22 +94,11 @@ export const workspaces = pgTable(
     id: uuid('id').primaryKey().defaultRandom(),
     name: text('name').notNull().default('Untitled workspace'),
     plan: workspacePlanEnum('plan'),
-    billingPlanKey: text('billing_plan_key').notNull().default('basic'),
-    billingMode: workspaceBillingModeEnum('billing_mode').notNull().default('platform'),
-    stripeCustomerId: text('stripe_customer_id'),
-    stripeSubscriptionId: text('stripe_subscription_id'),
-    stripeSubscriptionStatus: text('stripe_subscription_status'),
-    stripeSubscriptionCurrentPeriodStart: timestamp('stripe_subscription_current_period_start', {
-      withTimezone: true,
-    }),
-    stripeSubscriptionCurrentPeriodEnd: timestamp('stripe_subscription_current_period_end', {
-      withTimezone: true,
-    }),
     ownerUserId: uuid('owner_user_id')
       .notNull()
       .references(() => users.id, { onDelete: 'cascade' }),
-    flyMachineId: text('fly_machine_id'),
-    flyPrivateIp: text('fly_private_ip'),
+    tenantRuntimeId: text('tenant_runtime_id'),
+    gbrainPrivateAddress: text('gbrain_private_address'),
     gbrainBaseUrl: text('gbrain_base_url'),
     gbrainOauthClientId: text('gbrain_oauth_client_id'),
     // AES-GCM(client_secret, OPEN42_KEK). Plaintext NEVER stored.
@@ -142,12 +123,6 @@ export const workspaces = pgTable(
       'workspaces_ingest_interval_hours_range',
       sql`${t.ingestIntervalHours} BETWEEN 1 AND 168`,
     ),
-    stripeCustomerUniq: uniqueIndex('workspaces_stripe_customer_id_uniq')
-      .on(t.stripeCustomerId)
-      .where(sql`${t.stripeCustomerId} IS NOT NULL`),
-    stripeSubscriptionUniq: uniqueIndex('workspaces_stripe_subscription_id_uniq')
-      .on(t.stripeSubscriptionId)
-      .where(sql`${t.stripeSubscriptionId} IS NOT NULL`),
   }),
 );
 
@@ -527,84 +502,6 @@ export const workspaceCredentials = pgTable(
 );
 
 // =====================================================================
-// billing_usage_events (per-workspace shared-key request ledger)
-// Counts LLM/embedding requests that used Open42's shared provider keys.
-// BYOK calls are intentionally ignored for overage billing because the
-// upstream provider bills the customer's own account directly.
-// =====================================================================
-
-export const billingUsageEvents = pgTable(
-  'billing_usage_events',
-  {
-    id: uuid('id').primaryKey().defaultRandom(),
-    workspaceId: uuid('workspace_id')
-      .notNull()
-      .references(() => workspaces.id, { onDelete: 'cascade' }),
-    provider: llmProviderEnum('provider').notNull(),
-    scope: llmScopeEnum('scope').notNull(),
-    keySource: text('key_source').notNull(),
-    units: integer('units').notNull().default(1),
-    includedUnits: integer('included_units').notNull().default(0),
-    billableUnits: integer('billable_units').notNull().default(0),
-    status: billingUsageStatusEnum('status').notNull(),
-    stripeCustomerId: text('stripe_customer_id'),
-    stripeMeterEventName: text('stripe_meter_event_name'),
-    stripeMeterEventIdentifier: text('stripe_meter_event_identifier'),
-    error: text('error'),
-    occurredAt: timestamp('occurred_at', { withTimezone: true }).notNull().defaultNow(),
-    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
-  },
-  (t) => ({
-    workspaceOccurredIdx: index('billing_usage_events_workspace_occurred_idx').on(
-      t.workspaceId,
-      t.occurredAt,
-    ),
-    workspaceStatusIdx: index('billing_usage_events_workspace_status_idx').on(
-      t.workspaceId,
-      t.status,
-    ),
-    stripeMeterIdentifierUniq: uniqueIndex('billing_usage_events_stripe_meter_identifier_uniq')
-      .on(t.stripeMeterEventIdentifier)
-      .where(sql`${t.stripeMeterEventIdentifier} IS NOT NULL`),
-    unitsCheck: check('billing_usage_events_units_positive', sql`${t.units} > 0`),
-    includedUnitsCheck: check(
-      'billing_usage_events_included_units_nonnegative',
-      sql`${t.includedUnits} >= 0`,
-    ),
-    billableUnitsCheck: check(
-      'billing_usage_events_billable_units_nonnegative',
-      sql`${t.billableUnits} >= 0`,
-    ),
-    keySourceCheck: check(
-      'billing_usage_events_key_source_check',
-      sql`${t.keySource} IN ('tenant', 'shared')`,
-    ),
-  }),
-);
-
-// =====================================================================
-// stripe_webhook_events
-// Idempotency ledger for Stripe webhook delivery. Stripe retries and may
-// deliver duplicates; this table lets the webhook route claim, complete, and
-// safely ignore already-processed events.
-// =====================================================================
-
-export const stripeWebhookEvents = pgTable(
-  'stripe_webhook_events',
-  {
-    id: text('id').primaryKey(),
-    type: text('type').notNull(),
-    processingStartedAt: timestamp('processing_started_at', { withTimezone: true }),
-    processedAt: timestamp('processed_at', { withTimezone: true }),
-    error: text('error'),
-    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
-  },
-  (t) => ({
-    processedAtIdx: index('stripe_webhook_events_processed_at_idx').on(t.processedAt),
-  }),
-);
-
-// =====================================================================
 // Inferred types — re-export for use elsewhere in the API.
 // =====================================================================
 
@@ -625,7 +522,6 @@ export type SkillVersion = typeof skillVersions.$inferSelect;
 export type NewSkillVersion = typeof skillVersions.$inferInsert;
 export type SkillRevision = typeof skillRevisions.$inferSelect;
 export type NewSkillRevision = typeof skillRevisions.$inferInsert;
-export type StripeWebhookEvent = typeof stripeWebhookEvents.$inferSelect;
 export type Connection = typeof connections.$inferSelect;
 export type NewConnection = typeof connections.$inferInsert;
 export type ConnectionInitState = typeof connectionInitStates.$inferSelect;
@@ -634,5 +530,3 @@ export type McpAuditLog = typeof mcpAuditLog.$inferSelect;
 export type NewMcpAuditLog = typeof mcpAuditLog.$inferInsert;
 export type WorkspaceCredential = typeof workspaceCredentials.$inferSelect;
 export type NewWorkspaceCredential = typeof workspaceCredentials.$inferInsert;
-export type BillingUsageEvent = typeof billingUsageEvents.$inferSelect;
-export type NewBillingUsageEvent = typeof billingUsageEvents.$inferInsert;

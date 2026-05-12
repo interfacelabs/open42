@@ -70,6 +70,7 @@ function makeRepo(overrides: Partial<IndexRouterRepo> = {}): IndexRouterRepo {
     listMembershipsForUser: vi.fn(async () => []),
     setCurrentWorkspace: vi.fn(async () => {}),
     findWorkspace: vi.fn(async () => null),
+    countActiveWorkspaces: vi.fn(async () => 0),
     ...overrides,
   };
 }
@@ -84,7 +85,7 @@ function makeApp(opts: {
   app.use(
     '/workspaces',
     buildWorkspaceIndexRouter({
-      repo: opts.repo,
+      repo: opts.repo ?? makeRepo(),
       createWorkspaceForUser: opts.createWorkspaceForUser as never,
     }),
   );
@@ -137,7 +138,7 @@ describe('workspace index router', () => {
       const repo = makeRepo({ listMembershipsForUser: vi.fn(async () => []) });
       const res = await request(makeApp({ repo })).get('/workspaces').set('Cookie', COOKIE);
       expect(res.status).toBe(200);
-      expect(res.body).toEqual({ workspaces: [] });
+      expect(res.body).toEqual({ workspaces: [], allowMultiWorkspace: false });
     });
   });
 
@@ -192,23 +193,21 @@ describe('workspace index router', () => {
       });
     });
 
-    it('does NOT reject when the caller already owns another workspace (B2 multi-workspace)', async () => {
-      // Top-level POST /workspaces deliberately omits any "already owns a
-      // workspace" gate. The route calls through to createWorkspaceForUser
-      // unconditionally; this test pins that contract so a future regression
-      // re-introducing the gate breaks it.
+    it('403 when community single-workspace mode already has an active workspace', async () => {
       setSession('user-1');
+      const repo = makeRepo({ countActiveWorkspaces: vi.fn(async () => 1) });
       const create = vi.fn(async (userId: string, name: string) => ({
         id: 'ws-2',
         name,
         status: 'provisioning' as const,
       }));
-      const res = await request(makeApp({ createWorkspaceForUser: create }))
+      const res = await request(makeApp({ repo, createWorkspaceForUser: create }))
         .post('/workspaces')
         .set('Cookie', COOKIE)
         .send({ name: 'Second WS' });
-      expect(res.status).toBe(201);
-      expect(create).toHaveBeenCalledTimes(1);
+      expect(res.status).toBe(403);
+      expect(res.body).toEqual({ error: 'multi_workspace_disabled' });
+      expect(create).not.toHaveBeenCalled();
     });
   });
 

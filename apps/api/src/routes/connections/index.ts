@@ -3,6 +3,7 @@ import { and, eq, sql } from 'drizzle-orm';
 
 import type { ComposioClient } from '../../composio/client.js';
 import { db, schema } from '../../db/client.js';
+import { OPEN42_COMPOSIO_ENABLED } from '../../env.js';
 
 /**
  * Connections router — list and disconnect, scoped to the workspace named in
@@ -27,7 +28,11 @@ export function buildConnectionsRouter(deps: { composio?: ComposioClient | null 
             sql`${schema.connections.deletedAt} IS NULL`,
           ),
         );
-      res.json({ workspaceId, connections: rows });
+      res.json({
+        workspaceId,
+        connections: rows,
+        composioEnabled: OPEN42_COMPOSIO_ENABLED,
+      });
     } catch (err) {
       next(err);
     }

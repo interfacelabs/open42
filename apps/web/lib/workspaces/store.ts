@@ -13,6 +13,7 @@ export interface WorkspaceSummary {
 export interface WorkspaceStoreState {
   workspaces: WorkspaceSummary[];
   currentWorkspaceId: string | null;
+  allowMultiWorkspace: boolean;
   loading: boolean;
   lastError: string | null;
   refresh: () => Promise<void>;
@@ -37,6 +38,7 @@ export interface StoreDeps {
 const INITIAL_STATE = {
   workspaces: [],
   currentWorkspaceId: null,
+  allowMultiWorkspace: false,
   loading: false,
   lastError: null,
 };
@@ -70,7 +72,10 @@ export function createWorkspaceStore(
           set({ loading: false, lastError: msg });
           return;
         }
-        const body = (await listRes.json()) as { workspaces: WorkspaceSummary[] };
+        const body = (await listRes.json()) as {
+          workspaces: WorkspaceSummary[];
+          allowMultiWorkspace?: boolean;
+        };
         const me = meRes.ok
           ? ((await meRes.json().catch(() => null)) as {
               currentWorkspaceId?: string | null;
@@ -98,6 +103,7 @@ export function createWorkspaceStore(
         set({
           workspaces: body.workspaces,
           currentWorkspaceId: next,
+          allowMultiWorkspace: Boolean(body.allowMultiWorkspace),
           loading: false,
           lastError: null,
         });

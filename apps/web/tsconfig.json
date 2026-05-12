@@ -8,7 +8,9 @@
     "incremental": true,
     "plugins": [{ "name": "next" }],
     "paths": {
-      "@/*": ["./*"]
+      "@/*": ["./*"],
+      "@open42/cloud/web/*": ["../../packages/cloud-stubs/web/*"],
+      "@open42/cloud/api": ["../../packages/cloud-stubs/api/index.ts"]
     }
   },
   "include": ["next-env.d.ts", "**/*.ts", "**/*.tsx", ".next/types/**/*.ts"],

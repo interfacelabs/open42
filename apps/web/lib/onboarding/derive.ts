@@ -1,4 +1,4 @@
-export type OnboardStep = 'workspace' | 'invite' | 'provisioning' | 'connect';
+export type OnboardStep = 'workspace' | 'invite' | 'provisioning' | 'keys' | 'connect';
 
 export type WorkspaceRuntime = 'provisioning' | 'overdue' | 'ready' | 'failed';
 
@@ -8,6 +8,11 @@ export interface CurrentPayload {
   workspace: { id: string; name: string; runtime: WorkspaceRuntime } | null;
   connections: Array<unknown>;
   lastJob: { status: string } | null;
+  requiresProviderKeys?: boolean;
+  providerKeys?: {
+    anthropicChat: boolean;
+    openaiEmbed: boolean;
+  };
 }
 
 /**
@@ -38,9 +43,16 @@ export function deriveOnboardStep(
   if (urlStep === 'workspace') return 'workspace';
   if (urlStep === 'invite') return 'invite';
   if (urlStep === 'provisioning') return 'provisioning';
+  if (urlStep === 'keys') return 'keys';
   if (urlStep === 'connect') return 'connect';
   // No explicit step — derive from state.
   if (current.workspace.runtime !== 'ready') return 'provisioning';
+  if (
+    current.requiresProviderKeys &&
+    (!current.providerKeys?.anthropicChat || !current.providerKeys?.openaiEmbed)
+  ) {
+    return 'keys';
+  }
   if (current.connections.length === 0) return 'connect';
   return null;
 }

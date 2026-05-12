@@ -794,7 +794,7 @@ async function loadWorkspaceRuntime(workspaceId: string) {
     .where(eq(schema.workspaces.id, workspaceId))
     .limit(1);
   if (
-    !(workspace?.gbrainBaseUrl || workspace?.flyPrivateIp) ||
+    !(workspace?.gbrainBaseUrl || workspace?.gbrainPrivateAddress) ||
     !workspace.gbrainOauthClientId ||
     !workspace.gbrainOauthClientSecretCiphertext
   ) {
@@ -802,7 +802,7 @@ async function loadWorkspaceRuntime(workspaceId: string) {
   }
   return {
     id: workspace.id,
-    gbrainBaseUrl: workspace.gbrainBaseUrl ?? formatGbrainBaseUrl(workspace.flyPrivateIp ?? ''),
+    gbrainBaseUrl: workspace.gbrainBaseUrl ?? formatGbrainBaseUrl(workspace.gbrainPrivateAddress ?? ''),
     gbrainOauthClientId: workspace.gbrainOauthClientId,
     gbrainOauthClientSecretCiphertext: workspace.gbrainOauthClientSecretCiphertext,
   };

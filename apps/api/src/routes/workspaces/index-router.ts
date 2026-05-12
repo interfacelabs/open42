@@ -5,6 +5,7 @@ import pino from 'pino';
 import { type MembershipRole } from '../../auth/membership.js';
 import { readSession } from '../../auth/session-helpers.js';
 import { db, schema } from '../../db/client.js';
+import { OPEN42_ALLOW_MULTI_WORKSPACE } from '../../env.js';
 import { requireMembership } from '../../middleware/require-membership.js';
 import {
   createWorkspaceForUser as defaultCreateWorkspaceForUser,
@@ -57,6 +58,7 @@ export interface IndexRouterRepo {
     | { id: string; name: string; status: 'provisioning' | 'ready' | 'failed' }
     | null
   >;
+  countActiveWorkspaces?(): Promise<number>;
 }
 
 export interface IndexRouterDeps {
@@ -121,6 +123,13 @@ function defaultRepo(): IndexRouterRepo {
         status: row.status as 'provisioning' | 'ready' | 'failed',
       };
     },
+    async countActiveWorkspaces() {
+      const [row] = await db
+        .select({ count: sql<number>`COUNT(*)::int` })
+        .from(schema.workspaces)
+        .where(sql`${schema.workspaces.deletedAt} IS NULL`);
+      return Number(row?.count ?? 0);
+    },
   };
 }
 
@@ -156,7 +165,7 @@ export function buildWorkspaceIndexRouter(deps: IndexRouterDeps = {}) {
         return;
       }
       const workspaces = await repo.listMembershipsForUser(session.userId);
-      res.json({ workspaces });
+      res.json({ workspaces, allowMultiWorkspace: OPEN42_ALLOW_MULTI_WORKSPACE });
     } catch (err) {
       next(err);
     }
@@ -173,6 +182,10 @@ export function buildWorkspaceIndexRouter(deps: IndexRouterDeps = {}) {
       const name = normalizeWorkspaceName(req.body?.name);
       if (!name) {
         res.status(400).json({ error: 'workspace_name_invalid' });
+        return;
+      }
+      if (!OPEN42_ALLOW_MULTI_WORKSPACE && ((await repo.countActiveWorkspaces?.()) ?? 0) > 0) {
+        res.status(403).json({ error: 'multi_workspace_disabled' });
         return;
       }
       const workspace = await createWorkspaceForUser(session.userId, name);

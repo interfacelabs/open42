@@ -13,104 +13,7 @@ import {
 } from './provision.js';
 
 describe('provisionTenant', () => {
-  it('creates a Fly machine, registers gbrain OAuth, encrypts the secret, and stores workspace metadata', async () => {
-    process.env.OPEN42_KEK = '2'.repeat(64);
-    const stored: any[] = [];
-    const repo: TenantProvisionRepo = {
-      async ensureWorkspaceForProvisioning() {
-        return { id: 'workspace-1' };
-      },
-      async createWorkspace(input) {
-        stored.push(input);
-        return { id: 'workspace-1' };
-      },
-    };
-    const flyRequests: Array<{ href: string; body?: any }> = [];
-    const fetchMock = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
-      const href = String(url);
-      if (href.includes('api.machines.dev')) {
-        flyRequests.push({
-          href,
-          body: init?.body ? JSON.parse(String(init.body)) : undefined,
-        });
-      }
-      if (href.endsWith('/volumes')) {
-        return json({ id: 'volume-1' });
-      }
-      if (href.endsWith('/machines')) {
-        return json({ id: 'machine-1', private_ip: 'fdaa::1' });
-      }
-      if (href === 'http://[fdaa::1]:8080/register') {
-        return json({ client_id: 'client-1', client_secret: 'secret-1' });
-      }
-      if (href === 'http://[fdaa::1]:8080/token') {
-        return json({ access_token: 'token-1', expires_in: 3600 });
-      }
-      if (href === 'http://[fdaa::1]:8080/health') {
-        return json({ status: 'ok', version: '0.31.3' });
-      }
-      throw new Error(`unexpected URL ${href}`);
-    });
-
-    await expect(
-      provisionTenant({
-        workspaceId: 'workspace-1',
-        ownerUserId: 'user-12345678',
-        repo,
-        fetch: fetchMock as typeof fetch,
-        env: {
-          TENANT_PROVISIONER: 'fly',
-          FLY_API_TOKEN: 'fly-token',
-          FLY_TENANTS_APP_NAME: 'open42-tenants',
-          GBRAIN_VERSION: '0.31.3',
-        },
-      }),
-    ).resolves.toEqual({
-      workspaceId: 'workspace-1',
-      flyMachineId: 'machine-1',
-      flyPrivateIp: 'fdaa::1',
-      gbrainBaseUrl: 'http://[fdaa::1]:8080',
-    });
-
-    expect(stored).toHaveLength(1);
-    expect(stored[0]).toMatchObject({
-      ownerUserId: 'user-12345678',
-      flyMachineId: 'machine-1',
-      flyPrivateIp: 'fdaa::1',
-      gbrainBaseUrl: 'http://[fdaa::1]:8080',
-      gbrainOauthClientId: 'client-1',
-      gbrainVersion: '0.31.3',
-    });
-    expect(
-      decryptSecret(stored[0].gbrainOauthClientSecretCiphertext, {
-        workspaceId: 'workspace-1',
-        purpose: 'gbrain_oauth_secret',
-      }),
-    ).toBe('secret-1');
-    expect(stored[0].proxyTokenHash).toBeInstanceOf(Buffer);
-    expect(stored[0].proxyTokenHash).toHaveLength(32);
-    const volumeRequest = flyRequests.find((request) => request.href.endsWith('/volumes'));
-    // Resource naming is keyed by workspaceId (codex round-3 P1). Hyphens
-    // collapse to underscores under tenantVolumeName's sanitizer.
-    expect(volumeRequest?.body.name).toBe('open42_gbrain_workspace_1');
-    const machineRequest = flyRequests.find((request) => request.href.endsWith('/machines'));
-    expect(machineRequest?.body.config.mounts).toEqual([{ path: '/data', volume: 'volume-1' }]);
-    expect(machineRequest?.body.config.env).not.toHaveProperty('GBRAIN_DATABASE_URL');
-    expect(machineRequest?.body.config.env.OPENAI_API_KEY).toMatch(
-      /^tnt_workspace-1_[0-9a-f]{32}$/,
-    );
-    expect(machineRequest?.body.config.env.OPENAI_BASE_URL).toBe(
-      'http://open42-api.flycast/proxy/openai/v1',
-    );
-    expect(machineRequest?.body.config.env.ANTHROPIC_API_KEY).toBe(
-      machineRequest?.body.config.env.OPENAI_API_KEY,
-    );
-    expect(machineRequest?.body.config.env.ANTHROPIC_BASE_URL).toBe(
-      'http://open42-api.flycast/proxy/anthropic',
-    );
-  });
-
-  it('creates a local Docker gbrain tenant when Fly is not configured', async () => {
+  it('creates a local Docker gbrain tenant when selected', async () => {
     process.env.OPEN42_KEK = '3'.repeat(64);
     const stored: any[] = [];
     const commands: Array<{ file: string; args: string[] }> = [];
@@ -168,8 +71,8 @@ describe('provisionTenant', () => {
       }),
     ).resolves.toEqual({
       workspaceId: 'workspace-local',
-      flyMachineId: 'open42-gbrain-workspac',
-      flyPrivateIp: '127.0.0.1:19001',
+      tenantRuntimeId: 'open42-gbrain-workspac',
+      gbrainPrivateAddress: '127.0.0.1:19001',
       gbrainBaseUrl: 'http://127.0.0.1:19001',
     });
 
@@ -202,8 +105,8 @@ describe('provisionTenant', () => {
       expect.stringMatching(/^ANTHROPIC_BASE_URL=http:\/\/.+\/proxy\/anthropic$/),
     );
     expect(stored[0]).toMatchObject({
-      flyMachineId: 'open42-gbrain-workspac',
-      flyPrivateIp: '127.0.0.1:19001',
+      tenantRuntimeId: 'open42-gbrain-workspac',
+      gbrainPrivateAddress: '127.0.0.1:19001',
       gbrainBaseUrl: 'http://127.0.0.1:19001',
       gbrainOauthClientId: 'client-local',
     });
@@ -217,68 +120,14 @@ describe('provisionTenant', () => {
     expect(stored[0].proxyTokenHash).toHaveLength(32);
   });
 
-  it('defaults to local Docker in development even when Fly credentials are present', async () => {
-    process.env.OPEN42_KEK = '4'.repeat(64);
-    const stored: any[] = [];
-    const repo: TenantProvisionRepo = {
-      async ensureWorkspaceForProvisioning() {
-        return { id: 'workspace-local-with-fly-env' };
-      },
-      async createWorkspace(input) {
-        stored.push(input);
-        return { id: 'workspace-local-with-fly-env' };
-      },
-    };
-    const fetchMock = vi.fn(async (url: string | URL | Request) => {
-      const href = String(url);
-      if (href === 'http://127.0.0.1:19002/health') {
-        return json({ status: 'ok', version: '0.31.3' });
-      }
-      if (href === 'http://127.0.0.1:19002/register') {
-        return json({ client_id: 'client-local-fly-env', client_secret: 'secret-local-fly-env' });
-      }
-      if (href === 'http://127.0.0.1:19002/token') {
-        return json({ access_token: 'token-local-fly-env', expires_in: 3600 });
-      }
-      throw new Error(`unexpected URL ${href}`);
-    });
-
-    await expect(
-      provisionTenant({
-        workspaceId: 'workspace-local-with-fly-env',
-        ownerUserId: 'user-flyenv1',
-        repo,
-        fetch: fetchMock as typeof fetch,
-        allocatePort: async () => 19002,
-        sleep: async () => undefined,
-        runCommand: async () => ({ stdout: '', stderr: '' }),
-        env: {
-          FLY_API_TOKEN: 'fly-token',
-          FLY_TENANTS_APP_NAME: 'open42-tenants',
-          GBRAIN_VERSION: '0.31.3',
-        },
-      }),
-    ).resolves.toMatchObject({
-      workspaceId: 'workspace-local-with-fly-env',
-      flyMachineId: 'open42-gbrain-workspac',
-      flyPrivateIp: '127.0.0.1:19002',
-    });
-
-    expect(stored[0]).toMatchObject({
-      flyMachineId: 'open42-gbrain-workspac',
-      gbrainBaseUrl: 'http://127.0.0.1:19002',
-      gbrainOauthClientId: 'client-local-fly-env',
-    });
-  });
-
   it('returns an existing workspace without provisioning another tenant', async () => {
     const repo: TenantProvisionRepo = {
       async findWorkspaceById(workspaceId) {
         expect(workspaceId).toBe('workspace-existing');
         return {
           workspaceId: 'workspace-existing',
-          flyMachineId: 'machine-existing',
-          flyPrivateIp: 'fdaa::2',
+          tenantRuntimeId: 'machine-existing',
+          gbrainPrivateAddress: 'fdaa::2',
           gbrainBaseUrl: 'http://[fdaa::2]:8080',
         };
       },
@@ -295,16 +144,14 @@ describe('provisionTenant', () => {
         repo,
         fetch: fetchMock as typeof fetch,
         env: {
-          TENANT_PROVISIONER: 'fly',
-          FLY_API_TOKEN: 'fly-token',
-          FLY_TENANTS_APP_NAME: 'open42-tenants',
+          TENANT_PROVISIONER: 'local-docker',
           GBRAIN_VERSION: '0.31.3',
         },
       }),
     ).resolves.toEqual({
       workspaceId: 'workspace-existing',
-      flyMachineId: 'machine-existing',
-      flyPrivateIp: 'fdaa::2',
+      tenantRuntimeId: 'machine-existing',
+      gbrainPrivateAddress: 'fdaa::2',
       gbrainBaseUrl: 'http://[fdaa::2]:8080',
     });
     expect(fetchMock).not.toHaveBeenCalled();
@@ -350,7 +197,6 @@ describe('classifyProvisioningError', () => {
     ['gbrain tenant did not become healthy: 503', 'gbrain_health_timeout'],
     ['failed to register OAuth client', 'oauth_registration_failed'],
     ['gbrain version mismatch: expected 0.31.3', 'gbrain_version_mismatch'],
-    ['Fly API returned 500', 'fly_api_failed'],
     ['some unexpected non-matching message', 'provisioning_failed'],
   ])('classifies %j as %s', (msg, expected) => {
     expect(classifyProvisioningError(new Error(msg))).toBe(expected);

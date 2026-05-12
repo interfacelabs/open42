@@ -3,7 +3,7 @@ import { and, desc, eq } from 'drizzle-orm';
 import { Router } from 'express';
 
 import { resolveLlmKey, type ResolvedLlmKey } from '../auth/llm-keys.js';
-import { recordLlmUsage } from '../billing/usage.js';
+import { recordCloudLlmUsage } from '../cloud-hooks.js';
 import { isUuid } from '../auth/uuid.js';
 import { db, schema } from '../db/client.js';
 import { GbrainCitationChunk, GbrainClient } from '../gbrain/client.js';
@@ -111,7 +111,7 @@ chatRouter.post('/', requireMembership({ from: 'body' }), async (req, res, next)
       res,
     });
     if (usedSharedAnthropic && resolvedAnthropic?.source === 'shared') {
-      void recordLlmUsage({
+      void recordCloudLlmUsage({
         workspaceId: workspace.id,
         provider: 'anthropic',
         scope: 'chat',
@@ -245,7 +245,7 @@ async function streamAnthropicAnswer(options: {
 /**
  * Load workspace runtime fields needed to talk to the per-tenant gbrain.
  * Membership has already been asserted by `requireMembership`; this only
- * reads the gbrain credentials and falls back to `flyPrivateIp` when no
+ * reads the gbrain credentials and falls back to `gbrainPrivateAddress` when no
  * public baseUrl is configured (legacy ingest path).
  */
 async function loadWorkspaceRuntime(workspaceId: string) {
@@ -256,7 +256,7 @@ async function loadWorkspaceRuntime(workspaceId: string) {
     .limit(1);
   if (
     !workspace ||
-    !(workspace.gbrainBaseUrl || workspace.flyPrivateIp) ||
+    !(workspace.gbrainBaseUrl || workspace.gbrainPrivateAddress) ||
     !workspace.gbrainOauthClientId ||
     !workspace.gbrainOauthClientSecretCiphertext
   ) {
@@ -264,7 +264,7 @@ async function loadWorkspaceRuntime(workspaceId: string) {
   }
   return {
     id: workspace.id,
-    gbrainBaseUrl: workspace.gbrainBaseUrl ?? formatGbrainBaseUrl(workspace.flyPrivateIp ?? ''),
+    gbrainBaseUrl: workspace.gbrainBaseUrl ?? formatGbrainBaseUrl(workspace.gbrainPrivateAddress ?? ''),
     gbrainOauthClientId: workspace.gbrainOauthClientId,
     gbrainOauthClientSecretCiphertext: workspace.gbrainOauthClientSecretCiphertext,
   };

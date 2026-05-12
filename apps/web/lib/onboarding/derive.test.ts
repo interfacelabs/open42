@@ -21,6 +21,9 @@ describe('deriveOnboardStep', () => {
   it('returns connect when URL says connect', () => {
     expect(deriveOnboardStep({ workspace: { id: 'x' } } as any, 'connect')).toBe('connect');
   });
+  it('returns keys when URL says keys', () => {
+    expect(deriveOnboardStep({ workspace: { id: 'x' } } as any, 'keys')).toBe('keys');
+  });
   it('falls through to provisioning when runtime not ready', () => {
     expect(
       deriveOnboardStep(
@@ -36,6 +39,19 @@ describe('deriveOnboardStep', () => {
         null,
       ),
     ).toBe('connect');
+  });
+  it('falls through to keys when BYOK is required and provider keys are missing', () => {
+    expect(
+      deriveOnboardStep(
+        {
+          workspace: { id: 'x', runtime: 'ready' },
+          connections: [],
+          requiresProviderKeys: true,
+          providerKeys: { anthropicChat: true, openaiEmbed: false },
+        } as any,
+        null,
+      ),
+    ).toBe('keys');
   });
   it('returns null when fully onboarded (ready + has connection)', () => {
     expect(

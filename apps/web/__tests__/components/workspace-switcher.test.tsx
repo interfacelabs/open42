@@ -13,10 +13,12 @@ const storeState = {
     { id: 'w2', name: 'Acme', role: 'member', status: 'ready' },
   ],
   currentWorkspaceId: 'w1',
+  allowMultiWorkspace: true,
   switchTo: switchToMock,
 };
 vi.mock('@/lib/workspaces/store', () => ({
-  useWorkspaceStore: () => storeState,
+  useWorkspaceStore: (selector?: (state: typeof storeState) => unknown) =>
+    selector ? selector(storeState) : storeState,
   useHydrateWorkspaceStore: () => undefined,
 }));
 

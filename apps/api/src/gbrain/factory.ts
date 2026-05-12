@@ -13,7 +13,7 @@ export async function buildGbrainForWorkspace(workspaceId: string): Promise<Gbra
 
   const baseUrl =
     workspace.gbrainBaseUrl ??
-    (workspace.flyPrivateIp ? formatGbrainBaseUrl(workspace.flyPrivateIp) : null);
+    (workspace.gbrainPrivateAddress ? formatGbrainBaseUrl(workspace.gbrainPrivateAddress) : null);
   if (
     !baseUrl ||
     !workspace.gbrainOauthClientId ||

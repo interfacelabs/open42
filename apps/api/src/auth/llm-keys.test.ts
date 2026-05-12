@@ -50,7 +50,7 @@ describe('resolveLlmKey', () => {
     });
   });
 
-  it('falls back to the shared env key when no tenant row exists', async () => {
+  it('falls back to the shared env key when explicitly allowed', async () => {
     const result = await resolveLlmKey(
       {
         workspaceId: '22222222-2222-4222-8222-222222222222',
@@ -59,11 +59,30 @@ describe('resolveLlmKey', () => {
       },
       {
         db: fakeSelectingDb(null),
-        env: { ANTHROPIC_API_KEY: '  sk-shared-trim-me  ' },
+        env: {
+          ANTHROPIC_API_KEY: '  sk-shared-trim-me  ',
+          OPEN42_ALLOW_SHARED_KEYS: 'true',
+        },
       },
     );
 
     expect(result).toEqual({ apiKey: 'sk-shared-trim-me', source: 'shared', model: null });
+  });
+
+  it('does not use shared env keys by default', async () => {
+    const result = await resolveLlmKey(
+      {
+        workspaceId: '2a2a2a2a-2222-4222-8222-222222222222',
+        provider: 'anthropic',
+        scope: 'chat',
+      },
+      {
+        db: fakeSelectingDb(null),
+        env: { ANTHROPIC_API_KEY: 'sk-shared-disabled' },
+      },
+    );
+
+    expect(result).toBeNull();
   });
 
   it('returns null when neither tenant row nor env var is set', async () => {
@@ -278,10 +297,12 @@ describeDb('resolveLlmKey + upsertLlmKey + deleteLlmKey (round-trip)', () => {
     expect(resolved).toMatchObject({ apiKey: 'sk-v2', source: 'tenant', model: 'gpt-5-1' });
   });
 
-  it('deleteLlmKey removes the row and resolveLlmKey falls back to env afterwards', async () => {
+  it('deleteLlmKey removes the row and resolveLlmKey falls back to env when explicitly allowed', async () => {
     const workspaceId = await seedWorkspace();
     const prevEnv = process.env.OPENAI_API_KEY;
+    const prevAllowShared = process.env.OPEN42_ALLOW_SHARED_KEYS;
     process.env.OPENAI_API_KEY = 'sk-shared-fallback';
+    process.env.OPEN42_ALLOW_SHARED_KEYS = 'true';
     try {
       await upsertLlmKey({
         workspaceId,
@@ -295,7 +316,7 @@ describeDb('resolveLlmKey + upsertLlmKey + deleteLlmKey (round-trip)', () => {
         workspaceId,
         provider: 'openai',
         scope: 'chat',
-      });
+      }, { env: process.env });
       expect(resolved).toEqual({
         apiKey: 'sk-shared-fallback',
         source: 'shared',
@@ -304,6 +325,8 @@ describeDb('resolveLlmKey + upsertLlmKey + deleteLlmKey (round-trip)', () => {
     } finally {
       if (prevEnv === undefined) delete process.env.OPENAI_API_KEY;
       else process.env.OPENAI_API_KEY = prevEnv;
+      if (prevAllowShared === undefined) delete process.env.OPEN42_ALLOW_SHARED_KEYS;
+      else process.env.OPEN42_ALLOW_SHARED_KEYS = prevAllowShared;
     }
   });
 });

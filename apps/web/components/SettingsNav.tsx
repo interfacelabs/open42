@@ -8,7 +8,9 @@ const TABS: Array<{ id: SettingsTab; label: string; href: string }> = [
   { id: 'connections', label: 'Connections', href: '/settings/connections' },
   { id: 'ingest', label: 'Ingest', href: '/settings/ingest' },
   { id: 'api-keys', label: 'API keys', href: '/settings/api-keys' },
-  { id: 'plan', label: 'Billing', href: '/settings/plan' },
+  ...(process.env.NEXT_PUBLIC_OPEN42_EDITION === 'cloud'
+    ? [{ id: 'plan' as const, label: 'Billing', href: '/settings/plan' }]
+    : []),
 ];
 
 /**

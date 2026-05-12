@@ -10,7 +10,11 @@ const TOKEN_PATTERN = /^tnt_([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-
 
 export function generateProxyToken(workspaceId: string): { token: string; hash: Buffer } {
   const token = `${TOKEN_PREFIX}_${workspaceId}_${randomBytes(TOKEN_RANDOM_BYTES).toString('hex')}`;
-  return { token, hash: hmacProxyToken(token) };
+  return { token, hash: hashProxyTokenForStorage(token) };
+}
+
+export function hashProxyTokenForStorage(token: string): Buffer {
+  return hmacProxyToken(token);
 }
 
 export async function verifyProxyToken(

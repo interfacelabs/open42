@@ -13,6 +13,7 @@ export default defineConfig({
   resolve: {
     alias: {
       '@': path.resolve(__dirname, '.'),
+      '@open42/cloud': path.resolve(__dirname, '../../packages/cloud-stubs'),
     },
   },
 });

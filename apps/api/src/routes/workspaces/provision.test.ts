@@ -123,8 +123,8 @@ describe('workspace provision route', () => {
       mocks.validateSession.mockResolvedValue({ userId: 'user-1' });
       mocks.safelyProvisionTenant.mockResolvedValue({
         workspaceId: 'workspace-1',
-        flyMachineId: 'machine-1',
-        flyPrivateIp: '127.0.0.1:18080',
+        tenantRuntimeId: 'machine-1',
+        gbrainPrivateAddress: '127.0.0.1:18080',
         gbrainBaseUrl: 'http://127.0.0.1:18080',
       });
       const repo = makeRepo({
@@ -159,6 +159,8 @@ describe('workspace provision route', () => {
           invites: [],
           connections: [],
           lastJob: null,
+          requiresProviderKeys: true,
+          providerKeys: { anthropicChat: false, openaiEmbed: false },
         },
         wasCreated: true,
       });
@@ -215,6 +217,8 @@ describe('workspace provision route', () => {
           invites: [],
           connections: [],
           lastJob: null,
+          requiresProviderKeys: true,
+          providerKeys: { anthropicChat: false, openaiEmbed: false },
         },
         wasCreated: false,
       });
@@ -438,8 +442,8 @@ describe('workspace provision route', () => {
       // workspace the user owns.
       mocks.safelyProvisionTenant.mockResolvedValue({
         workspaceId: 'ws-target',
-        flyMachineId: 'machine-target',
-        flyPrivateIp: '127.0.0.1:18099',
+        tenantRuntimeId: 'machine-target',
+        gbrainPrivateAddress: '127.0.0.1:18099',
         gbrainBaseUrl: 'http://127.0.0.1:18099',
       });
       const repo = makeRepo();
@@ -692,6 +696,11 @@ interface MockCurrent {
   invites: Array<{ id: string; email: string; status: string; createdAt: Date }>;
   connections: Array<{ id: string; kind: string; status: string; displayName: string }>;
   lastJob: { id: string; status: string; pagesTotal: number; createdAt: Date } | null;
+  requiresProviderKeys: boolean;
+  providerKeys: {
+    anthropicChat: boolean;
+    openaiEmbed: boolean;
+  };
 }
 
 function makeRepo(currentOverride: Partial<MockCurrent> = {}) {
@@ -712,6 +721,8 @@ function makeRepo(currentOverride: Partial<MockCurrent> = {}) {
     invites: [],
     connections: [],
     lastJob: null,
+    requiresProviderKeys: true,
+    providerKeys: { anthropicChat: false, openaiEmbed: false },
     ...currentOverride,
   };
   return {

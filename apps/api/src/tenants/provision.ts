@@ -10,7 +10,7 @@ import { promisify } from 'node:util';
 import { encryptSecret } from '../crypto/envelope.js';
 import { GbrainClient, registerGbrainOAuthClient } from '../gbrain/client.js';
 import { assertGbrainVersion } from '../gbrain/version-check.js';
-import { generateProxyToken } from '../proxy/token.js';
+import { generateProxyToken, hashProxyTokenForStorage } from '../proxy/token.js';
 
 type Fetch = typeof fetch;
 const execFile = promisify(execFileCallback);
@@ -18,19 +18,16 @@ const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../../../..')
 
 export interface TenantProvisionEnv {
   TENANT_PROVISIONER?: string;
-  FLY_API_TOKEN?: string;
-  FLY_TENANTS_APP_NAME?: string;
+  GBRAIN_BASE_URL?: string;
   GBRAIN_GIT_REF?: string;
   GBRAIN_POSTGRES_DB?: string;
   GBRAIN_POSTGRES_PASSWORD?: string;
   GBRAIN_POSTGRES_USER?: string;
-  GBRAIN_TENANT_REGION?: string;
-  GBRAIN_TENANT_VOLUME_SIZE_GB?: string;
   GBRAIN_VERSION?: string;
   GBRAIN_TENANT_IMAGE?: string;
   GBRAIN_LOCAL_PORT_START?: string;
   API_PORT?: string;
-  OPEN42_API_FLYCAST_HOST?: string;
+  OPEN42_TENANT_PROXY_TOKEN?: string;
 }
 
 export interface TenantProvisionRepo {
@@ -64,8 +61,8 @@ export interface TenantProvisionRepo {
   createWorkspace(input: {
     id: string;
     ownerUserId: string;
-    flyMachineId: string;
-    flyPrivateIp: string;
+    tenantRuntimeId: string;
+    gbrainPrivateAddress: string;
     gbrainBaseUrl: string;
     gbrainOauthClientId: string;
     gbrainOauthClientSecretCiphertext: Buffer;
@@ -83,7 +80,6 @@ export type ProvisioningErrorCode =
   | 'gbrain_health_timeout'
   | 'oauth_registration_failed'
   | 'gbrain_version_mismatch'
-  | 'fly_api_failed'
   | 'provisioning_failed';
 
 export function classifyProvisioningError(err: unknown): ProvisioningErrorCode {
@@ -107,9 +103,6 @@ export function classifyProvisioningError(err: unknown): ProvisioningErrorCode {
   }
   if (/version|gbrain.*0\./i.test(message)) {
     return 'gbrain_version_mismatch';
-  }
-  if (/fly\.io|fly api|fly_api_token/i.test(message)) {
-    return 'fly_api_failed';
   }
   return 'provisioning_failed';
 }
@@ -160,12 +153,37 @@ export interface ProvisionTenantOptions {
 
 export interface ProvisionTenantResult {
   workspaceId: string;
-  flyMachineId: string;
-  flyPrivateIp: string;
+  tenantRuntimeId: string;
+  gbrainPrivateAddress: string;
   gbrainBaseUrl: string;
 }
 
 type CommandRunner = (file: string, args: string[]) => Promise<{ stdout: string; stderr: string }>;
+
+export interface TenantProvisionerOptions {
+  env: TenantProvisionEnv;
+  gbrainVersion: string;
+  workspaceId: string;
+  ownerUserId: string;
+  proxyToken: string;
+  fetch: Fetch;
+  runCommand: CommandRunner;
+  allocatePort: (startAt: number) => Promise<number>;
+}
+
+export interface TenantRuntime {
+  tenantRuntimeId: string;
+  gbrainPrivateAddress: string;
+  gbrainBaseUrl: string;
+}
+
+export type TenantProvisioner = (options: TenantProvisionerOptions) => Promise<TenantRuntime>;
+
+const tenantProvisioners = new Map<string, TenantProvisioner>();
+
+export function registerTenantProvisioner(name: string, provisioner: TenantProvisioner): void {
+  tenantProvisioners.set(name, provisioner);
+}
 
 export async function provisionTenant(
   options: ProvisionTenantOptions,
@@ -205,7 +223,7 @@ async function provisionTenantResources(options: {
   gbrainVersion: string;
   ownerUserId: string;
   workspaceId: string;
-  provider: 'fly' | 'local-docker';
+  provider: string;
   repo: TenantProvisionRepo;
   runCommand: CommandRunner;
   allocatePort: (startAt: number) => Promise<number>;
@@ -224,33 +242,28 @@ async function provisionTenantResources(options: {
   if (!workspaceId) {
     throw new Error('workspace_reservation_required');
   }
-  const proxyToken = generateProxyToken(workspaceId);
-  const tenant =
-    options.provider === 'fly'
-      ? await createFlyTenant({
-          env: options.env,
-          gbrainVersion: options.gbrainVersion,
-          workspaceId,
-          ownerUserId: options.ownerUserId,
-          proxyToken: proxyToken.token,
-          fetch: options.fetchImpl,
-        })
-      : await createLocalDockerTenant({
-          env: options.env,
-          gbrainVersion: options.gbrainVersion,
-          workspaceId,
-          ownerUserId: options.ownerUserId,
-          proxyToken: proxyToken.token,
-          runCommand: options.runCommand,
-          allocatePort: options.allocatePort,
-        });
+  if (options.provider === 'compose' && !options.env.OPEN42_TENANT_PROXY_TOKEN?.trim()) {
+    throw new Error('OPEN42_TENANT_PROXY_TOKEN is required for compose provisioning');
+  }
+  const proxyToken = resolveProvisionProxyToken(workspaceId, options.env);
+  const provisioner = resolveTenantProvisioner(options.provider);
+  const tenant = await provisioner({
+    env: options.env,
+    gbrainVersion: options.gbrainVersion,
+    workspaceId,
+    ownerUserId: options.ownerUserId,
+    proxyToken: proxyToken.token,
+    fetch: options.fetchImpl,
+    runCommand: options.runCommand,
+    allocatePort: options.allocatePort,
+  });
 
   await waitForGbrainHealth(tenant.gbrainBaseUrl, options.fetchImpl, options.sleep);
   const oauth = await registerGbrainOAuthClient(tenant.gbrainBaseUrl, options.fetchImpl);
   await assertGbrainVersion(
     new GbrainClient(
       {
-        workspaceId: tenant.machineId,
+        workspaceId: tenant.tenantRuntimeId,
         baseUrl: tenant.gbrainBaseUrl,
         oauthClientId: oauth.client_id,
         oauthClientSecret: oauth.client_secret,
@@ -267,8 +280,8 @@ async function provisionTenantResources(options: {
   const workspace = await options.repo.createWorkspace({
     id: workspaceId,
     ownerUserId: options.ownerUserId,
-    flyMachineId: tenant.machineId,
-    flyPrivateIp: tenant.privateIp,
+    tenantRuntimeId: tenant.tenantRuntimeId,
+    gbrainPrivateAddress: tenant.gbrainPrivateAddress,
     gbrainBaseUrl: tenant.gbrainBaseUrl,
     gbrainOauthClientId: oauth.client_id,
     gbrainOauthClientSecretCiphertext: encryptedSecret,
@@ -278,8 +291,8 @@ async function provisionTenantResources(options: {
 
   return {
     workspaceId: workspace.id,
-    flyMachineId: tenant.machineId,
-    flyPrivateIp: tenant.privateIp,
+    tenantRuntimeId: tenant.tenantRuntimeId,
+    gbrainPrivateAddress: tenant.gbrainPrivateAddress,
     gbrainBaseUrl: tenant.gbrainBaseUrl,
   };
 }
@@ -308,156 +321,6 @@ async function provisionTenantResources(options: {
  * just inject the real key into the container", stop and read this comment
  * again.
  */
-async function createFlyTenant(options: {
-  env: TenantProvisionEnv;
-  gbrainVersion: string;
-  workspaceId: string;
-  ownerUserId: string;
-  proxyToken: string;
-  fetch: Fetch;
-}): Promise<{ machineId: string; privateIp: string; gbrainBaseUrl: string }> {
-  const token = required(options.env.FLY_API_TOKEN, 'FLY_API_TOKEN');
-  const appName = required(options.env.FLY_TENANTS_APP_NAME, 'FLY_TENANTS_APP_NAME');
-  const region = options.env.GBRAIN_TENANT_REGION;
-  const volume = await createFlyVolume({
-    appName,
-    fetch: options.fetch,
-    workspaceId: options.workspaceId,
-    region,
-    sizeGb: Number(options.env.GBRAIN_TENANT_VOLUME_SIZE_GB ?? 3),
-    token,
-  });
-  const machine = await createFlyMachine({
-    appName,
-    token,
-    image: tenantImage(options.env, options.gbrainVersion),
-    gbrainVersion: options.gbrainVersion,
-    workspaceId: options.workspaceId,
-    postgresDb: options.env.GBRAIN_POSTGRES_DB ?? 'gbrain',
-    postgresPassword: options.env.GBRAIN_POSTGRES_PASSWORD,
-    postgresUser: options.env.GBRAIN_POSTGRES_USER ?? 'gbrain',
-    open42ApiBaseUrl: flyOpen42ApiBaseUrl(options.env),
-    proxyToken: options.proxyToken,
-    region,
-    fetch: options.fetch,
-    volumeId: volume.id,
-  });
-  return {
-    machineId: machine.id,
-    privateIp: machine.privateIp,
-    gbrainBaseUrl: formatGbrainBaseUrl(machine.privateIp),
-  };
-}
-
-async function createFlyVolume(options: {
-  appName: string;
-  token: string;
-  workspaceId: string;
-  region?: string;
-  sizeGb: number;
-  fetch: Fetch;
-}): Promise<{ id: string }> {
-  const response = await options.fetch(
-    `https://api.machines.dev/v1/apps/${options.appName}/volumes`,
-    {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${options.token}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        name: tenantVolumeName(options.workspaceId),
-        region: options.region,
-        size_gb: options.sizeGb,
-      }),
-    },
-  );
-  const payload = (await response.json()) as Partial<{ id: string }>;
-  if (!response.ok) {
-    throw new Error(`Fly volume create failed: ${JSON.stringify(payload)}`);
-  }
-  const id = String(payload.id ?? '');
-  if (!id) {
-    throw new Error('Fly volume response missing id');
-  }
-  return { id };
-}
-
-async function createFlyMachine(options: {
-  appName: string;
-  token: string;
-  image: string;
-  gbrainVersion: string;
-  workspaceId: string;
-  open42ApiBaseUrl: string;
-  postgresDb: string;
-  postgresPassword?: string;
-  postgresUser: string;
-  proxyToken: string;
-  region?: string;
-  fetch: Fetch;
-  volumeId: string;
-}): Promise<{ id: string; privateIp: string }> {
-  const response = await options.fetch(
-    `https://api.machines.dev/v1/apps/${options.appName}/machines`,
-    {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${options.token}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        name: `open42-${options.workspaceId.slice(0, 8)}`,
-        region: options.region,
-        skip_launch: false,
-        config: {
-          image: options.image,
-          env: {
-            GBRAIN_HOME: '/data/gbrain',
-            GBRAIN_POSTGRES_DB: options.postgresDb,
-            ...(options.postgresPassword
-              ? { GBRAIN_POSTGRES_PASSWORD: options.postgresPassword }
-              : {}),
-            GBRAIN_POSTGRES_USER: options.postgresUser,
-            GBRAIN_VERSION: options.gbrainVersion,
-            OPENAI_API_KEY: options.proxyToken,
-            OPENAI_BASE_URL: `${options.open42ApiBaseUrl}/proxy/openai/v1`,
-            ANTHROPIC_API_KEY: options.proxyToken,
-            ANTHROPIC_BASE_URL: `${options.open42ApiBaseUrl}/proxy/anthropic`,
-          },
-          guest: {
-            cpu_kind: 'shared',
-            cpus: 1,
-            memory_mb: 1024,
-          },
-          mounts: [
-            {
-              path: '/data',
-              volume: options.volumeId,
-            },
-          ],
-          services: [],
-        },
-      }),
-    },
-  );
-  const payload = (await response.json()) as Partial<{
-    id: string;
-    private_ip: string;
-    privateIp: string;
-  }>;
-  if (!response.ok) {
-    throw new Error(`Fly machine create failed: ${JSON.stringify(payload)}`);
-  }
-
-  const id = String(payload.id ?? '');
-  const privateIp = String(payload.private_ip ?? payload.privateIp ?? '');
-  if (!id || !privateIp) {
-    throw new Error('Fly machine response missing id or private_ip');
-  }
-  return { id, privateIp };
-}
-
 async function createLocalDockerTenant(options: {
   env: TenantProvisionEnv;
   gbrainVersion: string;
@@ -466,7 +329,7 @@ async function createLocalDockerTenant(options: {
   proxyToken: string;
   runCommand: CommandRunner;
   allocatePort: (startAt: number) => Promise<number>;
-}): Promise<{ machineId: string; privateIp: string; gbrainBaseUrl: string }> {
+}): Promise<TenantRuntime> {
   const image = tenantImage(options.env, options.gbrainVersion);
   const gitRef = gbrainGitRef(options.env);
   const containerName = `open42-gbrain-${options.workspaceId.slice(0, 8)}`;
@@ -516,11 +379,23 @@ async function createLocalDockerTenant(options: {
   }
 
   return {
-    machineId: containerName,
-    privateIp: `127.0.0.1:${port}`,
+    tenantRuntimeId: containerName,
+    gbrainPrivateAddress: `127.0.0.1:${port}`,
     gbrainBaseUrl: baseUrl,
   };
 }
+
+async function useComposeTenant(options: TenantProvisionerOptions): Promise<TenantRuntime> {
+  const baseUrl = required(options.env.GBRAIN_BASE_URL, 'GBRAIN_BASE_URL').replace(/\/+$/, '');
+  return {
+    tenantRuntimeId: `compose-${options.workspaceId}`,
+    gbrainPrivateAddress: baseUrl.replace(/^https?:\/\//, ''),
+    gbrainBaseUrl: baseUrl,
+  };
+}
+
+registerTenantProvisioner('local-docker', (options) => createLocalDockerTenant(options));
+registerTenantProvisioner('compose', useComposeTenant);
 
 async function ensureLocalTenantImage(
   image: string,
@@ -607,16 +482,16 @@ export function createDrizzleTenantRepo(): TenantProvisionRepo {
         .limit(1);
       if (
         !workspace ||
-        !(workspace.gbrainBaseUrl || workspace.flyPrivateIp) ||
-        !workspace.flyMachineId
+        !(workspace.gbrainBaseUrl || workspace.gbrainPrivateAddress) ||
+        !workspace.tenantRuntimeId
       ) {
         return null;
       }
       return {
         workspaceId: workspace.id,
-        flyMachineId: workspace.flyMachineId,
-        flyPrivateIp: workspace.flyPrivateIp ?? '',
-        gbrainBaseUrl: workspace.gbrainBaseUrl ?? formatGbrainBaseUrl(workspace.flyPrivateIp ?? ''),
+        tenantRuntimeId: workspace.tenantRuntimeId,
+        gbrainPrivateAddress: workspace.gbrainPrivateAddress ?? '',
+        gbrainBaseUrl: workspace.gbrainBaseUrl ?? formatGbrainBaseUrl(workspace.gbrainPrivateAddress ?? ''),
       };
     },
     async ensureWorkspaceForProvisioning(workspaceId, ownerUserId, gbrainVersion) {
@@ -689,8 +564,8 @@ export function createDrizzleTenantRepo(): TenantProvisionRepo {
           .limit(1);
 
         const values = {
-          flyMachineId: input.flyMachineId,
-          flyPrivateIp: input.flyPrivateIp,
+          tenantRuntimeId: input.tenantRuntimeId,
+          gbrainPrivateAddress: input.gbrainPrivateAddress,
           gbrainBaseUrl: input.gbrainBaseUrl,
           gbrainOauthClientId: input.gbrainOauthClientId,
           gbrainOauthClientSecretCiphertext: input.gbrainOauthClientSecretCiphertext,
@@ -801,19 +676,28 @@ function localOpen42ApiBaseUrl(
   return `http://host.docker.internal:${port}`;
 }
 
-function flyOpen42ApiBaseUrl(env: TenantProvisionEnv): string {
-  const host = env.OPEN42_API_FLYCAST_HOST ?? 'open42-api.flycast';
-  const withProtocol = /^https?:\/\//.test(host) ? host : `http://${host}`;
-  return withProtocol.replace(/\/+$/, '');
+function resolveProvisionProxyToken(
+  workspaceId: string,
+  env: TenantProvisionEnv,
+): { token: string; hash: Buffer } {
+  const configured = env.OPEN42_TENANT_PROXY_TOKEN?.trim();
+  if (!configured) return generateProxyToken(workspaceId);
+  if (!configured.startsWith(`tnt_${workspaceId}_`)) {
+    throw new Error('OPEN42_TENANT_PROXY_TOKEN workspace id does not match workspace row');
+  }
+  return { token: configured, hash: hashProxyTokenForStorage(configured) };
 }
 
-function selectProvisioner(env: TenantProvisionEnv): 'fly' | 'local-docker' {
-  if (env.TENANT_PROVISIONER === 'fly') return 'fly';
-  if (env.TENANT_PROVISIONER === 'local-docker') return 'local-docker';
-  if (env.TENANT_PROVISIONER) {
-    throw new Error('TENANT_PROVISIONER must be "fly" or "local-docker"');
+function resolveTenantProvisioner(name: string): TenantProvisioner {
+  const provisioner = tenantProvisioners.get(name);
+  if (!provisioner) {
+    throw new Error(`tenant_provisioner_not_registered:${name}`);
   }
-  return 'local-docker';
+  return provisioner;
+}
+
+function selectProvisioner(env: TenantProvisionEnv): string {
+  return env.TENANT_PROVISIONER || 'local-docker';
 }
 
 function tenantImage(env: TenantProvisionEnv, gbrainVersion: string): string {
@@ -866,16 +750,6 @@ function dockerEnvValue(key: string, value: string): string {
     throw new Error(`invalid Docker env value for ${key}`);
   }
   return value;
-}
-
-function tenantVolumeName(workspaceId: string): string {
-  const suffix =
-    workspaceId
-      .toLowerCase()
-      .replace(/[^a-z0-9]+/g, '_')
-      .replace(/^_+|_+$/g, '')
-      .slice(0, 16) || 'tenant';
-  return `open42_gbrain_${suffix}`.slice(0, 30);
 }
 
 async function allocatePort(startAt: number): Promise<number> {

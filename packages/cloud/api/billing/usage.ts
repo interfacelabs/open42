@@ -3,10 +3,11 @@ import { randomUUID } from 'node:crypto';
 import { and, eq, gte, sql } from 'drizzle-orm';
 import type pino from 'pino';
 
-import type { LlmProvider, LlmScope } from '../auth/llm-keys.js';
-import type { db as defaultDbValue } from '../db/client.js';
-import * as schema from '../db/schema.js';
-import { sanitizeErrorForLog } from '../middleware/error-sanitize.js';
+import type { LlmProvider, LlmScope } from '../../../../apps/api/src/auth/llm-keys.js';
+import type { db as defaultDbValue } from '../../../../apps/api/src/db/client.js';
+import { db as coreDb, schema as coreSchema } from '../../../../apps/api/src/db/client.js';
+import { sanitizeErrorForLog } from '../../../../apps/api/src/middleware/error-sanitize.js';
+import { billingUsageEvents, workspaceBilling } from '../schema-cloud.js';
 import { getBillingConfig, hasMeterEvent, type BillingConfig } from './config.js';
 import { getStripeClient } from './stripe-client.js';
 
@@ -129,14 +130,14 @@ export async function recordLlmUsage(
 
     const [workspace] = await tx
       .select({
-        id: schema.workspaces.id,
-        stripeCustomerId: schema.workspaces.stripeCustomerId,
-        stripeSubscriptionStatus: schema.workspaces.stripeSubscriptionStatus,
-        stripeSubscriptionCurrentPeriodStart:
-          schema.workspaces.stripeSubscriptionCurrentPeriodStart,
+        id: coreSchema.workspaces.id,
+        stripeCustomerId: workspaceBilling.stripeCustomerId,
+        stripeSubscriptionStatus: workspaceBilling.stripeSubscriptionStatus,
+        stripeSubscriptionCurrentPeriodStart: workspaceBilling.stripeSubscriptionCurrentPeriodStart,
       })
-      .from(schema.workspaces)
-      .where(eq(schema.workspaces.id, input.workspaceId))
+      .from(coreSchema.workspaces)
+      .leftJoin(workspaceBilling, eq(workspaceBilling.workspaceId, coreSchema.workspaces.id))
+      .where(eq(coreSchema.workspaces.id, input.workspaceId))
       .limit(1);
     if (!workspace) return null;
 
@@ -146,14 +147,14 @@ export async function recordLlmUsage(
     const periodStart = workspace.stripeSubscriptionCurrentPeriodStart ?? startOfUtcMonth(now);
     const [usage] = await tx
       .select({
-        used: sql<number>`COALESCE(SUM(${schema.billingUsageEvents.units}), 0)::int`,
+        used: sql<number>`COALESCE(SUM(${billingUsageEvents.units}), 0)::int`,
       })
-      .from(schema.billingUsageEvents)
+      .from(billingUsageEvents)
       .where(
         and(
-          eq(schema.billingUsageEvents.workspaceId, input.workspaceId),
-          gte(schema.billingUsageEvents.occurredAt, periodStart),
-          sql`${schema.billingUsageEvents.status} <> 'ignored'`,
+          eq(billingUsageEvents.workspaceId, input.workspaceId),
+          gte(billingUsageEvents.occurredAt, periodStart),
+          sql`${billingUsageEvents.status} <> 'ignored'`,
         ),
       );
 
@@ -175,7 +176,7 @@ export async function recordLlmUsage(
           ? 'unreported'
           : 'ignored';
 
-    await tx.insert(schema.billingUsageEvents).values({
+    await tx.insert(billingUsageEvents).values({
       id: usageEventId,
       workspaceId: input.workspaceId,
       provider: input.provider,
@@ -246,9 +247,9 @@ export async function recordLlmUsage(
       { idempotencyKey: stripeMeterEventIdentifier },
     );
     await db
-      .update(schema.billingUsageEvents)
+      .update(billingUsageEvents)
       .set({ status: 'metered' })
-      .where(eq(schema.billingUsageEvents.id, usageEventId));
+      .where(eq(billingUsageEvents.id, usageEventId));
     return {
       status: 'metered',
       usageEventId,
@@ -266,12 +267,12 @@ export async function recordLlmUsage(
       'stripe_meter_event_failed',
     );
     await db
-      .update(schema.billingUsageEvents)
+      .update(billingUsageEvents)
       .set({
         status: 'failed',
         error: errorMessage(err),
       })
-      .where(eq(schema.billingUsageEvents.id, usageEventId));
+      .where(eq(billingUsageEvents.id, usageEventId));
     return {
       status: 'failed',
       usageEventId,
@@ -312,16 +313,16 @@ export async function retryUnreportedBillingUsage(
           e.billable_units AS "billableUnits",
           e.stripe_meter_event_identifier AS "stripeMeterEventIdentifier",
           e.occurred_at AS "occurredAt",
-          w.stripe_customer_id AS "stripeCustomerId",
-          w.stripe_subscription_status AS "stripeSubscriptionStatus"
+          b.stripe_customer_id AS "stripeCustomerId",
+          b.stripe_subscription_status AS "stripeSubscriptionStatus"
         FROM billing_usage_events e
-        INNER JOIN workspaces w ON w.id = e.workspace_id
+        INNER JOIN workspace_billing b ON b.workspace_id = e.workspace_id
         WHERE e.status IN ('failed'::billing_usage_status, 'unreported'::billing_usage_status)
           AND e.billable_units > 0
           AND e.stripe_meter_event_identifier IS NOT NULL
-          AND w.stripe_customer_id IS NOT NULL
-          AND w.stripe_subscription_current_period_start IS NOT NULL
-          AND e.occurred_at >= w.stripe_subscription_current_period_start
+          AND b.stripe_customer_id IS NOT NULL
+          AND b.stripe_subscription_current_period_start IS NOT NULL
+          AND e.occurred_at >= b.stripe_subscription_current_period_start
         ORDER BY e.occurred_at
         LIMIT ${limit}
         FOR UPDATE OF e SKIP LOCKED
@@ -356,14 +357,14 @@ export async function retryUnreportedBillingUsage(
           { idempotencyKey: candidate.stripeMeterEventIdentifier },
         );
         await tx
-          .update(schema.billingUsageEvents)
+          .update(billingUsageEvents)
           .set({
             status: 'metered',
             stripeCustomerId: candidate.stripeCustomerId,
             stripeMeterEventName: eventName,
             error: null,
           })
-          .where(eq(schema.billingUsageEvents.id, candidate.id));
+          .where(eq(billingUsageEvents.id, candidate.id));
         result.metered += 1;
       } catch (err) {
         deps.logger?.error(
@@ -375,14 +376,14 @@ export async function retryUnreportedBillingUsage(
           'stripe_meter_event_retry_failed',
         );
         await tx
-          .update(schema.billingUsageEvents)
+          .update(billingUsageEvents)
           .set({
             status: 'failed',
             stripeCustomerId: candidate.stripeCustomerId,
             stripeMeterEventName: eventName,
             error: errorMessage(err),
           })
-          .where(eq(schema.billingUsageEvents.id, candidate.id));
+          .where(eq(billingUsageEvents.id, candidate.id));
         result.failed += 1;
       }
     }
@@ -449,8 +450,7 @@ function errorMessage(err: unknown): string {
 }
 
 async function loadDefaultDb(): Promise<DbClient> {
-  const mod = await import('../db/client.js');
-  return mod.db;
+  return coreDb;
 }
 
 function rowsOf<T>(result: unknown): T[] {

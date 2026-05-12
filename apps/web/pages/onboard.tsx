@@ -2,6 +2,7 @@ import Head from 'next/head';
 import { useRouter } from 'next/router';
 import {
   FormEvent,
+  Fragment,
   ReactNode,
   useCallback,
   useEffect,
@@ -37,6 +38,11 @@ interface OnboardCurrentPayload extends CurrentPayload {
   workspace: { id: string; name: string; runtime: WorkspaceRuntime } | null;
   invites: Array<{ id: string; email: string; status: string }>;
   user: { id: string; email: string };
+  requiresProviderKeys?: boolean;
+  providerKeys?: {
+    anthropicChat: boolean;
+    openaiEmbed: boolean;
+  };
 }
 
 /**
@@ -160,7 +166,10 @@ export default function OnboardPage() {
     if (mode === 'create') return;
     if (!current) return;
     if (step === 'provisioning' && runtime === 'ready') {
-      void router.replace('/onboard?step=connect');
+      const hasProviderKeys =
+        !current.requiresProviderKeys ||
+        (current.providerKeys?.anthropicChat && current.providerKeys?.openaiEmbed);
+      void router.replace(hasProviderKeys ? '/onboard?step=connect' : '/onboard?step=keys');
       return;
     }
     if (step === null) {
@@ -269,6 +278,8 @@ export default function OnboardPage() {
                   />
                 ) : step === 'provisioning' ? (
                   <ProvisioningStep current={current} mutate={mutate} />
+                ) : step === 'keys' ? (
+                  <ProviderKeysStep current={current} mutate={mutate} />
                 ) : step === 'connect' ? (
                   <ConnectSourcesStep
                     runtime={current.workspace?.runtime ?? 'provisioning'}
@@ -319,6 +330,18 @@ export default function OnboardPage() {
               illustration={
                 <BrainSpinUp failed={current?.workspace?.runtime === 'failed'} />
               }
+            />
+          ) : step === 'keys' ? (
+            <EditorialPane
+              quote={
+                <>
+                  Your brain should use
+                  <br />
+                  <em>your keys.</em>
+                </>
+              }
+              attribution="— OPEN42 OPERATING PRINCIPLE №4"
+              illustration={<PaperBoats />}
             />
           ) : step === 'connect' ? (
             <EditorialPane
@@ -375,12 +398,13 @@ function TopBar({
 type DotState = 'active' | 'done' | 'pending';
 
 function ProgressIndicator({ step }: { step: OnboardStep | null }) {
-  const dots: [DotState, DotState, DotState, DotState] = useMemo(() => {
-    if (step === 'workspace') return ['active', 'pending', 'pending', 'pending'];
-    if (step === 'invite') return ['done', 'active', 'pending', 'pending'];
-    if (step === 'provisioning') return ['done', 'done', 'active', 'pending'];
-    if (step === 'connect') return ['done', 'done', 'done', 'active'];
-    return ['pending', 'pending', 'pending', 'pending'];
+  const dots: DotState[] = useMemo(() => {
+    if (step === 'workspace') return ['active', 'pending', 'pending', 'pending', 'pending'];
+    if (step === 'invite') return ['done', 'active', 'pending', 'pending', 'pending'];
+    if (step === 'provisioning') return ['done', 'done', 'active', 'pending', 'pending'];
+    if (step === 'keys') return ['done', 'done', 'done', 'active', 'pending'];
+    if (step === 'connect') return ['done', 'done', 'done', 'done', 'active'];
+    return ['pending', 'pending', 'pending', 'pending', 'pending'];
   }, [step]);
 
   const label =
@@ -390,6 +414,8 @@ function ProgressIndicator({ step }: { step: OnboardStep | null }) {
         ? 'Invite'
         : step === 'provisioning'
           ? 'Spinning up'
+          : step === 'keys'
+            ? 'API keys'
           : step === 'connect'
             ? 'Connect a source'
             : '';
@@ -398,13 +424,12 @@ function ProgressIndicator({ step }: { step: OnboardStep | null }) {
     <div className="flex items-center gap-2.5 font-mono text-[11px] text-text-subtle">
       {label ? <span className="font-medium text-text-primary">{label}</span> : null}
       <div className="flex items-center gap-1.5" aria-label="onboarding progress">
-        <Dot state={dots[0]} />
-        <Connector state={lineState(dots[0], dots[1])} />
-        <Dot state={dots[1]} />
-        <Connector state={lineState(dots[1], dots[2])} />
-        <Dot state={dots[2]} />
-        <Connector state={lineState(dots[2], dots[3])} />
-        <Dot state={dots[3]} />
+        {dots.map((dot, index) => (
+          <Fragment key={index}>
+            {index > 0 ? <Connector state={lineState(dots[index - 1]!, dot)} /> : null}
+            <Dot state={dot} />
+          </Fragment>
+        ))}
       </div>
     </div>
   );
@@ -573,6 +598,177 @@ function WorkspaceStep({
         We&rsquo;ll prepare your private brain runtime in the background.
       </PulsingNote>
     </motion.div>
+  );
+}
+
+function ProviderKeysStep({
+  current,
+  mutate,
+}: {
+  current: OnboardCurrentPayload;
+  mutate: () => Promise<unknown>;
+}) {
+  const router = useRouter();
+  const workspaceId = current.workspace?.id ?? null;
+  const [anthropicKey, setAnthropicKey] = useState('');
+  const [openaiKey, setOpenaiKey] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const providerKeys = current.providerKeys ?? { anthropicChat: false, openaiEmbed: false };
+  const needsAnthropic = !providerKeys.anthropicChat;
+  const needsOpenAI = !providerKeys.openaiEmbed;
+
+  const submit = useCallback(
+    async (event: FormEvent<HTMLFormElement>) => {
+      event.preventDefault();
+      if (!workspaceId || submitting) return;
+      if (needsAnthropic && !anthropicKey.trim()) {
+        setError('anthropic_key_required');
+        return;
+      }
+      if (needsOpenAI && !openaiKey.trim()) {
+        setError('openai_key_required');
+        return;
+      }
+
+      setSubmitting(true);
+      setError(null);
+      try {
+        const writes = [
+          needsAnthropic
+            ? {
+                provider: 'anthropic',
+                scope: 'chat',
+                apiKey: anthropicKey.trim(),
+              }
+            : null,
+          needsOpenAI
+            ? {
+                provider: 'openai',
+                scope: 'embed',
+                apiKey: openaiKey.trim(),
+              }
+            : null,
+        ].filter(Boolean) as Array<{
+          provider: 'anthropic' | 'openai';
+          scope: 'chat' | 'embed';
+          apiKey: string;
+        }>;
+
+        for (const body of writes) {
+          const response = await fetch(`/api/workspaces/${workspaceId}/credentials`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', ...csrfHeaders() },
+            body: JSON.stringify(body),
+          });
+          if (!response.ok) {
+            const payload = await response.json().catch(() => ({}));
+            setError(payload.error ?? 'provider_key_failed');
+            setSubmitting(false);
+            return;
+          }
+        }
+        await mutate();
+        await router.replace('/onboard?step=connect');
+      } catch {
+        setError('network_error');
+        setSubmitting(false);
+      }
+    },
+    [
+      anthropicKey,
+      mutate,
+      needsAnthropic,
+      needsOpenAI,
+      openaiKey,
+      router,
+      submitting,
+      workspaceId,
+    ],
+  );
+
+  return (
+    <motion.div
+      key="keys"
+      initial={{ opacity: 0, y: 4 }}
+      animate={{
+        opacity: 1,
+        y: 0,
+        transition: { duration: 0.2, ease: EASE_STANDARD },
+      }}
+    >
+      <h1 className="text-[38px] font-medium leading-[1.06] tracking-[-0.025em] text-text-primary">
+        Add{' '}
+        <em className="font-newsreader font-normal italic text-text-primary">
+          provider keys.
+        </em>
+      </h1>
+      <p className="mt-3.5 max-w-[46ch] text-sm leading-body text-text-body">
+        Community edition is BYOK by default. Keys are encrypted before storage and never
+        sent into the gbrain runtime.
+      </p>
+      <form onSubmit={submit} className="mt-7 space-y-5" noValidate>
+        <ProviderKeyField
+          id="anthropic-key"
+          label="Anthropic chat key"
+          value={anthropicKey}
+          configured={!needsAnthropic}
+          onChange={setAnthropicKey}
+        />
+        <ProviderKeyField
+          id="openai-key"
+          label="OpenAI embedding key"
+          value={openaiKey}
+          configured={!needsOpenAI}
+          onChange={setOpenaiKey}
+        />
+        <button
+          type="submit"
+          disabled={submitting || !workspaceId}
+          className="inline-flex h-11 items-center justify-center rounded-xl bg-accent px-6 text-[15px] font-medium tracking-[-0.01em] text-white transition-[filter,transform] duration-140 hover:brightness-110 active:translate-y-px disabled:cursor-not-allowed disabled:opacity-60"
+        >
+          {submitting ? 'Saving\u2026' : 'Continue \u2192'}
+        </button>
+        {error ? (
+          <p role="alert" className="text-[13px] font-medium text-destructive">
+            {humanizeError(error)}
+          </p>
+        ) : null}
+      </form>
+      <PulsingNote>gbrain will call providers through Open42&rsquo;s proxy.</PulsingNote>
+    </motion.div>
+  );
+}
+
+function ProviderKeyField({
+  id,
+  label,
+  value,
+  configured,
+  onChange,
+}: {
+  id: string;
+  label: string;
+  value: string;
+  configured: boolean;
+  onChange: (value: string) => void;
+}) {
+  return (
+    <div>
+      <label htmlFor={id} className="mb-2 block text-[13px] font-medium text-text-primary">
+        {label}
+      </label>
+      <input
+        id={id}
+        type="password"
+        autoComplete="off"
+        value={value}
+        disabled={configured}
+        onChange={(event) => onChange(event.target.value)}
+        placeholder={configured ? 'Already configured' : 'Paste key'}
+        className="h-11 w-full rounded-input border border-input bg-white px-3.5 text-[15px] text-text-primary outline-none transition-[border-color,box-shadow] duration-140 focus:border-accent focus:shadow-[0_0_0_4px_rgba(29,77,255,0.10)] disabled:bg-panel-soft disabled:text-text-subtle"
+      />
+    </div>
   );
 }
 
@@ -949,6 +1145,12 @@ function humanizeError(code: string): string {
       return 'That workspace name isn\u2019t valid. 80 characters max.';
     case 'invite_emails_invalid':
       return 'One or more email addresses look off. Check the list and try again.';
+    case 'anthropic_key_required':
+      return 'Add an Anthropic chat key to continue.';
+    case 'openai_key_required':
+      return 'Add an OpenAI embedding key to continue.';
+    case 'invalid_api_key':
+      return 'That provider key is not valid.';
     case 'unauthorized':
       return 'Your session expired. Sign in again.';
     case 'network_error':

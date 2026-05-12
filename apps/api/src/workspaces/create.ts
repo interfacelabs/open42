@@ -25,6 +25,7 @@
 import { and, eq, sql } from 'drizzle-orm';
 
 import { db, schema } from '../db/client.js';
+import { OPEN42_ALLOW_MULTI_WORKSPACE, OPEN42_SINGLE_WORKSPACE_ID } from '../env.js';
 import { enqueueProvisionJob as defaultEnqueueProvisionJob } from '../queue/provision-queue.js';
 
 export interface CreateWorkspaceResult {
@@ -51,9 +52,19 @@ export async function createWorkspaceForUser(
   const enqueue = deps.enqueueProvisionJob ?? defaultEnqueueProvisionJob;
 
   const workspace = await db.transaction(async (tx) => {
+    const [countRow] = await tx
+      .select({ count: sql<number>`COUNT(*)::int` })
+      .from(schema.workspaces)
+      .where(sql`${schema.workspaces.deletedAt} IS NULL`);
+    const workspaceCount = Number(countRow?.count ?? 0);
+    const fixedWorkspaceId =
+      !OPEN42_ALLOW_MULTI_WORKSPACE && workspaceCount === 0 && OPEN42_SINGLE_WORKSPACE_ID
+        ? OPEN42_SINGLE_WORKSPACE_ID
+        : undefined;
     const [ws] = await tx
       .insert(schema.workspaces)
       .values({
+        id: fixedWorkspaceId,
         name,
         ownerUserId,
         gbrainVersion: process.env.GBRAIN_VERSION ?? '0.31.3',

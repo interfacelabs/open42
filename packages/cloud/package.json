@@ -1,0 +1,10 @@
+{
+  "name": "@open42/cloud",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./api": "./api/index.ts",
+    "./web/*": "./web/*"
+  }
+}

@@ -1,0 +1,10 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "paths": {
+      "@/*": ["./*"],
+      "@open42/cloud/web/*": ["../../packages/cloud/web/*"],
+      "@open42/cloud/api": ["../../packages/cloud/api/index.ts"]
+    }
+  }
+}

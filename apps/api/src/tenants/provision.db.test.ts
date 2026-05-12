@@ -88,8 +88,8 @@ describeDb('createDrizzleTenantRepo().createWorkspace — current_workspace_id N
     await repo.createWorkspace({
       id: ws.id,
       ownerUserId: user.id,
-      flyMachineId: 'machine-first',
-      flyPrivateIp: '127.0.0.1:18001',
+      tenantRuntimeId: 'machine-first',
+      gbrainPrivateAddress: '127.0.0.1:18001',
       gbrainBaseUrl: 'http://127.0.0.1:18001',
       gbrainOauthClientId: 'client-first',
       gbrainOauthClientSecretCiphertext: Buffer.from('ciphertext'),
@@ -125,8 +125,8 @@ describeDb('createDrizzleTenantRepo().createWorkspace — current_workspace_id N
     await repo.createWorkspace({
       id: wsB.id,
       ownerUserId: user.id,
-      flyMachineId: 'machine-b',
-      flyPrivateIp: '127.0.0.1:18002',
+      tenantRuntimeId: 'machine-b',
+      gbrainPrivateAddress: '127.0.0.1:18002',
       gbrainBaseUrl: 'http://127.0.0.1:18002',
       gbrainOauthClientId: 'client-b',
       gbrainOauthClientSecretCiphertext: Buffer.from('ciphertext-b'),

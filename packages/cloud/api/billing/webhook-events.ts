@@ -1,6 +1,7 @@
 import { and, eq, isNull, lt, or } from 'drizzle-orm';
 
-import { db as defaultDb, schema } from '../db/client.js';
+import { db as defaultDb } from '../../../../apps/api/src/db/client.js';
+import { stripeWebhookEvents } from '../schema-cloud.js';
 
 // A crashed worker can delay duplicate Stripe deliveries until this lease
 // expires. Stripe retries webhooks with backoff, so this favors duplicate
@@ -26,45 +27,45 @@ export async function claimStripeWebhookEvent(
   const db = deps.db ?? defaultDb;
   const now = deps.now?.() ?? new Date();
   const [inserted] = await db
-    .insert(schema.stripeWebhookEvents)
+    .insert(stripeWebhookEvents)
     .values({
       id: event.id,
       type: event.type,
       processingStartedAt: now,
     })
     .onConflictDoNothing()
-    .returning({ id: schema.stripeWebhookEvents.id });
+    .returning({ id: stripeWebhookEvents.id });
   if (inserted) return { status: 'claimed' };
 
   const [existing] = await db
     .select({
-      processedAt: schema.stripeWebhookEvents.processedAt,
-      processingStartedAt: schema.stripeWebhookEvents.processingStartedAt,
+      processedAt: stripeWebhookEvents.processedAt,
+      processingStartedAt: stripeWebhookEvents.processingStartedAt,
     })
-    .from(schema.stripeWebhookEvents)
-    .where(eq(schema.stripeWebhookEvents.id, event.id))
+    .from(stripeWebhookEvents)
+    .where(eq(stripeWebhookEvents.id, event.id))
     .limit(1);
   if (!existing) return { status: 'in_progress' };
   if (existing.processedAt) return { status: 'duplicate' };
 
   const staleBefore = new Date(now.getTime() - CLAIM_STALE_AFTER_MS);
   const [claimed] = await db
-    .update(schema.stripeWebhookEvents)
+    .update(stripeWebhookEvents)
     .set({
       processingStartedAt: now,
       error: null,
     })
     .where(
       and(
-        eq(schema.stripeWebhookEvents.id, event.id),
-        isNull(schema.stripeWebhookEvents.processedAt),
+        eq(stripeWebhookEvents.id, event.id),
+        isNull(stripeWebhookEvents.processedAt),
         or(
-          isNull(schema.stripeWebhookEvents.processingStartedAt),
-          lt(schema.stripeWebhookEvents.processingStartedAt, staleBefore),
+          isNull(stripeWebhookEvents.processingStartedAt),
+          lt(stripeWebhookEvents.processingStartedAt, staleBefore),
         ),
       ),
     )
-    .returning({ id: schema.stripeWebhookEvents.id });
+    .returning({ id: stripeWebhookEvents.id });
   return claimed ? { status: 'claimed' } : { status: 'in_progress' };
 }
 
@@ -74,13 +75,13 @@ export async function markStripeWebhookEventProcessed(
 ): Promise<void> {
   const db = deps.db ?? defaultDb;
   await db
-    .update(schema.stripeWebhookEvents)
+    .update(stripeWebhookEvents)
     .set({
       processedAt: deps.now?.() ?? new Date(),
       processingStartedAt: null,
       error: null,
     })
-    .where(eq(schema.stripeWebhookEvents.id, eventId));
+    .where(eq(stripeWebhookEvents.id, eventId));
 }
 
 export async function markStripeWebhookEventFailed(
@@ -90,12 +91,12 @@ export async function markStripeWebhookEventFailed(
 ): Promise<void> {
   const db = deps.db ?? defaultDb;
   await db
-    .update(schema.stripeWebhookEvents)
+    .update(stripeWebhookEvents)
     .set({
       processingStartedAt: null,
       error: errorMessage(err),
     })
-    .where(eq(schema.stripeWebhookEvents.id, eventId));
+    .where(eq(stripeWebhookEvents.id, eventId));
 }
 
 function errorMessage(err: unknown): string {

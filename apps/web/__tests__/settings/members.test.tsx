@@ -14,6 +14,7 @@ const mocks = vi.hoisted(() => {
       status: 'provisioning' | 'ready' | 'failed';
     }>;
     currentWorkspaceId: string | null;
+    allowMultiWorkspace: boolean;
     refresh: () => Promise<void>;
     switchTo: () => Promise<void>;
     recoverFromForbidden: ReturnType<typeof vi.fn>;
@@ -22,6 +23,7 @@ const mocks = vi.hoisted(() => {
       { id: 'ws1', name: 'Speedrun', role: 'owner', status: 'ready' },
     ],
     currentWorkspaceId: 'ws1',
+    allowMultiWorkspace: false,
     refresh: () => Promise.resolve(),
     switchTo: () => Promise.resolve(),
     recoverFromForbidden,
@@ -52,7 +54,8 @@ vi.mock('swr', async () => {
 
 vi.mock('@/lib/workspaces/store', () => ({
   useWorkspaceStore: Object.assign(
-    () => mocks.storeState,
+    (selector?: (state: typeof mocks.storeState) => unknown) =>
+      selector ? selector(mocks.storeState) : mocks.storeState,
     { getState: () => mocks.storeState },
   ),
   // The Sidebar (rendered inside MembersSettingsPage) now calls

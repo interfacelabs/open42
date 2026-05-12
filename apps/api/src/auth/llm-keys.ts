@@ -22,6 +22,7 @@ import type pino from 'pino';
 import { db as defaultDb } from '../db/client.js';
 import { workspaceCredentials } from '../db/schema.js';
 import { decryptSecret as defaultDecryptSecret } from '../crypto/envelope.js';
+import { OPEN42_ALLOW_SHARED_KEYS } from '../env.js';
 
 export type LlmProvider = 'openai' | 'anthropic';
 export type LlmScope = 'chat' | 'embed';
@@ -51,7 +52,8 @@ export interface ResolveLlmKeyDeps {
  *
  * Order of precedence:
  *   1. Tenant BYOK row in `workspace_credentials` → decrypt + return as 'tenant'.
- *   2. Shared env var (OPENAI_API_KEY / ANTHROPIC_API_KEY) → return as 'shared'.
+ *   2. Shared env var (OPENAI_API_KEY / ANTHROPIC_API_KEY), only when
+ *      OPEN42_ALLOW_SHARED_KEYS is enabled → return as 'shared'.
  *   3. Otherwise → null. Caller maps to upstream_key_unconfigured.
  *
  * Special case: Anthropic exposes no embeddings API. `(anthropic, embed)`
@@ -128,6 +130,14 @@ export async function resolveLlmKey(
   // 2. Shared env fallback. (anthropic, embed) is already blocked above —
   //    the early-return doubles as the "no Anthropic embeddings API" guard.
   //    A future embeddings provider (e.g. Voyage) would slot in here.
+  const sharedKeysAllowed =
+    deps.env && 'OPEN42_ALLOW_SHARED_KEYS' in deps.env
+      ? ['1', 'true', 'yes', 'on'].includes(
+          String(deps.env.OPEN42_ALLOW_SHARED_KEYS ?? '').toLowerCase(),
+        )
+      : OPEN42_ALLOW_SHARED_KEYS;
+  if (!sharedKeysAllowed) return null;
+
   const envName = input.provider === 'openai' ? 'OPENAI_API_KEY' : 'ANTHROPIC_API_KEY';
   const apiKey = env[envName]?.trim();
   if (!apiKey) return null;

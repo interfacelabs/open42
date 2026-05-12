@@ -1,0 +1,9 @@
+{
+  "name": "@open42/cloud-api",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "stripe": "^22.1.1"
+  }
+}

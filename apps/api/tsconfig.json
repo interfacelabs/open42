@@ -10,7 +10,8 @@
     "declarationMap": true,
     "sourceMap": true,
     "paths": {
-      "@/*": ["./src/*"]
+      "@/*": ["./src/*"],
+      "@open42/cloud/api": ["./src/types/open42-cloud-api.d.ts"]
     }
   },
   "include": ["src/**/*", "tests/**/*", "drizzle.config.ts"],

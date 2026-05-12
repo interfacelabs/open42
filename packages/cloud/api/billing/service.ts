@@ -1,7 +1,8 @@
 import { and, eq, gte, sql } from 'drizzle-orm';
 import type Stripe from 'stripe';
 
-import { db as defaultDb, schema } from '../db/client.js';
+import { db as defaultDb, schema as coreSchema } from '../../../../apps/api/src/db/client.js';
+import { billingUsageEvents, workspaceBilling } from '../schema-cloud.js';
 import {
   billingModeLabel,
   getBillingConfig,
@@ -65,39 +66,40 @@ export async function getWorkspaceBilling(workspaceId: string, deps: BillingDeps
 
   const [workspace] = await db
     .select({
-      id: schema.workspaces.id,
-      name: schema.workspaces.name,
-      billingPlanKey: schema.workspaces.billingPlanKey,
-      billingMode: schema.workspaces.billingMode,
-      stripeCustomerId: schema.workspaces.stripeCustomerId,
-      stripeSubscriptionId: schema.workspaces.stripeSubscriptionId,
-      stripeSubscriptionStatus: schema.workspaces.stripeSubscriptionStatus,
-      stripeSubscriptionCurrentPeriodStart: schema.workspaces.stripeSubscriptionCurrentPeriodStart,
-      stripeSubscriptionCurrentPeriodEnd: schema.workspaces.stripeSubscriptionCurrentPeriodEnd,
+      id: coreSchema.workspaces.id,
+      name: coreSchema.workspaces.name,
+      planKey: workspaceBilling.planKey,
+      mode: workspaceBilling.mode,
+      stripeCustomerId: workspaceBilling.stripeCustomerId,
+      stripeSubscriptionId: workspaceBilling.stripeSubscriptionId,
+      stripeSubscriptionStatus: workspaceBilling.stripeSubscriptionStatus,
+      stripeSubscriptionCurrentPeriodStart: workspaceBilling.stripeSubscriptionCurrentPeriodStart,
+      stripeSubscriptionCurrentPeriodEnd: workspaceBilling.stripeSubscriptionCurrentPeriodEnd,
     })
-    .from(schema.workspaces)
-    .where(eq(schema.workspaces.id, workspaceId))
+    .from(coreSchema.workspaces)
+    .leftJoin(workspaceBilling, eq(workspaceBilling.workspaceId, coreSchema.workspaces.id))
+    .where(eq(coreSchema.workspaces.id, workspaceId))
     .limit(1);
   if (!workspace) throw new BillingError('workspace_not_found');
 
   const periodStart = workspace.stripeSubscriptionCurrentPeriodStart ?? startOfUtcMonth(now);
   const [usage] = await db
     .select({
-      used: sql<number>`COALESCE(SUM(${schema.billingUsageEvents.units}), 0)::int`,
-      metered: sql<number>`COALESCE(SUM(${schema.billingUsageEvents.billableUnits}), 0)::int`,
+      used: sql<number>`COALESCE(SUM(${billingUsageEvents.units}), 0)::int`,
+      metered: sql<number>`COALESCE(SUM(${billingUsageEvents.billableUnits}), 0)::int`,
     })
-    .from(schema.billingUsageEvents)
+    .from(billingUsageEvents)
     .where(
       and(
-        eq(schema.billingUsageEvents.workspaceId, workspaceId),
-        gte(schema.billingUsageEvents.occurredAt, periodStart),
-        sql`${schema.billingUsageEvents.status} <> 'ignored'`,
+        eq(billingUsageEvents.workspaceId, workspaceId),
+        gte(billingUsageEvents.occurredAt, periodStart),
+        sql`${billingUsageEvents.status} <> 'ignored'`,
       ),
     );
   const [credential] = await db
-    .select({ id: schema.workspaceCredentials.id })
-    .from(schema.workspaceCredentials)
-    .where(eq(schema.workspaceCredentials.workspaceId, workspaceId))
+    .select({ id: coreSchema.workspaceCredentials.id })
+    .from(coreSchema.workspaceCredentials)
+    .where(eq(coreSchema.workspaceCredentials.workspaceId, workspaceId))
     .limit(1);
 
   const usedRequests = Number(usage?.used ?? 0);
@@ -106,10 +108,10 @@ export async function getWorkspaceBilling(workspaceId: string, deps: BillingDeps
 
   return {
     billing: {
-      planKey: workspace.billingPlanKey,
+      planKey: workspace.planKey ?? 'basic',
       planName: 'Basic',
-      mode: workspace.billingMode,
-      modeLabel: billingModeLabel(workspace.billingMode),
+      mode: workspace.mode ?? 'platform',
+      modeLabel: billingModeLabel(workspace.mode ?? 'platform'),
       hasByokKeys: Boolean(credential),
       subscriptionStatus: workspace.stripeSubscriptionStatus,
       subscriptionActive: isSubscriptionUsable(workspace.stripeSubscriptionStatus),
@@ -147,47 +149,49 @@ export async function createCheckoutSession(
 
   const [row] = await db
     .select({
-      workspace: schema.workspaces,
-      ownerEmail: schema.users.email,
+      workspaceId: coreSchema.workspaces.id,
+      workspaceName: coreSchema.workspaces.name,
+      ownerUserId: coreSchema.workspaces.ownerUserId,
+      ownerEmail: coreSchema.users.email,
+      stripeCustomerId: workspaceBilling.stripeCustomerId,
+      stripeSubscriptionStatus: workspaceBilling.stripeSubscriptionStatus,
     })
-    .from(schema.workspaces)
-    .innerJoin(schema.users, eq(schema.users.id, schema.workspaces.ownerUserId))
-    .where(eq(schema.workspaces.id, input.workspaceId))
+    .from(coreSchema.workspaces)
+    .innerJoin(coreSchema.users, eq(coreSchema.users.id, coreSchema.workspaces.ownerUserId))
+    .leftJoin(workspaceBilling, eq(workspaceBilling.workspaceId, coreSchema.workspaces.id))
+    .where(eq(coreSchema.workspaces.id, input.workspaceId))
     .limit(1);
   if (!row) throw new BillingError('workspace_not_found');
-  if (isSubscriptionUsable(row.workspace.stripeSubscriptionStatus)) {
+  if (isSubscriptionUsable(row.stripeSubscriptionStatus)) {
     throw new BillingError('subscription_exists');
   }
   if (input.billingMode === 'byok') {
     const [credential] = await db
-      .select({ id: schema.workspaceCredentials.id })
-      .from(schema.workspaceCredentials)
-      .where(eq(schema.workspaceCredentials.workspaceId, input.workspaceId))
+      .select({ id: coreSchema.workspaceCredentials.id })
+      .from(coreSchema.workspaceCredentials)
+      .where(eq(coreSchema.workspaceCredentials.workspaceId, input.workspaceId))
       .limit(1);
     if (!credential) throw new BillingError('byok_key_required');
   }
 
   const customerId =
-    row.workspace.stripeCustomerId ??
+    row.stripeCustomerId ??
     (
       await stripe.customers.create(
         {
           email: row.ownerEmail,
-          name: row.workspace.name,
+          name: row.workspaceName,
           metadata: {
-            workspace_id: row.workspace.id,
-            owner_user_id: row.workspace.ownerUserId,
+            workspace_id: row.workspaceId,
+            owner_user_id: row.ownerUserId,
           },
         },
-        { idempotencyKey: `open42_workspace_customer_${row.workspace.id}` },
+        { idempotencyKey: `open42_workspace_customer_${row.workspaceId}` },
       )
     ).id;
 
-  if (!row.workspace.stripeCustomerId) {
-    await db
-      .update(schema.workspaces)
-      .set({ stripeCustomerId: customerId })
-      .where(eq(schema.workspaces.id, input.workspaceId));
+  if (!row.stripeCustomerId) {
+    await upsertWorkspaceBilling(input.workspaceId, { stripeCustomerId: customerId }, db);
   }
 
   const lineItems: Array<{ price: string; quantity?: number }> = [
@@ -236,9 +240,9 @@ export async function createPortalSession(
   if (!stripe) throw new BillingError('stripe_not_configured');
 
   const [workspace] = await db
-    .select({ stripeCustomerId: schema.workspaces.stripeCustomerId })
-    .from(schema.workspaces)
-    .where(eq(schema.workspaces.id, workspaceId))
+    .select({ stripeCustomerId: workspaceBilling.stripeCustomerId })
+    .from(workspaceBilling)
+    .where(eq(workspaceBilling.workspaceId, workspaceId))
     .limit(1);
   if (!workspace) throw new BillingError('workspace_not_found');
   if (!workspace.stripeCustomerId) throw new BillingError('stripe_customer_missing');
@@ -267,13 +271,14 @@ export async function syncCheckoutSession(
   }
 
   const db = deps.db ?? defaultDb;
-  await db
-    .update(schema.workspaces)
-    .set({
+  await upsertWorkspaceBilling(
+    workspaceId,
+    {
       stripeCustomerId: customerId ?? undefined,
       stripeSubscriptionId: subscriptionId ?? undefined,
-    })
-    .where(eq(schema.workspaces.id, workspaceId));
+    },
+    db,
+  );
 }
 
 export async function syncSubscription(
@@ -293,19 +298,19 @@ export async function syncSubscription(
     stripeSubscriptionStatus: subscription.status,
     stripeSubscriptionCurrentPeriodStart: period.start,
     stripeSubscriptionCurrentPeriodEnd: period.end,
-    billingMode: billingMode ?? undefined,
-    billingPlanKey: subscription.metadata?.plan_key || 'basic',
+    mode: billingMode ?? undefined,
+    planKey: subscription.metadata?.plan_key || 'basic',
   };
 
   if (workspaceId) {
-    await db.update(schema.workspaces).set(set).where(eq(schema.workspaces.id, workspaceId));
+    await upsertWorkspaceBilling(workspaceId, set, db);
     return;
   }
   if (customerId) {
     await db
-      .update(schema.workspaces)
+      .update(workspaceBilling)
       .set(set)
-      .where(eq(schema.workspaces.stripeCustomerId, customerId));
+      .where(eq(workspaceBilling.stripeCustomerId, customerId));
   }
 }
 
@@ -331,6 +336,27 @@ export function mapBillingErrorStatus(error: BillingError): number {
       return 500;
     }
   }
+}
+
+async function upsertWorkspaceBilling(
+  workspaceId: string,
+  values: Partial<typeof workspaceBilling.$inferInsert>,
+  db: typeof defaultDb,
+): Promise<void> {
+  await db
+    .insert(workspaceBilling)
+    .values({
+      workspaceId,
+      ...values,
+      updatedAt: new Date(),
+    })
+    .onConflictDoUpdate({
+      target: workspaceBilling.workspaceId,
+      set: {
+        ...values,
+        updatedAt: new Date(),
+      },
+    });
 }
 
 function subscriptionPeriod(

@@ -201,8 +201,8 @@ describeDb('users.current_workspace_id invariants (DB integration)', () => {
       await repo.createWorkspace({
         id: wsBackground.id,
         ownerUserId: user.id,
-        flyMachineId: 'machine-bg',
-        flyPrivateIp: '127.0.0.1:18099',
+        tenantRuntimeId: 'machine-bg',
+        gbrainPrivateAddress: '127.0.0.1:18099',
         gbrainBaseUrl: 'http://127.0.0.1:18099',
         gbrainOauthClientId: 'client-bg',
         gbrainOauthClientSecretCiphertext: Buffer.from('ct'),

@@ -6,16 +6,17 @@ import cookieParser from 'cookie-parser';
 import pino from 'pino';
 
 import { csrfMiddleware } from './middleware/csrf.js';
-import { startBillingUsageRetryLoop, type BillingUsageRetryLoopHandle } from './billing/usage.js';
 import { PINO_ERROR_REDACT_PATHS, sanitizeErrorForLog } from './middleware/error-sanitize.js';
 import { requireMembership } from './middleware/require-membership.js';
 import { requireRole } from './middleware/require-role.js';
 import {
-  COMPOSIO_API_KEY,
   COMPOSIO_BASE_URL,
   COMPOSIO_WEBHOOK_SECRET,
+  OPEN42_COMPOSIO_ENABLED,
+  OPEN42_EDITION,
   API_PUBLIC_URL,
   WEB_PUBLIC_URL,
+  assertBootSecrets,
 } from './env.js';
 import { createComposioClient, noopComposioStub, type ComposioClient } from './composio/client.js';
 import { makeConnectorRegistry } from './connectors/registry.js';
@@ -37,13 +38,11 @@ import { buildIngestRouter } from './routes/workspaces/ingest.js';
 import { buildWorkspaceIndexRouter } from './routes/workspaces/index-router.js';
 import { buildInvitesRouter } from './routes/workspaces/invites.js';
 import { buildMembersRouter } from './routes/workspaces/members.js';
-import { buildWorkspaceBillingRouter } from './routes/workspaces/billing.js';
 import { buildWorkspaceProvisionRouter } from './routes/workspaces/provision.js';
 import { buildHealthzRouter } from './routes/healthz.js';
 import { libraryRouter } from './routes/library/index.js';
 import { skillsRouter } from './routes/skills/mint.js';
 import { buildComposioWebhookRouter } from './routes/webhooks/composio.js';
-import { buildStripeWebhookRouter } from './routes/webhooks/stripe.js';
 import {
   runWorkspaceCycle,
   type OrchestratorDeps,
@@ -66,12 +65,16 @@ const logger = pino({
 
 const app = express();
 const port = Number(process.env.API_PORT ?? portFromUrl(process.env.API_PUBLIC_URL) ?? 3001);
+assertBootSecrets();
 
 export let composio: ComposioClient | null = null;
 export let scheduler: SchedulerHandle | null = null;
-export let billingUsageRetryLoop: BillingUsageRetryLoopHandle | null = null;
 let orchestratorDeps: OrchestratorDeps | null = null;
 const connectionRouteDeps: { composio: ComposioClient | null } = { composio: null };
+const cloudApi = await loadCloudApi();
+export let cloudHandle: { stop(): void | Promise<void> } | null = null;
+
+cloudApi?.registerCloudRuntime?.();
 
 export async function kickWorkspaceIngest(workspaceId: string): Promise<void> {
   await scheduler?.kick(workspaceId);
@@ -79,9 +82,9 @@ export async function kickWorkspaceIngest(workspaceId: string): Promise<void> {
 
 void (async () => {
   try {
-    if (COMPOSIO_API_KEY) {
+    if (OPEN42_COMPOSIO_ENABLED) {
       composio = await createComposioClient({
-        apiKey: COMPOSIO_API_KEY,
+        apiKey: process.env.COMPOSIO_API_KEY ?? '',
         baseUrl: COMPOSIO_BASE_URL,
       });
     } else {
@@ -102,7 +105,7 @@ void (async () => {
   }
 })();
 
-// Trust proxy in prod (Cloudflare → Fly).
+// Trust the outer reverse proxy in deployed environments.
 app.set('trust proxy', 1);
 
 app.use(
@@ -127,7 +130,7 @@ app.use(
     kick: kickWorkspaceIngest,
   }),
 );
-app.use('/webhooks/stripe', buildStripeWebhookRouter());
+cloudApi?.mountCloudWebhooks?.(app, { logger });
 app.use(express.json({ limit: '1mb' }));
 app.use(cookieParser());
 app.use(
@@ -187,11 +190,7 @@ app.use(
   requireRole(['owner'], { from: 'param' }, 'forbidden_owner_only'),
   workspaceCredentialsRouter,
 );
-app.use(
-  '/workspaces/:id/billing',
-  requireRole(['owner'], { from: 'param' }, 'forbidden_owner_only'),
-  buildWorkspaceBillingRouter(),
-);
+cloudHandle = cloudApi?.mountCloudRoutes?.(app, { logger, requireRole }) ?? null;
 app.use(
   '/workspaces',
   buildIngestRouter({
@@ -233,7 +232,6 @@ const server = app.listen(port, () => {
   // another worker (or this same process on restart) picks the job back
   // up after the stalled-interval timeout. No DB sweep required.
   startProvisionWorker();
-  billingUsageRetryLoop = startBillingUsageRetryLoop({ logger });
 });
 
 // Graceful shutdown — drain in-flight jobs, close Redis sockets, then exit.
@@ -250,7 +248,7 @@ async function gracefulShutdown(signal: string): Promise<void> {
   if (scheduler) {
     await scheduler.stop();
   }
-  billingUsageRetryLoop?.stop();
+  await cloudHandle?.stop();
   await stopProvisionWorker();
   await closeProvisionQueue();
   await closeAllRedisConnections();
@@ -269,4 +267,9 @@ function portFromUrl(value?: string): string | null {
   } catch {
     return null;
   }
+}
+
+async function loadCloudApi(): Promise<any | null> {
+  if (OPEN42_EDITION !== 'cloud') return null;
+  return import('@open42/cloud/api');
 }

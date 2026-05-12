@@ -10,6 +10,7 @@ import {
   COMPOSIO_API_KEY,
   COMPOSIO_BASE_URL,
   COMPOSIO_NOTION_AUTH_CONFIG_ID,
+  OPEN42_COMPOSIO_ENABLED,
   OPEN42_INGEST_HMAC_SECRET,
   WEB_PUBLIC_URL,
 } from '../../env.js';
@@ -33,7 +34,7 @@ export function buildComposioRouter(depsIn: ComposioRouterDeps = {}) {
 
   const getComposio = (): Promise<ComposioClient> | null => {
     if (depsIn.composio) return Promise.resolve(depsIn.composio);
-    if (!COMPOSIO_API_KEY) return null;
+    if (!OPEN42_COMPOSIO_ENABLED || !COMPOSIO_API_KEY) return null;
     cachedComposio ??= createComposioClient({
       apiKey: COMPOSIO_API_KEY,
       baseUrl: COMPOSIO_BASE_URL,
