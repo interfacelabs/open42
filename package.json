@@ -24,7 +24,7 @@
     "tenant:build": "node scripts/build-tenant.mjs",
     "setup": "node scripts/setup.mjs",
     "heroku-postbuild": "npm run dokku:build",
-    "dokku:build": "test -n \"$OPEN42_DOKKU_WORKSPACE\" && { if [ \"$OPEN42_DOKKU_WORKSPACE\" = \"@open42/api\" ] && [ \"$OPEN42_EDITION\" = \"cloud\" ]; then npm run build:cloud-api; fi; npm run build -w \"$OPEN42_DOKKU_WORKSPACE\"; }",
+    "dokku:build": "test -n \"$OPEN42_DOKKU_WORKSPACE\" && if [ \"$OPEN42_DOKKU_WORKSPACE\" = \"@open42/api\" ] && [ \"$OPEN42_EDITION\" = \"cloud\" ]; then npm ci --prefix packages/cloud/api --ignore-scripts && npm run build -w \"$OPEN42_DOKKU_WORKSPACE\" && npm run build:cloud-api; else npm run build -w \"$OPEN42_DOKKU_WORKSPACE\"; fi",
     "dokku:start": "if [ \"$OPEN42_DOKKU_WORKSPACE\" = \"@open42/api\" ]; then if [ \"$OPEN42_EDITION\" = \"cloud\" ]; then npm run db:migrate:cloud -w @open42/api; else npm run db:migrate -w @open42/api; fi; fi; npm run start -w \"$OPEN42_DOKKU_WORKSPACE\"",
     "build": "npm run build -w @open42/landing && npm run build -w @open42/web && npm run build -w @open42/api",
     "build:community": "OPEN42_EDITION=community npm run build",
