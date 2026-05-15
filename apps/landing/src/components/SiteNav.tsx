@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { NAV_LINKS } from "@/lib/content";
+import { NAV_LINKS, SIGN_IN_URL } from "@/lib/content";
 import { Wordmark } from "@/components/Wordmark";
 import { ComingSoonLink } from "@/components/ComingSoonLink";
 
@@ -29,7 +29,7 @@ export function SiteNav() {
           </ul>
 
           <Link
-            href="/sign_in"
+            href={SIGN_IN_URL}
             className="inline-flex h-[35px] items-center rounded-lg bg-ink px-4 font-mono text-[14px] text-white transition-opacity hover:opacity-90"
           >
             Start free
