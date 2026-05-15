@@ -13,7 +13,6 @@ for (const file of ['.env.local', '.env']) {
 const nextConfig = {
   reactStrictMode: true,
   poweredByHeader: false,
-  output: 'standalone',
   devIndicators: false,
   outputFileTracingRoot: path.join(__dirname, '../..'),
   env: {
