@@ -28,6 +28,7 @@ const SAFE_PROVISIONING_ERROR_CODES = new Set([
   'docker_unavailable',
   'image_build_failed',
   'container_start_failed',
+  'tenant_agent_unavailable',
   'gbrain_health_timeout',
   'oauth_registration_failed',
   'gbrain_version_mismatch',

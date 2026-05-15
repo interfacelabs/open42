@@ -9,6 +9,7 @@ import {
   classifyProvisioningError,
   gbrainGitRef,
   provisionTenant,
+  registerTenantProvisioner,
   safelyProvisionTenant,
 } from './provision.js';
 
@@ -156,6 +157,156 @@ describe('provisionTenant', () => {
     });
     expect(fetchMock).not.toHaveBeenCalled();
   });
+
+  it('routes a hybrid free workspace through the Hetzner tenant agent', async () => {
+    process.env.OPEN42_KEK = '4'.repeat(64);
+    const stored: any[] = [];
+    const agentRequests: any[] = [];
+    const repo: TenantProvisionRepo = {
+      async ensureWorkspaceForProvisioning() {
+        return { id: 'workspace-free' };
+      },
+      async resolveWorkspaceTenantTier(workspaceId) {
+        expect(workspaceId).toBe('workspace-free');
+        return 'free';
+      },
+      async createWorkspace(input) {
+        stored.push(input);
+        return { id: 'workspace-free' };
+      },
+    };
+    const fetchMock = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+      const href = String(url);
+      if (href === 'http://10.42.0.3:4317/tenants') {
+        agentRequests.push({
+          authorization: (init?.headers as Record<string, string>)?.Authorization,
+          body: JSON.parse(String(init?.body)),
+        });
+        return json({
+          tenantRuntimeId: 'open42-gbrain-free',
+          gbrainPrivateAddress: '10.42.0.3:18080',
+          gbrainBaseUrl: 'http://10.42.0.3:18080',
+        });
+      }
+      if (href === 'http://10.42.0.3:18080/health') {
+        return json({ status: 'ok', version: '0.31.3' });
+      }
+      if (href === 'http://10.42.0.3:18080/register') {
+        return json({ client_id: 'client-free', client_secret: 'secret-free' });
+      }
+      if (href === 'http://10.42.0.3:18080/token') {
+        return json({ access_token: 'token-free', expires_in: 3600 });
+      }
+      throw new Error(`unexpected URL ${href}`);
+    });
+
+    await expect(
+      provisionTenant({
+        workspaceId: 'workspace-free',
+        ownerUserId: 'user-free',
+        repo,
+        fetch: fetchMock as typeof fetch,
+        sleep: async () => undefined,
+        env: {
+          TENANT_PROVISIONER: 'hybrid',
+          HETZNER_TENANT_AGENT_URL: 'http://10.42.0.3:4317',
+          HETZNER_TENANT_AGENT_TOKEN: 'agent-token',
+          API_PUBLIC_URL: 'https://api.open42.test',
+          GBRAIN_TENANT_IMAGE: 'registry.example/open42/gbrain-tenant:v0.31.3',
+          GBRAIN_VERSION: '0.31.3',
+        },
+      }),
+    ).resolves.toEqual({
+      workspaceId: 'workspace-free',
+      tenantRuntimeId: 'open42-gbrain-free',
+      gbrainPrivateAddress: '10.42.0.3:18080',
+      gbrainBaseUrl: 'http://10.42.0.3:18080',
+    });
+
+    expect(agentRequests).toHaveLength(1);
+    expect(agentRequests[0].authorization).toBe('Bearer agent-token');
+    expect(agentRequests[0].body).toMatchObject({
+      workspaceId: 'workspace-free',
+      ownerUserId: 'user-free',
+      image: 'registry.example/open42/gbrain-tenant:v0.31.3',
+      gbrainVersion: '0.31.3',
+      open42ApiBaseUrl: 'https://api.open42.test',
+      postgres: { db: 'gbrain', user: 'gbrain' },
+    });
+    expect(agentRequests[0].body.proxyToken).toMatch(/^tnt_workspace-free_[0-9a-f]{32}$/);
+    expect(stored[0]).toMatchObject({
+      tenantRuntimeId: 'open42-gbrain-free',
+      gbrainPrivateAddress: '10.42.0.3:18080',
+      gbrainBaseUrl: 'http://10.42.0.3:18080',
+      gbrainOauthClientId: 'client-free',
+    });
+    expect(
+      decryptSecret(stored[0].gbrainOauthClientSecretCiphertext, {
+        workspaceId: 'workspace-free',
+        purpose: 'gbrain_oauth_secret',
+      }),
+    ).toBe('secret-free');
+  });
+
+  it('routes a hybrid private workspace through the configured private provisioner', async () => {
+    process.env.OPEN42_KEK = '5'.repeat(64);
+    const calls: Array<{ workspaceId: string; proxyToken: string }> = [];
+    registerTenantProvisioner('test-private-provisioner', async (options) => {
+      calls.push({ workspaceId: options.workspaceId, proxyToken: options.proxyToken });
+      return {
+        tenantRuntimeId: 'private-runtime',
+        gbrainPrivateAddress: 'fdaa::42',
+        gbrainBaseUrl: 'http://[fdaa::42]:8080',
+      };
+    });
+    const repo: TenantProvisionRepo = {
+      async ensureWorkspaceForProvisioning() {
+        return { id: 'workspace-private' };
+      },
+      async resolveWorkspaceTenantTier() {
+        return 'private';
+      },
+      async createWorkspace() {
+        return { id: 'workspace-private' };
+      },
+    };
+    const fetchMock = vi.fn(async (url: string | URL | Request) => {
+      const href = String(url);
+      if (href === 'http://[fdaa::42]:8080/health') {
+        return json({ status: 'ok', version: '0.31.3' });
+      }
+      if (href === 'http://[fdaa::42]:8080/register') {
+        return json({ client_id: 'client-private', client_secret: 'secret-private' });
+      }
+      if (href === 'http://[fdaa::42]:8080/token') {
+        return json({ access_token: 'token-private', expires_in: 3600 });
+      }
+      throw new Error(`unexpected URL ${href}`);
+    });
+
+    await expect(
+      provisionTenant({
+        workspaceId: 'workspace-private',
+        ownerUserId: 'user-private',
+        repo,
+        fetch: fetchMock as typeof fetch,
+        sleep: async () => undefined,
+        env: {
+          TENANT_PROVISIONER: 'hybrid',
+          OPEN42_PRIVATE_TENANT_PROVISIONER: 'test-private-provisioner',
+          GBRAIN_VERSION: '0.31.3',
+        },
+      }),
+    ).resolves.toEqual({
+      workspaceId: 'workspace-private',
+      tenantRuntimeId: 'private-runtime',
+      gbrainPrivateAddress: 'fdaa::42',
+      gbrainBaseUrl: 'http://[fdaa::42]:8080',
+    });
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.workspaceId).toBe('workspace-private');
+    expect(calls[0]?.proxyToken).toMatch(/^tnt_workspace-private_[0-9a-f]{32}$/);
+  });
 });
 
 describe('gbrainGitRef', () => {
@@ -194,7 +345,10 @@ describe('classifyProvisioningError', () => {
     ['ENOENT: no such file or directory, posix_spawnp /usr/bin/docker', 'docker_unavailable'],
     ['docker build returned exit code 1', 'image_build_failed'],
     ['docker run --name open42 failed', 'container_start_failed'],
+    ['hetzner tenant agent failed: {"error":"no capacity"}', 'tenant_agent_unavailable'],
+    ['hetzner tenant agent unavailable: TypeError: fetch failed', 'tenant_agent_unavailable'],
     ['gbrain tenant did not become healthy: 503', 'gbrain_health_timeout'],
+    ['gbrain tenant did not become healthy: TypeError: fetch failed', 'gbrain_health_timeout'],
     ['failed to register OAuth client', 'oauth_registration_failed'],
     ['gbrain version mismatch: expected 0.31.3', 'gbrain_version_mismatch'],
     ['some unexpected non-matching message', 'provisioning_failed'],

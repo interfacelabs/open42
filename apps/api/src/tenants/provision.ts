@@ -18,6 +18,17 @@ const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../../../..')
 
 export interface TenantProvisionEnv {
   TENANT_PROVISIONER?: string;
+  API_PUBLIC_URL?: string;
+  OPEN42_DEFAULT_TENANT_TIER?: string;
+  OPEN42_FREE_TENANT_PROVISIONER?: string;
+  OPEN42_FREE_TENANT_WORKSPACE_IDS?: string;
+  OPEN42_PRIVATE_TENANT_PLANS?: string;
+  OPEN42_PRIVATE_TENANT_PROVISIONER?: string;
+  OPEN42_PRIVATE_TENANT_WORKSPACE_IDS?: string;
+  OPEN42_TENANT_PROXY_BASE_URL?: string;
+  HETZNER_TENANT_AGENT_TOKEN?: string;
+  HETZNER_TENANT_AGENT_URL?: string;
+  HETZNER_TENANT_POOL_ID?: string;
   GBRAIN_BASE_URL?: string;
   GBRAIN_GIT_REF?: string;
   GBRAIN_POSTGRES_DB?: string;
@@ -71,12 +82,14 @@ export interface TenantProvisionRepo {
   }): Promise<{ id: string }>;
   markWorkspaceFailedById?(workspaceId: string, errorCode: string): Promise<void>;
   resetWorkspaceById?(workspaceId: string): Promise<void>;
+  resolveWorkspaceTenantTier?(workspaceId: string): Promise<TenantRuntimeTier | null>;
 }
 
 export type ProvisioningErrorCode =
   | 'docker_unavailable'
   | 'image_build_failed'
   | 'container_start_failed'
+  | 'tenant_agent_unavailable'
   | 'gbrain_health_timeout'
   | 'oauth_registration_failed'
   | 'gbrain_version_mismatch'
@@ -94,6 +107,9 @@ export function classifyProvisioningError(err: unknown): ProvisioningErrorCode {
   }
   if (/docker run|container.*(failed|exit)/i.test(message)) {
     return 'container_start_failed';
+  }
+  if (/tenant agent|hetzner.*agent/i.test(message)) {
+    return 'tenant_agent_unavailable';
   }
   if (/gbrain tenant did not become healthy/i.test(message)) {
     return 'gbrain_health_timeout';
@@ -177,6 +193,8 @@ export interface TenantRuntime {
   gbrainBaseUrl: string;
 }
 
+export type TenantRuntimeTier = 'free' | 'private';
+
 export type TenantProvisioner = (options: TenantProvisionerOptions) => Promise<TenantRuntime>;
 
 const tenantProvisioners = new Map<string, TenantProvisioner>();
@@ -192,11 +210,11 @@ export async function provisionTenant(
   const fetchImpl = options.fetch ?? fetch;
   const repo = options.repo ?? createDrizzleTenantRepo();
   const gbrainVersion = required(env.GBRAIN_VERSION ?? '0.31.3', 'GBRAIN_VERSION');
-  const provider = selectProvisioner(env);
 
   const provision = async (): Promise<ProvisionTenantResult> => {
     const existing = await repo.findWorkspaceById?.(options.workspaceId);
     if (existing) return existing;
+    const provider = await selectProvisioner(env, repo, options.workspaceId);
 
     return provisionTenantResources({
       env,
@@ -394,8 +412,65 @@ async function useComposeTenant(options: TenantProvisionerOptions): Promise<Tena
   };
 }
 
+async function createHetznerAgentTenant(options: TenantProvisionerOptions): Promise<TenantRuntime> {
+  const agentUrl = required(options.env.HETZNER_TENANT_AGENT_URL, 'HETZNER_TENANT_AGENT_URL').replace(
+    /\/+$/,
+    '',
+  );
+  const token = required(options.env.HETZNER_TENANT_AGENT_TOKEN, 'HETZNER_TENANT_AGENT_TOKEN');
+  const open42ApiBaseUrl = tenantProxyBaseUrl(options.env);
+  const response = await options
+    .fetch(`${agentUrl}/tenants`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        workspaceId: options.workspaceId,
+        ownerUserId: options.ownerUserId,
+        image: tenantImage(options.env, options.gbrainVersion),
+        gbrainVersion: options.gbrainVersion,
+        poolId: options.env.HETZNER_TENANT_POOL_ID,
+        proxyToken: options.proxyToken,
+        open42ApiBaseUrl,
+        postgres: {
+          db: options.env.GBRAIN_POSTGRES_DB ?? 'gbrain',
+          user: options.env.GBRAIN_POSTGRES_USER ?? 'gbrain',
+          ...(options.env.GBRAIN_POSTGRES_PASSWORD
+            ? { password: options.env.GBRAIN_POSTGRES_PASSWORD }
+            : {}),
+        },
+      }),
+    })
+    .catch((err) => {
+      throw new Error(`hetzner tenant agent unavailable: ${String(err)}`);
+    });
+
+  const payload = await parseJsonObject(response);
+  if (!response.ok) {
+    throw new Error(`hetzner tenant agent failed: ${summarizeAgentPayload(payload)}`);
+  }
+
+  const tenantRuntimeId = stringField(payload, 'tenantRuntimeId');
+  const gbrainBaseUrl = stringField(payload, 'gbrainBaseUrl');
+  const gbrainPrivateAddress =
+    optionalStringField(payload, 'gbrainPrivateAddress') ?? gbrainBaseUrl.replace(/^https?:\/\//, '');
+  if (!tenantRuntimeId || !gbrainBaseUrl) {
+    throw new Error('hetzner tenant agent response missing tenantRuntimeId or gbrainBaseUrl');
+  }
+
+  return {
+    tenantRuntimeId,
+    gbrainPrivateAddress,
+    gbrainBaseUrl: gbrainBaseUrl.replace(/\/+$/, ''),
+  };
+}
+
 registerTenantProvisioner('local-docker', (options) => createLocalDockerTenant(options));
 registerTenantProvisioner('compose', useComposeTenant);
+registerTenantProvisioner('hetzner-agent', createHetznerAgentTenant);
+registerTenantProvisioner('hetzner', createHetznerAgentTenant);
 
 async function ensureLocalTenantImage(
   image: string,
@@ -649,6 +724,23 @@ export function createDrizzleTenantRepo(): TenantProvisionRepo {
         })
         .where(eq(schema.workspaces.id, workspaceId));
     },
+    async resolveWorkspaceTenantTier(workspaceId) {
+      const { db: defaultDb, schema } = await import('../db/client.js');
+      const [workspace] = await defaultDb
+        .select({ plan: schema.workspaces.plan })
+        .from(schema.workspaces)
+        .where(
+          and(
+            eq(schema.workspaces.id, workspaceId),
+            sql`${schema.workspaces.deletedAt} IS NULL`,
+          ),
+        )
+        .limit(1);
+      const plan = workspace?.plan;
+      if (!plan) return null;
+      const privatePlans = csv(process.env.OPEN42_PRIVATE_TENANT_PLANS || 'team,business');
+      return privatePlans.includes(plan) ? 'private' : 'free';
+    },
   };
 }
 
@@ -696,12 +788,81 @@ function resolveTenantProvisioner(name: string): TenantProvisioner {
   return provisioner;
 }
 
-function selectProvisioner(env: TenantProvisionEnv): string {
-  return env.TENANT_PROVISIONER || 'local-docker';
+async function selectProvisioner(
+  env: TenantProvisionEnv,
+  repo: TenantProvisionRepo,
+  workspaceId: string,
+): Promise<string> {
+  const configured = env.TENANT_PROVISIONER || 'local-docker';
+  if (configured !== 'hybrid') return configured;
+
+  const tier = await resolveTenantRuntimeTier(env, repo, workspaceId);
+  return tier === 'private'
+    ? env.OPEN42_PRIVATE_TENANT_PROVISIONER || 'fly'
+    : env.OPEN42_FREE_TENANT_PROVISIONER || 'hetzner-agent';
+}
+
+async function resolveTenantRuntimeTier(
+  env: TenantProvisionEnv,
+  repo: TenantProvisionRepo,
+  workspaceId: string,
+): Promise<TenantRuntimeTier> {
+  if (csv(env.OPEN42_FREE_TENANT_WORKSPACE_IDS).includes(workspaceId)) return 'free';
+  if (csv(env.OPEN42_PRIVATE_TENANT_WORKSPACE_IDS).includes(workspaceId)) return 'private';
+
+  const repoTier = await repo.resolveWorkspaceTenantTier?.(workspaceId);
+  if (repoTier) return repoTier;
+
+  const fallback = env.OPEN42_DEFAULT_TENANT_TIER;
+  if (fallback === 'private' || fallback === 'free') return fallback;
+  return 'free';
 }
 
 function tenantImage(env: TenantProvisionEnv, gbrainVersion: string): string {
   return env.GBRAIN_TENANT_IMAGE ?? `open42/gbrain-tenant:v${gbrainVersion}`;
+}
+
+function tenantProxyBaseUrl(env: TenantProvisionEnv): string {
+  return required(
+    (env.OPEN42_TENANT_PROXY_BASE_URL || env.API_PUBLIC_URL)?.replace(/\/+$/, ''),
+    'OPEN42_TENANT_PROXY_BASE_URL or API_PUBLIC_URL',
+  );
+}
+
+async function parseJsonObject(response: Response): Promise<Record<string, unknown>> {
+  const text = await response.text();
+  if (!text) return {};
+  try {
+    const parsed = JSON.parse(text);
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
+  } catch {
+    return { error: text.slice(0, 300) };
+  }
+}
+
+function summarizeAgentPayload(payload: Record<string, unknown>): string {
+  const sanitized = { ...payload };
+  for (const key of ['token', 'proxyToken', 'password', 'client_secret', 'access_token']) {
+    if (key in sanitized) sanitized[key] = '***';
+  }
+  return JSON.stringify(sanitized).slice(0, 500);
+}
+
+function stringField(payload: Record<string, unknown>, name: string): string {
+  const value = payload[name];
+  return typeof value === 'string' ? value : '';
+}
+
+function optionalStringField(payload: Record<string, unknown>, name: string): string | undefined {
+  const value = stringField(payload, name);
+  return value || undefined;
+}
+
+function csv(value: string | undefined): string[] {
+  return (value ?? '')
+    .split(',')
+    .map((item) => item.trim())
+    .filter(Boolean);
 }
 
 export const DEFAULT_GBRAIN_GIT_REF = '9c60b3a068849f695034d82eb6c2b99287f9a054';

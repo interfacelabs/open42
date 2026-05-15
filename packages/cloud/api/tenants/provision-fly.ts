@@ -3,8 +3,10 @@ import type { TenantProvisionerOptions, TenantRuntime } from '@open42/api/tenant
 type Fetch = typeof fetch;
 
 interface FlyTenantProvisionEnv {
+  API_PUBLIC_URL?: string;
   FLY_API_TOKEN?: string;
   FLY_TENANTS_APP_NAME?: string;
+  FLY_REGION?: string;
   GBRAIN_TENANT_REGION?: string;
   GBRAIN_TENANT_VOLUME_SIZE_GB?: string;
   GBRAIN_TENANT_IMAGE?: string;
@@ -12,13 +14,14 @@ interface FlyTenantProvisionEnv {
   GBRAIN_POSTGRES_PASSWORD?: string;
   GBRAIN_POSTGRES_USER?: string;
   OPEN42_API_FLYCAST_HOST?: string;
+  OPEN42_TENANT_PROXY_BASE_URL?: string;
 }
 
 export async function createFlyTenant(options: TenantProvisionerOptions): Promise<TenantRuntime> {
   const env = options.env as FlyTenantProvisionEnv;
   const token = required(env.FLY_API_TOKEN, 'FLY_API_TOKEN');
   const appName = required(env.FLY_TENANTS_APP_NAME, 'FLY_TENANTS_APP_NAME');
-  const region = env.GBRAIN_TENANT_REGION;
+  const region = env.GBRAIN_TENANT_REGION ?? env.FLY_REGION;
   const volume = await createFlyVolume({
     appName,
     fetch: options.fetch,
@@ -36,7 +39,7 @@ export async function createFlyTenant(options: TenantProvisionerOptions): Promis
     postgresDb: env.GBRAIN_POSTGRES_DB ?? 'gbrain',
     postgresPassword: env.GBRAIN_POSTGRES_PASSWORD,
     postgresUser: env.GBRAIN_POSTGRES_USER ?? 'gbrain',
-    open42ApiBaseUrl: flyOpen42ApiBaseUrl(env),
+    open42ApiBaseUrl: tenantProxyBaseUrl(env),
     proxyToken: options.proxyToken,
     region,
     fetch: options.fetch,
@@ -158,7 +161,14 @@ async function createFlyMachine(options: {
   return { id, privateIp };
 }
 
-function flyOpen42ApiBaseUrl(env: { OPEN42_API_FLYCAST_HOST?: string }): string {
+function tenantProxyBaseUrl(env: {
+  API_PUBLIC_URL?: string;
+  OPEN42_API_FLYCAST_HOST?: string;
+  OPEN42_TENANT_PROXY_BASE_URL?: string;
+}): string {
+  const explicit = env.OPEN42_TENANT_PROXY_BASE_URL ?? env.API_PUBLIC_URL;
+  if (explicit) return explicit.replace(/\/+$/, '');
+
   const host = env.OPEN42_API_FLYCAST_HOST ?? 'open42-api.flycast';
   const withProtocol = /^https?:\/\//.test(host) ? host : `http://${host}`;
   return withProtocol.replace(/\/+$/, '');
