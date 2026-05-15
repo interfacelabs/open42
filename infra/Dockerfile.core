@@ -1,0 +1,73 @@
+FROM node:20-alpine AS deps
+WORKDIR /app
+COPY package.json package-lock.json ./
+COPY apps/api/package.json apps/api/package.json
+COPY apps/web/package.json apps/web/package.json
+COPY apps/landing/package.json apps/landing/package.json
+COPY apps/mobile/package.json apps/mobile/package.json
+COPY packages/cloud/package.json packages/cloud/package.json
+COPY packages/cloud/api/package.json packages/cloud/api/package.json
+COPY packages/cloud/api/package-lock.json packages/cloud/api/package-lock.json
+COPY packages/cloud-stubs/package.json packages/cloud-stubs/package.json
+RUN npm ci
+RUN npm install --prefix packages/cloud/api --ignore-scripts
+
+FROM deps AS build
+WORKDIR /app
+ENV OPEN42_EDITION=cloud
+ENV NEXT_PUBLIC_OPEN42_EDITION=cloud
+ENV NEXT_PUBLIC_OPEN42_APP_URL=https://app.open42.ai
+COPY . .
+RUN npm run build -w @open42/landing \
+  && npm run build -w @open42/web \
+  && npm run build -w @open42/api \
+  && npm run build:cloud-api
+
+FROM node:20-alpine AS core
+WORKDIR /app
+RUN apk add --no-cache \
+  bash \
+  caddy \
+  postgresql \
+  postgresql-client \
+  postgresql-contrib \
+  redis \
+  su-exec
+
+ENV NODE_ENV=production
+ENV OPEN42_EDITION=cloud
+ENV NEXT_PUBLIC_OPEN42_EDITION=cloud
+ENV NEXT_PUBLIC_OPEN42_APP_URL=https://app.open42.ai
+
+COPY --from=build /app/package.json ./package.json
+COPY --from=build /app/node_modules ./node_modules
+
+COPY --from=build /app/apps/api/package.json ./apps/api/package.json
+COPY --from=build /app/apps/api/dist ./apps/api/dist
+COPY --from=build /app/apps/api/drizzle.config.ts ./apps/api/drizzle.config.ts
+COPY --from=build /app/apps/api/drizzle.config.community.ts ./apps/api/drizzle.config.community.ts
+COPY --from=build /app/apps/api/drizzle.config.cloud.migrate.ts ./apps/api/drizzle.config.cloud.migrate.ts
+COPY --from=build /app/apps/api/src ./apps/api/src
+
+COPY --from=build /app/apps/web/package.json ./apps/web/package.json
+COPY --from=build /app/apps/web/.next ./apps/web/.next
+COPY --from=build /app/apps/web/next.config.js ./apps/web/next.config.js
+
+COPY --from=build /app/apps/landing/package.json ./apps/landing/package.json
+COPY --from=build /app/apps/landing/.next ./apps/landing/.next
+COPY --from=build /app/apps/landing/next.config.js ./apps/landing/next.config.js
+COPY --from=build /app/apps/landing/public ./apps/landing/public
+
+COPY --from=build /app/packages/cloud/package.json ./packages/cloud/package.json
+COPY --from=build /app/packages/cloud/api/package.json ./packages/cloud/api/package.json
+COPY --from=build /app/packages/cloud/api/dist ./packages/cloud/api/dist
+COPY --from=build /app/packages/cloud/api/node_modules ./packages/cloud/api/node_modules
+COPY --from=build /app/packages/cloud/migrations ./packages/cloud/migrations
+COPY --from=build /app/packages/cloud/scripts ./packages/cloud/scripts
+
+COPY infra/Caddyfile.core /etc/caddy/Caddyfile
+COPY infra/entrypoint.core.sh /app/entrypoint.sh
+RUN chmod +x /app/entrypoint.sh
+
+EXPOSE 8080
+CMD ["/app/entrypoint.sh"]

@@ -1,0 +1,45 @@
+app = "open42-core"
+primary_region = "iad"
+kill_signal = "SIGTERM"
+kill_timeout = "30s"
+
+[build]
+  dockerfile = "infra/Dockerfile.core"
+
+[env]
+  OPEN42_EDITION = "cloud"
+  NEXT_PUBLIC_OPEN42_EDITION = "cloud"
+  API_PUBLIC_URL = "https://api.open42.ai"
+  WEB_PUBLIC_URL = "https://app.open42.ai"
+  NEXT_PUBLIC_OPEN42_APP_URL = "https://app.open42.ai"
+  NEXT_PUBLIC_OPEN42_DOCS_URL = "#architecture"
+  FLY_REGION = "iad"
+  GBRAIN_TENANT_REGION = "iad"
+  FLY_TENANTS_APP_NAME = "open42-tenants"
+  OPEN42_PRIVATE_TENANT_PROVISIONER = "fly"
+  OPEN42_PRIVATE_TENANT_PLANS = "team,business"
+  OPEN42_TENANT_PROXY_BASE_URL = "http://open42-core.flycast"
+  POSTGRES_USER = "open42"
+  POSTGRES_DB = "open42"
+
+[mounts]
+  source = "open42_core_data"
+  destination = "/data"
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  auto_stop_machines = "off"
+  auto_start_machines = true
+  min_machines_running = 1
+
+  [[http_service.checks]]
+    grace_period = "45s"
+    interval = "15s"
+    method = "GET"
+    timeout = "5s"
+    path = "/healthz"
+
+[[vm]]
+  size = "shared-cpu-4x"
+  memory = "4096mb"
