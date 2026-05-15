@@ -1,0 +1,36 @@
+{
+  admin off
+  auto_https off
+}
+
+:8080 {
+  encode zstd gzip
+
+  @apiHost host api.open42.ai
+  handle @apiHost {
+    reverse_proxy 127.0.0.1:3001
+  }
+
+  @appHost host app.open42.ai
+  handle @appHost {
+    reverse_proxy 127.0.0.1:3000
+  }
+
+  @landingHost host open42.ai www.open42.ai
+  handle @landingHost {
+    reverse_proxy 127.0.0.1:3002
+  }
+
+  # Flycast/internal callers do not send api.open42.ai as the Host header.
+  handle /healthz* {
+    reverse_proxy 127.0.0.1:3001
+  }
+
+  handle /proxy/* {
+    reverse_proxy 127.0.0.1:3001
+  }
+
+  handle {
+    reverse_proxy 127.0.0.1:3002
+  }
+}
