@@ -19,7 +19,7 @@ export async function acquireWorkspaceLock(
     RETURNING ingest_lock_until
   `);
   const row = rowsOf<{ ingest_lock_until: Date }>(rows)[0];
-  return row?.ingest_lock_until ?? null;
+  return coerceDate(row?.ingest_lock_until);
 }
 
 export async function heartbeatLock(
@@ -31,14 +31,14 @@ export async function heartbeatLock(
     UPDATE workspaces
     SET ingest_lock_until = date_trunc(
       'milliseconds',
-      now() + (${HEARTBEAT_TTL_MIN}::int * interval '1 minute')
+      greatest(now(), ${expectedLease}::timestamptz) + (${HEARTBEAT_TTL_MIN}::int * interval '1 minute')
     )
     WHERE id = ${workspaceId}
       AND ingest_lock_until = date_trunc('milliseconds', ${expectedLease}::timestamptz)
     RETURNING ingest_lock_until
   `);
   const row = rowsOf<{ ingest_lock_until: Date }>(rows)[0];
-  return row?.ingest_lock_until ?? null;
+  return coerceDate(row?.ingest_lock_until);
 }
 
 export async function releaseLockOnSuccess(
@@ -83,4 +83,9 @@ export async function reclaimExpiredLocks(db: typeof Db): Promise<number> {
 
 function rowsOf<T>(result: unknown): T[] {
   return (result as { rows: T[] }).rows;
+}
+
+function coerceDate(value: Date | string | null | undefined): Date | null {
+  if (!value) return null;
+  return value instanceof Date ? value : new Date(value);
 }
