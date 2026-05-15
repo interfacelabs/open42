@@ -66,7 +66,7 @@ const logger = pino({
 });
 
 const app = express();
-const port = Number(process.env.API_PORT ?? portFromUrl(process.env.API_PUBLIC_URL) ?? 3001);
+const port = Number(process.env.API_PORT ?? process.env.PORT ?? portFromUrl(process.env.API_PUBLIC_URL) ?? 3001);
 assertBootSecrets();
 
 export let composio: ComposioClient | null = null;
