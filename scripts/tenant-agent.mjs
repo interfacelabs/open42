@@ -10,7 +10,7 @@
  */
 import { createServer } from 'node:http';
 import { spawn } from 'node:child_process';
-import { mkdir, mkdtemp, readFile, rename, rm, writeFile } from 'node:fs/promises';
+import { chmod, chown, mkdir, mkdtemp, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { tmpdir } from 'node:os';
 
@@ -21,9 +21,19 @@ const port = numberEnv(env.TENANT_AGENT_PORT, 4317);
 const statePath = env.TENANT_AGENT_STATE ?? '/var/lib/open42-tenant-agent/state.json';
 const tenantBindAddr = env.TENANT_AGENT_TENANT_BIND_ADDR ?? '127.0.0.1';
 const tenantHost = env.TENANT_AGENT_TENANT_HOST ?? tenantBindAddr;
+const gbrainPublicUrlHost = env.TENANT_AGENT_GBRAIN_PUBLIC_URL_HOST ?? '127.0.0.1';
+const gbrainPublicUrlTemplate = env.TENANT_AGENT_GBRAIN_PUBLIC_URL_TEMPLATE ?? '';
 const portStart = numberEnv(env.TENANT_AGENT_PORT_START, 18080);
 const portEnd = numberEnv(env.TENANT_AGENT_PORT_END, 22080);
 const namePrefix = env.TENANT_AGENT_CONTAINER_PREFIX ?? 'open42-gbrain';
+const tenantDataRoot = env.TENANT_AGENT_DATA_ROOT ?? '/var/lib/open42/tenants';
+const tenantUid = numberEnv(env.TENANT_AGENT_TENANT_UID, 10001);
+const tenantGid = numberEnv(env.TENANT_AGENT_TENANT_GID, 10001);
+const tenantMemory = env.TENANT_AGENT_TENANT_MEMORY ?? '384m';
+const tenantMemorySwap = env.TENANT_AGENT_TENANT_MEMORY_SWAP ?? tenantMemory;
+const tenantCpus = env.TENANT_AGENT_TENANT_CPUS ?? '0.5';
+const tenantPidsLimit = numberEnv(env.TENANT_AGENT_TENANT_PIDS_LIMIT, 256);
+const seccompProfile = env.TENANT_AGENT_SECCOMP_PROFILE ?? '';
 const tenantLocks = new Map();
 
 const server = createServer(async (req, res) => {
@@ -88,19 +98,23 @@ async function provisionTenant(input) {
 
   const containerName = tenantContainerName(workspaceId);
   const dataVolume = `${containerName}-data`;
+  const tenantNetwork = `${containerName}-net`;
+  const tenantDataDir = join(tenantDataRoot, containerName);
   const tenantPort = existing?.port ?? allocatePort(state);
   const gbrainBaseUrl = `http://${hostForUrl(tenantHost)}:${tenantPort}`;
+  const gbrainPublicUrl = tenantPublicUrl(tenantPort);
 
   const imagePresent = await run('docker', ['image', 'inspect', image], { allowFailure: true });
   if (imagePresent.status !== 0) {
     await run('docker', ['pull', image]);
   }
-  await run('docker', ['volume', 'create', dataVolume]);
+  await ensureTenantVolume(dataVolume, tenantDataDir, workspaceId);
+  await ensureTenantNetwork(tenantNetwork, workspaceId);
   await run('docker', ['rm', '-f', containerName], { allowFailure: true });
 
   const envFile = await writeTenantEnv({
     GBRAIN_HOME: '/data/gbrain',
-    GBRAIN_PUBLIC_URL: gbrainBaseUrl,
+    GBRAIN_PUBLIC_URL: gbrainPublicUrl,
     GBRAIN_POSTGRES_DB: postgresDb,
     GBRAIN_POSTGRES_USER: postgresUser,
     ...(postgresPassword ? { GBRAIN_POSTGRES_PASSWORD: postgresPassword } : {}),
@@ -119,12 +133,38 @@ async function provisionTenant(input) {
       'unless-stopped',
       '--name',
       containerName,
+      '--network',
+      tenantNetwork,
       '-p',
       `${tenantBindAddr}:${tenantPort}:8080`,
+      '--user',
+      `${tenantUid}:${tenantGid}`,
+      '--read-only',
+      '--tmpfs',
+      '/tmp:rw,noexec,nosuid,size=64m,mode=1777',
+      '--tmpfs',
+      `/run/postgresql:rw,noexec,nosuid,size=8m,uid=${tenantUid},gid=${tenantGid},mode=0700`,
+      '--cap-drop',
+      'ALL',
+      '--security-opt',
+      'no-new-privileges:true',
+      '--cgroupns',
+      'private',
+      '--ipc',
+      'private',
+      '--memory',
+      tenantMemory,
+      '--memory-swap',
+      tenantMemorySwap,
+      '--cpus',
+      tenantCpus,
+      '--pids-limit',
+      String(tenantPidsLimit),
+      ...seccompArgs(),
       '--env-file',
       envFile,
-      '-v',
-      `${dataVolume}:/data`,
+      '--mount',
+      `type=volume,source=${dataVolume},target=/data,volume-nocopy`,
       '--label',
       'open42.tenant=true',
       '--label',
@@ -146,6 +186,58 @@ async function provisionTenant(input) {
   state.tenants[workspaceId] = runtime;
   await saveState(state);
   return runtime;
+}
+
+async function ensureTenantVolume(volumeName, tenantDataDir, workspaceId) {
+  const existing = await run('docker', ['volume', 'inspect', '-f', '{{.Mountpoint}}', volumeName], {
+    allowFailure: true,
+  });
+  if (existing.status === 0) {
+    const mountpoint = existing.stdout.trim();
+    if (mountpoint) await prepareTenantDataDir(mountpoint);
+    return;
+  }
+
+  await prepareTenantDataDir(tenantDataDir);
+  await run('docker', [
+    'volume',
+    'create',
+    '--driver',
+    'local',
+    '--opt',
+    'type=none',
+    '--opt',
+    'o=bind',
+    '--opt',
+    `device=${tenantDataDir}`,
+    '--label',
+    'open42.tenant=true',
+    '--label',
+    `open42.workspace_id=${workspaceId}`,
+    volumeName,
+  ]);
+}
+
+async function prepareTenantDataDir(path) {
+  await mkdir(path, { recursive: true, mode: 0o700 });
+  await chown(path, tenantUid, tenantGid);
+  await chmod(path, 0o700);
+}
+
+async function ensureTenantNetwork(networkName, workspaceId) {
+  const existing = await run('docker', ['network', 'inspect', networkName], { allowFailure: true });
+  if (existing.status === 0) return;
+  await run('docker', [
+    'network',
+    'create',
+    '--driver',
+    'bridge',
+    '--label',
+    'open42.tenant=true',
+    '--label',
+    `open42.workspace_id=${workspaceId}`,
+    networkName,
+  ]);
 }
 
 async function ensureContainerRunning(containerName) {
@@ -184,6 +276,17 @@ function allocatePort(state) {
     status: 503,
     code: 'tenant_ports_exhausted',
   });
+}
+
+function seccompArgs() {
+  return seccompProfile ? ['--security-opt', `seccomp=${seccompProfile}`] : [];
+}
+
+function tenantPublicUrl(port) {
+  if (gbrainPublicUrlTemplate) {
+    return gbrainPublicUrlTemplate.replaceAll('{port}', String(port));
+  }
+  return `http://${hostForUrl(gbrainPublicUrlHost)}:${port}`;
 }
 
 async function writeTenantEnv(values) {

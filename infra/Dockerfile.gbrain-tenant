@@ -24,7 +24,14 @@ RUN apk add --no-cache \
   su-exec \
   unzip
 
+RUN addgroup -g 10001 -S gbrain \
+  && adduser -u 10001 -S -D -H -G gbrain gbrain \
+  && mkdir -p /data /run/postgresql /app \
+  && chown -R gbrain:gbrain /data /run/postgresql /app
+
 ENV BUN_INSTALL=/usr/local/bun
+ENV HOME=/data/home
+ENV XDG_CACHE_HOME=/data/.cache
 ENV PATH=/usr/local/bun/bin:$PATH
 
 RUN curl -fsSLo /tmp/bun.zip "https://github.com/oven-sh/bun/releases/download/bun-v${BUN_VERSION}/${BUN_TARGET}.zip" \

@@ -31,6 +31,19 @@ in `OPEN42_PRIVATE_TENANT_WORKSPACE_IDS`, its `workspaces.plan` is included in
 `OPEN42_PRIVATE_TENANT_PLANS`, or `OPEN42_DEFAULT_TENANT_TIER=private`.
 Free tenants default to `hetzner-agent`; private tenants default to `fly`.
 
+## Hetzner Free-Tenant Runtime
+
+The Hetzner tenant-agent starts one Docker container per free workspace. Each
+container gets a Docker named volume backed by a per-tenant host directory under
+`/var/lib/open42/tenants`, plus a per-tenant Docker bridge network. Tenant
+containers run as UID/GID `10001`, with a read-only root filesystem, tmpfs
+runtime directories, all Linux capabilities dropped, `no-new-privileges`,
+private IPC and cgroup namespaces, and memory/CPU/pids cgroup limits.
+
+The gbrain image also supports the Fly/private path: when started as root, the
+entrypoint prepares mounted storage and then runs Postgres and gbrain as the
+non-root `gbrain` user.
+
 ## Queue Behavior
 
 Provisioning runs through BullMQ so retries and process restarts are recoverable.
