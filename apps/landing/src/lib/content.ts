@@ -12,6 +12,9 @@ export const NAV_LINKS = [
 ];
 
 export const GITHUB_URL = "https://github.com/interfacelabs/open42";
+const OPEN42_APP_URL =
+  process.env.NEXT_PUBLIC_OPEN42_APP_URL ?? "https://app.open42.ai";
+export const SIGN_IN_URL = `${OPEN42_APP_URL.replace(/\/$/, "")}/sign_in`;
 
 export const HERO = {
   eyebrow: "Open42 · built on gbrain",
@@ -19,7 +22,7 @@ export const HERO = {
     "The AI that knows your company — and turns answers into tools your team can reuse.",
   subhead:
     "Connect your docs, chats, and email. Open42 becomes your team's shared brain — answering with citations, and turning any answer into a one-click Skill anyone can run again.",
-  primaryCta: { label: "Start free", href: "/sign_in" },
+  primaryCta: { label: "Start free", href: SIGN_IN_URL },
   secondaryCta: { label: "See how it works", href: "#how" },
 };
 
@@ -220,7 +223,7 @@ export const PRICING = {
       period: "/user/mo",
       description: "We run it. One private brain per workspace.",
       cta: "Start free",
-      href: "/sign_in",
+      href: SIGN_IN_URL,
       featured: true,
       features: [
         "Private brain runtime per workspace",
@@ -318,7 +321,7 @@ export const CTA = {
   heading: "Give your AI the company memory it keeps pretending to have.",
   subhead:
     "Connect your docs in five minutes. Ask the first question. Save the first Skill. From there, your team's brain only gets sharper.",
-  primary: { label: "Start free", href: "/sign_in" },
+  primary: { label: "Start free", href: SIGN_IN_URL },
   secondary: {
     label: "View on GitHub",
     href: "https://github.com/interfacelabs/open42",
