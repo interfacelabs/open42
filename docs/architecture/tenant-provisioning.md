@@ -23,6 +23,13 @@ persists the Open42-side connection metadata.
 | `local-docker` | Development | Starts one local Docker container per workspace. |
 | `compose` | Community self-host | Points Open42 at the shared Compose `gbrain` service. |
 | `fly` | Cloud | Creates Fly Machines and volumes through the cloud package. |
+| `hetzner-agent` | Cloud free tier | Calls the private Hetzner tenant-agent, which starts Docker tenants on the free-tenant VPS. |
+| `hybrid` | Cloud | Routes each workspace to `OPEN42_FREE_TENANT_PROVISIONER` or `OPEN42_PRIVATE_TENANT_PROVISIONER`. |
+
+Hybrid routing defaults to free tenants unless a workspace is explicitly listed
+in `OPEN42_PRIVATE_TENANT_WORKSPACE_IDS`, its `workspaces.plan` is included in
+`OPEN42_PRIVATE_TENANT_PLANS`, or `OPEN42_DEFAULT_TENANT_TIER=private`.
+Free tenants default to `hetzner-agent`; private tenants default to `fly`.
 
 ## Queue Behavior
 
