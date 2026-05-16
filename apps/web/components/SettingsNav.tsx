@@ -2,12 +2,13 @@ import Link from 'next/link';
 
 import { cn } from '@/lib/utils';
 
-export type SettingsTab = 'connections' | 'ingest' | 'api-keys' | 'plan';
+export type SettingsTab = 'connections' | 'ingest' | 'api-keys' | 'mcp' | 'plan';
 
 const TABS: Array<{ id: SettingsTab; label: string; href: string }> = [
   { id: 'connections', label: 'Connections', href: '/settings/connections' },
   { id: 'ingest', label: 'Ingest', href: '/settings/ingest' },
   { id: 'api-keys', label: 'API keys', href: '/settings/api-keys' },
+  { id: 'mcp', label: 'MCP', href: '/settings/mcp' },
   ...(process.env.NEXT_PUBLIC_OPEN42_EDITION === 'cloud'
     ? [{ id: 'plan' as const, label: 'Billing', href: '/settings/plan' }]
     : []),
