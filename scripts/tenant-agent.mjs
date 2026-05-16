@@ -85,6 +85,7 @@ async function provisionTenant(input) {
     /\/+$/,
     '',
   );
+  const explicitGbrainPublicUrl = stringOr(input.gbrainPublicUrl, '');
   const postgres = typeof input.postgres === 'object' && input.postgres ? input.postgres : {};
   const postgresDb = stringOr(postgres.db, env.GBRAIN_POSTGRES_DB ?? 'gbrain');
   const postgresUser = stringOr(postgres.user, env.GBRAIN_POSTGRES_USER ?? 'gbrain');
@@ -102,7 +103,7 @@ async function provisionTenant(input) {
   const tenantDataDir = join(tenantDataRoot, containerName);
   const tenantPort = existing?.port ?? allocatePort(state);
   const gbrainBaseUrl = `http://${hostForUrl(tenantHost)}:${tenantPort}`;
-  const gbrainPublicUrl = tenantPublicUrl(tenantPort);
+  const gbrainPublicUrl = explicitGbrainPublicUrl || tenantPublicUrl(tenantPort, workspaceId);
 
   const imagePresent = await run('docker', ['image', 'inspect', image], { allowFailure: true });
   if (imagePresent.status !== 0) {
@@ -282,9 +283,12 @@ function seccompArgs() {
   return seccompProfile ? ['--security-opt', `seccomp=${seccompProfile}`] : [];
 }
 
-function tenantPublicUrl(port) {
+function tenantPublicUrl(port, workspaceId) {
   if (gbrainPublicUrlTemplate) {
-    return gbrainPublicUrlTemplate.replaceAll('{port}', String(port));
+    return gbrainPublicUrlTemplate
+      .replaceAll('{port}', String(port))
+      .replaceAll('{workspaceId}', workspaceId)
+      .replaceAll('{workspaceIdHex}', workspaceId.replaceAll('-', ''));
   }
   return `http://${hostForUrl(gbrainPublicUrlHost)}:${port}`;
 }

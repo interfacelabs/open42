@@ -9,6 +9,7 @@ import { promisify } from 'node:util';
 
 import { encryptSecret } from '../crypto/envelope.js';
 import { GbrainClient, registerGbrainOAuthClient } from '../gbrain/client.js';
+import { gbrainPublicProxyBaseUrl } from '../gbrain/public-proxy.js';
 import { assertGbrainVersion } from '../gbrain/version-check.js';
 import { generateProxyToken, hashProxyTokenForStorage } from '../proxy/token.js';
 
@@ -28,6 +29,8 @@ export interface TenantProvisionEnv {
   OPEN42_PRIVATE_TENANT_PROXY_BASE_URL?: string;
   OPEN42_FREE_TENANT_PROXY_BASE_URL?: string;
   OPEN42_TENANT_PROXY_BASE_URL?: string;
+  OPEN42_GBRAIN_PROXY_DOMAIN?: string;
+  OPEN42_GBRAIN_PROXY_PROTOCOL?: string;
   HETZNER_TENANT_AGENT_TOKEN?: string;
   HETZNER_TENANT_AGENT_URL?: string;
   HETZNER_TENANT_POOL_ID?: string;
@@ -366,7 +369,7 @@ async function createLocalDockerTenant(options: {
   let envFile: string | null = null;
   try {
     envFile = await createDockerEnvFile({
-      GBRAIN_PUBLIC_URL: baseUrl,
+      GBRAIN_PUBLIC_URL: gbrainPublicProxyBaseUrl(options.workspaceId, options.env) ?? baseUrl,
       GBRAIN_POSTGRES_DB: postgresDb,
       GBRAIN_POSTGRES_USER: postgresUser,
       ...(options.env.GBRAIN_POSTGRES_PASSWORD
@@ -436,6 +439,7 @@ async function createHetznerAgentTenant(options: TenantProvisionerOptions): Prom
         poolId: options.env.HETZNER_TENANT_POOL_ID,
         proxyToken: options.proxyToken,
         open42ApiBaseUrl,
+        gbrainPublicUrl: gbrainPublicProxyBaseUrl(options.workspaceId, options.env) ?? undefined,
         postgres: {
           db: options.env.GBRAIN_POSTGRES_DB ?? 'gbrain',
           user: options.env.GBRAIN_POSTGRES_USER ?? 'gbrain',

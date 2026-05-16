@@ -31,12 +31,14 @@ import { chatRouter } from './routes/chat.js';
 import { buildNotionZipRouter } from './routes/connections/notion-zip.js';
 import { buildComposioRouter } from './routes/connections/composio.js';
 import { buildConnectionsRouter } from './routes/connections/index.js';
+import { buildPublicGbrainProxyRouter } from './routes/gbrain-public-proxy.js';
 import { buildAnthropicProxy, buildOpenAIProxy } from './routes/proxy/index.js';
 import { workspaceCredentialsRouter } from './routes/workspaces/credentials.js';
 import { buildAcceptRouter } from './routes/workspaces/accept.js';
 import { buildIngestRouter } from './routes/workspaces/ingest.js';
 import { buildWorkspaceIndexRouter } from './routes/workspaces/index-router.js';
 import { buildInvitesRouter } from './routes/workspaces/invites.js';
+import { buildWorkspaceMcpProxyRouter } from './routes/workspaces/mcp-proxy.js';
 import { buildMembersRouter } from './routes/workspaces/members.js';
 import { buildWorkspaceProvisionRouter } from './routes/workspaces/provision.js';
 import { buildHealthzRouter } from './routes/healthz.js';
@@ -66,7 +68,9 @@ const logger = pino({
 });
 
 const app = express();
-const port = Number(process.env.API_PORT ?? process.env.PORT ?? portFromUrl(process.env.API_PUBLIC_URL) ?? 3001);
+const port = Number(
+  process.env.API_PORT ?? process.env.PORT ?? portFromUrl(process.env.API_PUBLIC_URL) ?? 3001,
+);
 assertBootSecrets();
 
 export let composio: ComposioClient | null = null;
@@ -121,6 +125,9 @@ app.use(
     credentials: true,
   }),
 );
+// Wildcard public gbrain MCP host. Mounted before body parsers so MCP/OAuth
+// request bodies can be streamed through untouched.
+app.use(buildPublicGbrainProxyRouter());
 app.use('/proxy/openai', buildOpenAIProxy());
 app.use('/proxy/anthropic', buildAnthropicProxy());
 // Webhook router declares its own express.raw — must mount before express.json
@@ -191,6 +198,11 @@ app.use(
   '/workspaces/:id/credentials',
   requireRole(['owner'], { from: 'param' }, 'forbidden_owner_only'),
   workspaceCredentialsRouter,
+);
+app.use(
+  '/workspaces/:id/mcp-proxy',
+  requireRole(['owner', 'admin'], { from: 'param' }, 'forbidden_cannot_manage_mcp_proxy'),
+  buildWorkspaceMcpProxyRouter(),
 );
 cloudHandle = cloudApi?.mountCloudRoutes?.(app, { logger, requireRole }) ?? null;
 app.use(

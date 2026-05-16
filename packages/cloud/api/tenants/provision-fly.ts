@@ -1,4 +1,5 @@
 import type { TenantProvisionerOptions, TenantRuntime } from '@open42/api/tenants/provision';
+import { gbrainPublicProxyBaseUrl } from '@open42/api/gbrain/public-proxy';
 
 type Fetch = typeof fetch;
 
@@ -16,6 +17,8 @@ interface FlyTenantProvisionEnv {
   OPEN42_API_FLYCAST_HOST?: string;
   OPEN42_PRIVATE_TENANT_PROXY_BASE_URL?: string;
   OPEN42_TENANT_PROXY_BASE_URL?: string;
+  OPEN42_GBRAIN_PROXY_DOMAIN?: string;
+  OPEN42_GBRAIN_PROXY_PROTOCOL?: string;
 }
 
 export async function createFlyTenant(options: TenantProvisionerOptions): Promise<TenantRuntime> {
@@ -41,6 +44,7 @@ export async function createFlyTenant(options: TenantProvisionerOptions): Promis
     postgresPassword: env.GBRAIN_POSTGRES_PASSWORD,
     postgresUser: env.GBRAIN_POSTGRES_USER ?? 'gbrain',
     open42ApiBaseUrl: tenantProxyBaseUrl(env),
+    gbrainPublicUrl: gbrainPublicProxyBaseUrl(options.workspaceId, env) ?? undefined,
     proxyToken: options.proxyToken,
     region,
     fetch: options.fetch,
@@ -93,6 +97,7 @@ async function createFlyMachine(options: {
   image: string;
   gbrainVersion: string;
   workspaceId: string;
+  gbrainPublicUrl?: string;
   open42ApiBaseUrl: string;
   postgresDb: string;
   postgresPassword?: string;
@@ -118,6 +123,7 @@ async function createFlyMachine(options: {
           image: options.image,
           env: {
             GBRAIN_HOME: '/data/gbrain',
+            ...(options.gbrainPublicUrl ? { GBRAIN_PUBLIC_URL: options.gbrainPublicUrl } : {}),
             GBRAIN_POSTGRES_DB: options.postgresDb,
             ...(options.postgresPassword
               ? { GBRAIN_POSTGRES_PASSWORD: options.postgresPassword }

@@ -11,6 +11,11 @@
     reverse_proxy 127.0.0.1:3001
   }
 
+  @gbrainProxyHost host *.proxy.open42.ai
+  handle @gbrainProxyHost {
+    reverse_proxy 127.0.0.1:3001
+  }
+
   @appHost host app.open42.ai
   handle @appHost {
     reverse_proxy 127.0.0.1:3000

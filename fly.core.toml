@@ -22,6 +22,7 @@ kill_timeout = "30s"
   OPEN42_PRIVATE_TENANT_PROXY_BASE_URL = "http://open42-core.flycast"
   OPEN42_FREE_TENANT_PROXY_BASE_URL = "https://api.open42.ai"
   OPEN42_TENANT_PROXY_BASE_URL = "http://open42-core.flycast"
+  OPEN42_GBRAIN_PROXY_DOMAIN = "proxy.open42.ai"
   POSTGRES_USER = "open42"
   POSTGRES_DB = "open42"
 
