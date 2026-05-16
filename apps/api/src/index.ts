@@ -199,9 +199,13 @@ app.use(
   requireRole(['owner'], { from: 'param' }, 'forbidden_owner_only'),
   workspaceCredentialsRouter,
 );
+// MCP proxy is open to any workspace member: owners/admins manage the proxy
+// and named clients; regular members can self-claim a single personal client
+// (POST /clients/self) so they can plug the brain into their own MCP tools
+// (Claude Code, Cursor, etc.). Per-route role checks live in the router.
 app.use(
   '/workspaces/:id/mcp-proxy',
-  requireRole(['owner', 'admin'], { from: 'param' }, 'forbidden_cannot_manage_mcp_proxy'),
+  requireMembership({ from: 'param' }),
   buildWorkspaceMcpProxyRouter(),
 );
 cloudHandle = cloudApi?.mountCloudRoutes?.(app, { logger, requireRole }) ?? null;

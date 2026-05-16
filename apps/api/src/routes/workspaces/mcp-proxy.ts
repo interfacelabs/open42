@@ -23,6 +23,13 @@ interface WorkspaceMcpClientRow {
   createdAt: Date;
   lastUsedAt: Date | null;
   revokedAt: Date | null;
+  /**
+   * The user who created this client. Nullable because the schema sets it to
+   * NULL when the original user is deleted (`onDelete: 'set null'`). A client
+   * with `createdByUserId === null` is treated as "orphaned" — members can't
+   * claim it and can't revoke it; only admins can.
+   */
+  createdByUserId: string | null;
 }
 
 export interface WorkspaceMcpProxyRepo {
@@ -36,7 +43,28 @@ export interface WorkspaceMcpProxyRepo {
     clientId: string;
     scopes: string;
   }): Promise<WorkspaceMcpClientRow>;
-  revokeClient(workspaceId: string, clientId: string): Promise<boolean>;
+  /**
+   * Revoke a client. When `creatorUserId` is provided, the revoke only takes
+   * effect if the client was created by that user — the route uses this to
+   * keep non-admin members from revoking each other.
+   */
+  revokeClient(
+    workspaceId: string,
+    clientId: string,
+    opts?: { creatorUserId?: string },
+  ): Promise<boolean>;
+  /** Returns the user's active (non-revoked) client in this workspace, if any. */
+  findActiveClientForUser(
+    workspaceId: string,
+    userId: string,
+  ): Promise<WorkspaceMcpClientRow | null>;
+  /** Returns the user's email — used to label member self-claimed clients. */
+  findUserEmail(userId: string): Promise<string | null>;
+}
+
+function isAdmin(req: Request): boolean {
+  const role = req.workspace?.role;
+  return role === 'owner' || role === 'admin';
 }
 
 export interface WorkspaceMcpProxyDeps {
@@ -55,9 +83,23 @@ export function buildWorkspaceMcpProxyRouter(deps: WorkspaceMcpProxyDeps = {}) {
     try {
       const workspace = await findWorkspaceOr404(req, res, repo);
       if (!workspace) return;
+      const allClients = await repo.listClients(workspace.id);
+      const callerUserId = req.session!.userId;
+      const admin = isAdmin(req);
+      // Non-admin members see only the clients they personally created. The
+      // backend still keeps a single shared `workspaceMcpClients` table; the
+      // filter here is presentation-only so members never see each other's
+      // labels or revoke statuses.
+      const visibleClients = admin
+        ? allClients
+        : allClients.filter((c) => c.createdByUserId === callerUserId);
+      const myActive =
+        allClients.find((c) => c.createdByUserId === callerUserId && c.revokedAt === null) ?? null;
       res.json({
         ...proxyPayload(workspace, env),
-        clients: (await repo.listClients(workspace.id)).map(clientPayload),
+        role: req.workspace?.role ?? 'member',
+        myClient: myActive ? clientPayload(myActive) : null,
+        clients: visibleClients.map(clientPayload),
       });
     } catch (err) {
       next(err);
@@ -66,6 +108,10 @@ export function buildWorkspaceMcpProxyRouter(deps: WorkspaceMcpProxyDeps = {}) {
 
   router.post('/', async (req: Request, res: Response, next: NextFunction) => {
     try {
+      if (!isAdmin(req)) {
+        res.status(403).json({ error: 'forbidden_cannot_manage_mcp_proxy' });
+        return;
+      }
       const workspace = await findWorkspaceOr404(req, res, repo);
       if (!workspace) return;
       const enabled = Boolean(req.body?.enabled);
@@ -91,6 +137,10 @@ export function buildWorkspaceMcpProxyRouter(deps: WorkspaceMcpProxyDeps = {}) {
 
   router.post('/clients', async (req: Request, res: Response, next: NextFunction) => {
     try {
+      if (!isAdmin(req)) {
+        res.status(403).json({ error: 'forbidden_cannot_manage_mcp_proxy' });
+        return;
+      }
       const workspace = await findWorkspaceOr404(req, res, repo);
       if (!workspace) return;
       if (!workspace.gbrainMcpProxyEnabled) {
@@ -150,12 +200,89 @@ export function buildWorkspaceMcpProxyRouter(deps: WorkspaceMcpProxyDeps = {}) {
     }
   });
 
+  /**
+   * Member self-claim: any workspace member can issue their own MCP credentials
+   * exactly once (per active client). The label is derived from the user's
+   * email so admins can identify which member owns which credential. Members
+   * get read+write by default unless owners/admins later decide to revoke or
+   * replace that client with a narrower one.
+   */
+  router.post('/clients/self', async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const workspace = await findWorkspaceOr404(req, res, repo);
+      if (!workspace) return;
+      if (!workspace.gbrainMcpProxyEnabled) {
+        res.status(409).json({ error: 'mcp_proxy_disabled' });
+        return;
+      }
+      if (!isWorkspaceProxyReady(workspace)) {
+        res.status(409).json({ error: 'workspace_gbrain_not_ready' });
+        return;
+      }
+
+      const publicBaseUrl = gbrainPublicProxyBaseUrl(workspace.id, env);
+      if (!publicBaseUrl) {
+        res.status(503).json({ error: 'mcp_proxy_domain_not_configured' });
+        return;
+      }
+
+      const userId = req.session!.userId;
+      const existing = await repo.findActiveClientForUser(workspace.id, userId);
+      if (existing) {
+        res.status(409).json({ error: 'mcp_client_already_issued' });
+        return;
+      }
+
+      const email = (await repo.findUserEmail(userId)) ?? userId;
+      const clientName = `Personal — ${email}`.slice(0, 80);
+      const scope = 'read write';
+
+      const client = await registerGbrainOAuthClientWithOptions(gbrainBaseUrl(workspace), {
+        clientName,
+        grantTypes: ['client_credentials'],
+        redirectUris: [],
+        scope,
+        tokenEndpointAuthMethod: 'client_secret_post',
+        fetchImpl,
+      });
+      const storedClient = await repo.createClient({
+        workspaceId: workspace.id,
+        createdByUserId: userId,
+        label: clientName,
+        clientId: client.client_id,
+        scopes: scope,
+      });
+
+      res.status(201).json({
+        client: clientPayload(storedClient),
+        clientId: client.client_id,
+        clientSecret: client.client_secret,
+        scope,
+        grantType: 'client_credentials',
+        issuerUrl: publicBaseUrl,
+        tokenUrl: `${publicBaseUrl}/token`,
+        mcpUrl: `${publicBaseUrl}/mcp`,
+      });
+    } catch (err) {
+      next(err);
+    }
+  });
+
   router.delete('/clients/:clientId', async (req: Request, res: Response, next: NextFunction) => {
     try {
       const workspace = await findWorkspaceOr404(req, res, repo);
       if (!workspace) return;
       const clientId = req.params.clientId;
-      const revoked = clientId ? await repo.revokeClient(workspace.id, clientId) : false;
+      if (!clientId) {
+        res.status(404).json({ error: 'mcp_client_not_found' });
+        return;
+      }
+      // Members can only revoke clients they themselves created. The repo
+      // ignores the revoke when the creator filter doesn't match, returning
+      // false → we surface that as a 404 to avoid leaking other members'
+      // client ids.
+      const creatorUserId = isAdmin(req) ? undefined : req.session!.userId;
+      const revoked = await repo.revokeClient(workspace.id, clientId, { creatorUserId });
       if (!revoked) {
         res.status(404).json({ error: 'mcp_client_not_found' });
         return;
@@ -223,6 +350,7 @@ function createDrizzleWorkspaceMcpProxyRepo(): WorkspaceMcpProxyRepo {
           createdAt: schema.workspaceMcpClients.createdAt,
           lastUsedAt: schema.workspaceMcpClients.lastUsedAt,
           revokedAt: schema.workspaceMcpClients.revokedAt,
+          createdByUserId: schema.workspaceMcpClients.createdByUserId,
         })
         .from(schema.workspaceMcpClients)
         .where(eq(schema.workspaceMcpClients.workspaceId, workspaceId))
@@ -245,23 +373,57 @@ function createDrizzleWorkspaceMcpProxyRepo(): WorkspaceMcpProxyRepo {
           createdAt: schema.workspaceMcpClients.createdAt,
           lastUsedAt: schema.workspaceMcpClients.lastUsedAt,
           revokedAt: schema.workspaceMcpClients.revokedAt,
+          createdByUserId: schema.workspaceMcpClients.createdByUserId,
         });
       if (!client) throw new Error('mcp_client_insert_failed');
       return client;
     },
-    async revokeClient(workspaceId, clientId) {
+    async findActiveClientForUser(workspaceId, userId) {
+      const [row] = await db
+        .select({
+          id: schema.workspaceMcpClients.id,
+          label: schema.workspaceMcpClients.label,
+          scopes: schema.workspaceMcpClients.scopes,
+          createdAt: schema.workspaceMcpClients.createdAt,
+          lastUsedAt: schema.workspaceMcpClients.lastUsedAt,
+          revokedAt: schema.workspaceMcpClients.revokedAt,
+          createdByUserId: schema.workspaceMcpClients.createdByUserId,
+        })
+        .from(schema.workspaceMcpClients)
+        .where(
+          and(
+            eq(schema.workspaceMcpClients.workspaceId, workspaceId),
+            eq(schema.workspaceMcpClients.createdByUserId, userId),
+            isNull(schema.workspaceMcpClients.revokedAt),
+          ),
+        )
+        .orderBy(desc(schema.workspaceMcpClients.createdAt))
+        .limit(1);
+      return row ?? null;
+    },
+    async findUserEmail(userId) {
+      const [row] = await db
+        .select({ email: schema.users.email })
+        .from(schema.users)
+        .where(eq(schema.users.id, userId))
+        .limit(1);
+      return row?.email ?? null;
+    },
+    async revokeClient(workspaceId, clientId, opts) {
       const now = new Date();
       return db.transaction(async (tx) => {
+        const baseFilters = [
+          eq(schema.workspaceMcpClients.workspaceId, workspaceId),
+          eq(schema.workspaceMcpClients.id, clientId),
+          isNull(schema.workspaceMcpClients.revokedAt),
+        ];
+        if (opts?.creatorUserId) {
+          baseFilters.push(eq(schema.workspaceMcpClients.createdByUserId, opts.creatorUserId));
+        }
         const [client] = await tx
           .update(schema.workspaceMcpClients)
           .set({ revokedAt: now })
-          .where(
-            and(
-              eq(schema.workspaceMcpClients.workspaceId, workspaceId),
-              eq(schema.workspaceMcpClients.id, clientId),
-              isNull(schema.workspaceMcpClients.revokedAt),
-            ),
-          )
+          .where(and(...baseFilters))
           .returning({ id: schema.workspaceMcpClients.id });
         if (!client) return false;
         await tx

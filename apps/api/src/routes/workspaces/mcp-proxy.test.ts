@@ -9,7 +9,7 @@ const PUBLIC_BASE_URL = 'https://ws-11111111222243338444555555555555.proxy.open4
 
 function makeRepo(
   overrides: Partial<NonNullable<Awaited<ReturnType<WorkspaceMcpProxyRepo['findWorkspace']>>>> = {},
-) {
+): WorkspaceMcpProxyRepo {
   return {
     findWorkspace: vi.fn(async () => ({
       id: WORKSPACE_ID,
@@ -20,17 +20,22 @@ function makeRepo(
       ...overrides,
     })),
     setEnabled: vi.fn(async () => {}),
-    listClients: vi.fn(async () => []),
-    createClient: vi.fn(async (input) => ({
+    listClients: vi.fn<WorkspaceMcpProxyRepo['listClients']>(async () => []),
+    createClient: vi.fn<WorkspaceMcpProxyRepo['createClient']>(async (input) => ({
       id: 'stored-client-1',
       label: input.label,
       scopes: input.scopes,
       createdAt: new Date('2026-05-16T12:00:00Z'),
       lastUsedAt: null,
       revokedAt: null,
+      createdByUserId: input.createdByUserId,
     })),
     revokeClient: vi.fn(async () => true),
-  } satisfies WorkspaceMcpProxyRepo;
+    findActiveClientForUser: vi.fn<WorkspaceMcpProxyRepo['findActiveClientForUser']>(
+      async () => null,
+    ),
+    findUserEmail: vi.fn(async () => 'member@example.com'),
+  };
 }
 
 function makeApp(
@@ -38,13 +43,17 @@ function makeApp(
     repo?: WorkspaceMcpProxyRepo;
     fetch?: typeof fetch;
     env?: Record<string, string>;
+    role?: 'owner' | 'admin' | 'member';
+    userId?: string;
   } = {},
 ) {
+  const role = opts.role ?? 'owner';
+  const userId = opts.userId ?? 'user-1';
   const app = express();
   app.use(express.json());
   app.use((req: Request, _res: Response, next: NextFunction) => {
-    req.workspace = { id: WORKSPACE_ID, role: 'owner' };
-    req.session = { id: 'session-1', userId: 'user-1' };
+    req.workspace = { id: WORKSPACE_ID, role };
+    req.session = { id: 'session-1', userId };
     next();
   });
   app.use(
@@ -69,6 +78,8 @@ describe('workspace MCP proxy management', () => {
       available: true,
       issuerUrl: PUBLIC_BASE_URL,
       mcpUrl: `${PUBLIC_BASE_URL}/mcp`,
+      role: 'owner',
+      myClient: null,
       clients: [],
     });
   });
@@ -154,6 +165,140 @@ describe('workspace MCP proxy management', () => {
 
     expect(res.status).toBe(200);
     expect(res.body).toEqual({ ok: true });
-    expect(repo.revokeClient).toHaveBeenCalledWith(WORKSPACE_ID, 'stored-client-1');
+    // Admin revoke: creator filter is absent so the repo can revoke any
+    // workspace client regardless of who created it.
+    expect(repo.revokeClient).toHaveBeenCalledWith(WORKSPACE_ID, 'stored-client-1', {
+      creatorUserId: undefined,
+    });
+  });
+
+  describe('member self-claim', () => {
+    function memberClientRow(overrides: Partial<{ id: string; createdByUserId: string }> = {}) {
+      return {
+        id: overrides.id ?? 'stored-member-1',
+        label: 'Personal — member@example.com',
+        scopes: 'read write',
+        createdAt: new Date('2026-05-16T12:00:00Z'),
+        lastUsedAt: null,
+        revokedAt: null,
+        createdByUserId: overrides.createdByUserId ?? 'user-member',
+      };
+    }
+
+    it('GET filters clients for non-admin members and surfaces myClient', async () => {
+      const memberClient = memberClientRow({ createdByUserId: 'user-member' });
+      const ownerClient = {
+        ...memberClient,
+        id: 'stored-owner-1',
+        label: 'Shared',
+        createdByUserId: 'user-owner',
+      };
+      const repo = makeRepo({ gbrainMcpProxyEnabled: true });
+      repo.listClients = vi.fn(async () => [ownerClient, memberClient]);
+
+      const res = await request(makeApp({ repo, role: 'member', userId: 'user-member' })).get(
+        `/workspaces/${WORKSPACE_ID}/mcp-proxy`,
+      );
+
+      expect(res.status).toBe(200);
+      expect(res.body.role).toBe('member');
+      // Member sees only their own client in the list.
+      expect(res.body.clients).toHaveLength(1);
+      expect(res.body.clients[0].id).toBe('stored-member-1');
+      // myClient mirrors the member's active client for the self-claim UI.
+      expect(res.body.myClient).toMatchObject({
+        id: 'stored-member-1',
+        scopes: 'read write',
+      });
+    });
+
+    it('rejects enable/disable for non-admin members', async () => {
+      const repo = makeRepo();
+      const res = await request(makeApp({ repo, role: 'member', userId: 'user-member' }))
+        .post(`/workspaces/${WORKSPACE_ID}/mcp-proxy`)
+        .send({ enabled: true });
+
+      expect(res.status).toBe(403);
+      expect(res.body).toEqual({ error: 'forbidden_cannot_manage_mcp_proxy' });
+      expect(repo.setEnabled).not.toHaveBeenCalled();
+    });
+
+    it('rejects the named create endpoint for non-admin members', async () => {
+      const repo = makeRepo({ gbrainMcpProxyEnabled: true });
+      const res = await request(makeApp({ repo, role: 'member', userId: 'user-member' }))
+        .post(`/workspaces/${WORKSPACE_ID}/mcp-proxy/clients`)
+        .send({ name: 'Claude Code', scope: 'read write' });
+
+      expect(res.status).toBe(403);
+      expect(res.body).toEqual({ error: 'forbidden_cannot_manage_mcp_proxy' });
+      expect(repo.createClient).not.toHaveBeenCalled();
+    });
+
+    it('POST /clients/self issues a read+write client labeled with the user email', async () => {
+      const repo = makeRepo({ gbrainMcpProxyEnabled: true });
+      const fetchMock = vi.fn<typeof fetch>(
+        async () =>
+          new Response(
+            JSON.stringify({ client_id: 'gbrain-self-1', client_secret: 'self-secret' }),
+            { status: 201, headers: { 'Content-Type': 'application/json' } },
+          ),
+      );
+
+      const res = await request(
+        makeApp({ repo, fetch: fetchMock as typeof fetch, role: 'member', userId: 'user-member' }),
+      ).post(`/workspaces/${WORKSPACE_ID}/mcp-proxy/clients/self`);
+
+      expect(res.status).toBe(201);
+      expect(res.body.scope).toBe('read write');
+      expect(res.body.clientSecret).toBe('self-secret');
+      expect(res.body.client.label).toBe('Personal — member@example.com');
+      expect(repo.createClient).toHaveBeenCalledWith({
+        workspaceId: WORKSPACE_ID,
+        createdByUserId: 'user-member',
+        label: 'Personal — member@example.com',
+        clientId: 'gbrain-self-1',
+        scopes: 'read write',
+      });
+      // The gbrain registration call inherits the same default member scope.
+      const init = fetchMock.mock.calls[0]?.[1];
+      expect(JSON.parse(String(init?.body))).toMatchObject({ scope: 'read write' });
+    });
+
+    it('POST /clients/self refuses when the member already has an active client', async () => {
+      const repo = makeRepo({ gbrainMcpProxyEnabled: true });
+      repo.findActiveClientForUser = vi.fn(async () => memberClientRow());
+      const fetchMock = vi.fn();
+
+      const res = await request(
+        makeApp({ repo, fetch: fetchMock as typeof fetch, role: 'member', userId: 'user-member' }),
+      ).post(`/workspaces/${WORKSPACE_ID}/mcp-proxy/clients/self`);
+
+      expect(res.status).toBe(409);
+      expect(res.body).toEqual({ error: 'mcp_client_already_issued' });
+      expect(fetchMock).not.toHaveBeenCalled();
+      expect(repo.createClient).not.toHaveBeenCalled();
+    });
+
+    it('POST /clients/self is rejected when the proxy is disabled', async () => {
+      const repo = makeRepo({ gbrainMcpProxyEnabled: false });
+      const res = await request(makeApp({ repo, role: 'member', userId: 'user-member' })).post(
+        `/workspaces/${WORKSPACE_ID}/mcp-proxy/clients/self`,
+      );
+
+      expect(res.status).toBe(409);
+      expect(res.body).toEqual({ error: 'mcp_proxy_disabled' });
+    });
+
+    it('member revoke passes their userId so the repo can scope the update', async () => {
+      const repo = makeRepo({ gbrainMcpProxyEnabled: true });
+      const res = await request(makeApp({ repo, role: 'member', userId: 'user-member' })).delete(
+        `/workspaces/${WORKSPACE_ID}/mcp-proxy/clients/stored-member-1`,
+      );
+
+      expect(res.status).toBe(200);
+      expect(repo.revokeClient).toHaveBeenCalledWith(WORKSPACE_ID, 'stored-member-1', {
+        creatorUserId: 'user-member',
+      });
+    });
   });
 });
