@@ -25,6 +25,8 @@ export interface TenantProvisionEnv {
   OPEN42_PRIVATE_TENANT_PLANS?: string;
   OPEN42_PRIVATE_TENANT_PROVISIONER?: string;
   OPEN42_PRIVATE_TENANT_WORKSPACE_IDS?: string;
+  OPEN42_PRIVATE_TENANT_PROXY_BASE_URL?: string;
+  OPEN42_FREE_TENANT_PROXY_BASE_URL?: string;
   OPEN42_TENANT_PROXY_BASE_URL?: string;
   HETZNER_TENANT_AGENT_TOKEN?: string;
   HETZNER_TENANT_AGENT_URL?: string;
@@ -413,12 +415,12 @@ async function useComposeTenant(options: TenantProvisionerOptions): Promise<Tena
 }
 
 async function createHetznerAgentTenant(options: TenantProvisionerOptions): Promise<TenantRuntime> {
-  const agentUrl = required(options.env.HETZNER_TENANT_AGENT_URL, 'HETZNER_TENANT_AGENT_URL').replace(
-    /\/+$/,
-    '',
-  );
+  const agentUrl = required(
+    options.env.HETZNER_TENANT_AGENT_URL,
+    'HETZNER_TENANT_AGENT_URL',
+  ).replace(/\/+$/, '');
   const token = required(options.env.HETZNER_TENANT_AGENT_TOKEN, 'HETZNER_TENANT_AGENT_TOKEN');
-  const open42ApiBaseUrl = tenantProxyBaseUrl(options.env);
+  const open42ApiBaseUrl = tenantProxyBaseUrl(options.env, 'free');
   const response = await options
     .fetch(`${agentUrl}/tenants`, {
       method: 'POST',
@@ -455,7 +457,8 @@ async function createHetznerAgentTenant(options: TenantProvisionerOptions): Prom
   const tenantRuntimeId = stringField(payload, 'tenantRuntimeId');
   const gbrainBaseUrl = stringField(payload, 'gbrainBaseUrl');
   const gbrainPrivateAddress =
-    optionalStringField(payload, 'gbrainPrivateAddress') ?? gbrainBaseUrl.replace(/^https?:\/\//, '');
+    optionalStringField(payload, 'gbrainPrivateAddress') ??
+    gbrainBaseUrl.replace(/^https?:\/\//, '');
   if (!tenantRuntimeId || !gbrainBaseUrl) {
     throw new Error('hetzner tenant agent response missing tenantRuntimeId or gbrainBaseUrl');
   }
@@ -566,7 +569,8 @@ export function createDrizzleTenantRepo(): TenantProvisionRepo {
         workspaceId: workspace.id,
         tenantRuntimeId: workspace.tenantRuntimeId,
         gbrainPrivateAddress: workspace.gbrainPrivateAddress ?? '',
-        gbrainBaseUrl: workspace.gbrainBaseUrl ?? formatGbrainBaseUrl(workspace.gbrainPrivateAddress ?? ''),
+        gbrainBaseUrl:
+          workspace.gbrainBaseUrl ?? formatGbrainBaseUrl(workspace.gbrainPrivateAddress ?? ''),
       };
     },
     async ensureWorkspaceForProvisioning(workspaceId, ownerUserId, gbrainVersion) {
@@ -579,10 +583,7 @@ export function createDrizzleTenantRepo(): TenantProvisionRepo {
           .select({ id: schema.workspaces.id, ownerUserId: schema.workspaces.ownerUserId })
           .from(schema.workspaces)
           .where(
-            and(
-              eq(schema.workspaces.id, workspaceId),
-              sql`${schema.workspaces.deletedAt} IS NULL`,
-            ),
+            and(eq(schema.workspaces.id, workspaceId), sql`${schema.workspaces.deletedAt} IS NULL`),
           )
           .limit(1);
         if (existing) {
@@ -730,10 +731,7 @@ export function createDrizzleTenantRepo(): TenantProvisionRepo {
         .select({ plan: schema.workspaces.plan })
         .from(schema.workspaces)
         .where(
-          and(
-            eq(schema.workspaces.id, workspaceId),
-            sql`${schema.workspaces.deletedAt} IS NULL`,
-          ),
+          and(eq(schema.workspaces.id, workspaceId), sql`${schema.workspaces.deletedAt} IS NULL`),
         )
         .limit(1);
       const plan = workspace?.plan;
@@ -822,10 +820,20 @@ function tenantImage(env: TenantProvisionEnv, gbrainVersion: string): string {
   return env.GBRAIN_TENANT_IMAGE ?? `open42/gbrain-tenant:v${gbrainVersion}`;
 }
 
-function tenantProxyBaseUrl(env: TenantProvisionEnv): string {
+function tenantProxyBaseUrl(env: TenantProvisionEnv, tier?: TenantRuntimeTier): string {
+  const tierSpecific =
+    tier === 'private'
+      ? env.OPEN42_PRIVATE_TENANT_PROXY_BASE_URL
+      : tier === 'free'
+        ? env.OPEN42_FREE_TENANT_PROXY_BASE_URL
+        : undefined;
   return required(
-    (env.OPEN42_TENANT_PROXY_BASE_URL || env.API_PUBLIC_URL)?.replace(/\/+$/, ''),
-    'OPEN42_TENANT_PROXY_BASE_URL or API_PUBLIC_URL',
+    (tierSpecific || env.OPEN42_TENANT_PROXY_BASE_URL || env.API_PUBLIC_URL)?.replace(/\/+$/, ''),
+    tier === 'free'
+      ? 'OPEN42_FREE_TENANT_PROXY_BASE_URL, OPEN42_TENANT_PROXY_BASE_URL, or API_PUBLIC_URL'
+      : tier === 'private'
+        ? 'OPEN42_PRIVATE_TENANT_PROXY_BASE_URL, OPEN42_TENANT_PROXY_BASE_URL, or API_PUBLIC_URL'
+        : 'OPEN42_TENANT_PROXY_BASE_URL or API_PUBLIC_URL',
   );
 }
 
@@ -883,9 +891,7 @@ export function gbrainGitRef(
   // rebuild. Dev/test stays permissive — branch refs are useful when iterating
   // on gbrain locally.
   if (nodeEnv === 'production' && !SHA_PATTERN.test(ref)) {
-    throw new Error(
-      `GBRAIN_GIT_REF must be a 40-char hex SHA in production, got: ${ref}`,
-    );
+    throw new Error(`GBRAIN_GIT_REF must be a 40-char hex SHA in production, got: ${ref}`);
   }
   return ref;
 }

@@ -14,6 +14,7 @@ interface FlyTenantProvisionEnv {
   GBRAIN_POSTGRES_PASSWORD?: string;
   GBRAIN_POSTGRES_USER?: string;
   OPEN42_API_FLYCAST_HOST?: string;
+  OPEN42_PRIVATE_TENANT_PROXY_BASE_URL?: string;
   OPEN42_TENANT_PROXY_BASE_URL?: string;
 }
 
@@ -164,9 +165,13 @@ async function createFlyMachine(options: {
 function tenantProxyBaseUrl(env: {
   API_PUBLIC_URL?: string;
   OPEN42_API_FLYCAST_HOST?: string;
+  OPEN42_PRIVATE_TENANT_PROXY_BASE_URL?: string;
   OPEN42_TENANT_PROXY_BASE_URL?: string;
 }): string {
-  const explicit = env.OPEN42_TENANT_PROXY_BASE_URL ?? env.API_PUBLIC_URL;
+  const explicit =
+    env.OPEN42_PRIVATE_TENANT_PROXY_BASE_URL ??
+    env.OPEN42_TENANT_PROXY_BASE_URL ??
+    env.API_PUBLIC_URL;
   if (explicit) return explicit.replace(/\/+$/, '');
 
   const host = env.OPEN42_API_FLYCAST_HOST ?? 'open42-api.flycast';

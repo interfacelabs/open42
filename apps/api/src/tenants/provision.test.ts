@@ -212,6 +212,8 @@ describe('provisionTenant', () => {
           HETZNER_TENANT_AGENT_URL: 'http://10.42.0.3:4317',
           HETZNER_TENANT_AGENT_TOKEN: 'agent-token',
           API_PUBLIC_URL: 'https://api.open42.test',
+          OPEN42_TENANT_PROXY_BASE_URL: 'http://open42-core.flycast',
+          OPEN42_FREE_TENANT_PROXY_BASE_URL: 'https://api.open42.test',
           GBRAIN_TENANT_IMAGE: 'registry.example/open42/gbrain-tenant:v0.31.3',
           GBRAIN_VERSION: '0.31.3',
         },
@@ -333,9 +335,9 @@ describe('gbrainGitRef', () => {
   });
 
   it('allows a branch ref outside production for local iteration', () => {
-    expect(
-      gbrainGitRef({ GBRAIN_GIT_REF: 'garrytan/v0.31.3-multimodal' }, 'development'),
-    ).toBe('garrytan/v0.31.3-multimodal');
+    expect(gbrainGitRef({ GBRAIN_GIT_REF: 'garrytan/v0.31.3-multimodal' }, 'development')).toBe(
+      'garrytan/v0.31.3-multimodal',
+    );
   });
 });
 
