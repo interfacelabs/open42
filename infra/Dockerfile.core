@@ -23,11 +23,16 @@ RUN npm run build -w @open42/landing \
   && npm run build -w @open42/api \
   && npm run build:cloud-api
 
+FROM docker.io/tailscale/tailscale:stable AS tailscale
+
 FROM node:20-alpine AS core
 WORKDIR /app
 RUN apk add --no-cache \
   bash \
+  ca-certificates \
   caddy \
+  ip6tables \
+  iptables \
   postgresql \
   postgresql-client \
   postgresql-contrib \
@@ -64,10 +69,13 @@ COPY --from=build /app/packages/cloud/api/dist ./packages/cloud/api/dist
 COPY --from=build /app/packages/cloud/api/node_modules ./packages/cloud/api/node_modules
 COPY --from=build /app/packages/cloud/migrations ./packages/cloud/migrations
 COPY --from=build /app/packages/cloud/scripts ./packages/cloud/scripts
+COPY --from=tailscale /usr/local/bin/tailscale /usr/local/bin/tailscale
+COPY --from=tailscale /usr/local/bin/tailscaled /usr/local/bin/tailscaled
 
 COPY infra/Caddyfile.core /etc/caddy/Caddyfile
 COPY infra/entrypoint.core.sh /app/entrypoint.sh
-RUN chmod +x /app/entrypoint.sh
+RUN mkdir -p /var/run/tailscale /var/cache/tailscale /var/lib/tailscale \
+  && chmod +x /app/entrypoint.sh
 
 EXPOSE 8080
 CMD ["/app/entrypoint.sh"]
