@@ -1,8 +1,9 @@
-import { and, eq, isNull } from 'drizzle-orm';
+import { and, desc, eq, isNull } from 'drizzle-orm';
 import { Router, type Request, type Response, type NextFunction } from 'express';
 
 import { db, schema } from '../../db/client.js';
 import { registerGbrainOAuthClientWithOptions } from '../../gbrain/client.js';
+import { hashMcpCredential } from '../../gbrain/mcp-public-auth.js';
 import { gbrainPublicProxyBaseUrl, type GbrainPublicProxyEnv } from '../../gbrain/public-proxy.js';
 
 type Fetch = typeof fetch;
@@ -15,9 +16,27 @@ interface WorkspaceMcpProxyRow {
   gbrainMcpProxyEnabled: boolean;
 }
 
+interface WorkspaceMcpClientRow {
+  id: string;
+  label: string;
+  scopes: string;
+  createdAt: Date;
+  lastUsedAt: Date | null;
+  revokedAt: Date | null;
+}
+
 export interface WorkspaceMcpProxyRepo {
   findWorkspace(workspaceId: string): Promise<WorkspaceMcpProxyRow | null>;
   setEnabled(workspaceId: string, enabled: boolean): Promise<void>;
+  listClients(workspaceId: string): Promise<WorkspaceMcpClientRow[]>;
+  createClient(input: {
+    workspaceId: string;
+    createdByUserId: string;
+    label: string;
+    clientId: string;
+    scopes: string;
+  }): Promise<WorkspaceMcpClientRow>;
+  revokeClient(workspaceId: string, clientId: string): Promise<boolean>;
 }
 
 export interface WorkspaceMcpProxyDeps {
@@ -36,7 +55,10 @@ export function buildWorkspaceMcpProxyRouter(deps: WorkspaceMcpProxyDeps = {}) {
     try {
       const workspace = await findWorkspaceOr404(req, res, repo);
       if (!workspace) return;
-      res.json(proxyPayload(workspace, env));
+      res.json({
+        ...proxyPayload(workspace, env),
+        clients: (await repo.listClients(workspace.id)).map(clientPayload),
+      });
     } catch (err) {
       next(err);
     }
@@ -58,7 +80,10 @@ export function buildWorkspaceMcpProxyRouter(deps: WorkspaceMcpProxyDeps = {}) {
       }
 
       await repo.setEnabled(workspace.id, enabled);
-      res.json(proxyPayload({ ...workspace, gbrainMcpProxyEnabled: enabled }, env));
+      res.json({
+        ...proxyPayload({ ...workspace, gbrainMcpProxyEnabled: enabled }, env),
+        clients: (await repo.listClients(workspace.id)).map(clientPayload),
+      });
     } catch (err) {
       next(err);
     }
@@ -102,8 +127,16 @@ export function buildWorkspaceMcpProxyRouter(deps: WorkspaceMcpProxyDeps = {}) {
         tokenEndpointAuthMethod: 'client_secret_post',
         fetchImpl,
       });
+      const storedClient = await repo.createClient({
+        workspaceId: workspace.id,
+        createdByUserId: req.session!.userId,
+        label: clientName,
+        clientId: client.client_id,
+        scopes: scope,
+      });
 
       res.status(201).json({
+        client: clientPayload(storedClient),
         clientId: client.client_id,
         clientSecret: client.client_secret,
         scope,
@@ -112,6 +145,22 @@ export function buildWorkspaceMcpProxyRouter(deps: WorkspaceMcpProxyDeps = {}) {
         tokenUrl: `${publicBaseUrl}/token`,
         mcpUrl: `${publicBaseUrl}/mcp`,
       });
+    } catch (err) {
+      next(err);
+    }
+  });
+
+  router.delete('/clients/:clientId', async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const workspace = await findWorkspaceOr404(req, res, repo);
+      if (!workspace) return;
+      const clientId = req.params.clientId;
+      const revoked = clientId ? await repo.revokeClient(workspace.id, clientId) : false;
+      if (!revoked) {
+        res.status(404).json({ error: 'mcp_client_not_found' });
+        return;
+      }
+      res.json({ ok: true });
     } catch (err) {
       next(err);
     }
@@ -137,10 +186,96 @@ function createDrizzleWorkspaceMcpProxyRepo(): WorkspaceMcpProxyRepo {
       return row ?? null;
     },
     async setEnabled(workspaceId, enabled) {
-      await db
-        .update(schema.workspaces)
-        .set({ gbrainMcpProxyEnabled: enabled })
-        .where(eq(schema.workspaces.id, workspaceId));
+      await db.transaction(async (tx) => {
+        await tx
+          .update(schema.workspaces)
+          .set({ gbrainMcpProxyEnabled: enabled })
+          .where(eq(schema.workspaces.id, workspaceId));
+        if (!enabled) {
+          const now = new Date();
+          await tx
+            .update(schema.workspaceMcpClients)
+            .set({ revokedAt: now })
+            .where(
+              and(
+                eq(schema.workspaceMcpClients.workspaceId, workspaceId),
+                isNull(schema.workspaceMcpClients.revokedAt),
+              ),
+            );
+          await tx
+            .update(schema.workspaceMcpAccessTokens)
+            .set({ revokedAt: now })
+            .where(
+              and(
+                eq(schema.workspaceMcpAccessTokens.workspaceId, workspaceId),
+                isNull(schema.workspaceMcpAccessTokens.revokedAt),
+              ),
+            );
+        }
+      });
+    },
+    async listClients(workspaceId) {
+      return db
+        .select({
+          id: schema.workspaceMcpClients.id,
+          label: schema.workspaceMcpClients.label,
+          scopes: schema.workspaceMcpClients.scopes,
+          createdAt: schema.workspaceMcpClients.createdAt,
+          lastUsedAt: schema.workspaceMcpClients.lastUsedAt,
+          revokedAt: schema.workspaceMcpClients.revokedAt,
+        })
+        .from(schema.workspaceMcpClients)
+        .where(eq(schema.workspaceMcpClients.workspaceId, workspaceId))
+        .orderBy(desc(schema.workspaceMcpClients.createdAt));
+    },
+    async createClient(input) {
+      const [client] = await db
+        .insert(schema.workspaceMcpClients)
+        .values({
+          workspaceId: input.workspaceId,
+          createdByUserId: input.createdByUserId,
+          label: input.label,
+          clientIdHash: hashMcpCredential(input.clientId),
+          scopes: input.scopes,
+        })
+        .returning({
+          id: schema.workspaceMcpClients.id,
+          label: schema.workspaceMcpClients.label,
+          scopes: schema.workspaceMcpClients.scopes,
+          createdAt: schema.workspaceMcpClients.createdAt,
+          lastUsedAt: schema.workspaceMcpClients.lastUsedAt,
+          revokedAt: schema.workspaceMcpClients.revokedAt,
+        });
+      if (!client) throw new Error('mcp_client_insert_failed');
+      return client;
+    },
+    async revokeClient(workspaceId, clientId) {
+      const now = new Date();
+      return db.transaction(async (tx) => {
+        const [client] = await tx
+          .update(schema.workspaceMcpClients)
+          .set({ revokedAt: now })
+          .where(
+            and(
+              eq(schema.workspaceMcpClients.workspaceId, workspaceId),
+              eq(schema.workspaceMcpClients.id, clientId),
+              isNull(schema.workspaceMcpClients.revokedAt),
+            ),
+          )
+          .returning({ id: schema.workspaceMcpClients.id });
+        if (!client) return false;
+        await tx
+          .update(schema.workspaceMcpAccessTokens)
+          .set({ revokedAt: now })
+          .where(
+            and(
+              eq(schema.workspaceMcpAccessTokens.workspaceId, workspaceId),
+              eq(schema.workspaceMcpAccessTokens.clientId, client.id),
+              isNull(schema.workspaceMcpAccessTokens.revokedAt),
+            ),
+          );
+        return true;
+      });
     },
   };
 }
@@ -166,6 +301,17 @@ function proxyPayload(workspace: WorkspaceMcpProxyRow, env: GbrainPublicProxyEnv
     available: Boolean(publicBaseUrl),
     issuerUrl: publicBaseUrl,
     mcpUrl: publicBaseUrl ? `${publicBaseUrl}/mcp` : null,
+  };
+}
+
+function clientPayload(client: WorkspaceMcpClientRow) {
+  return {
+    id: client.id,
+    label: client.label,
+    scopes: client.scopes,
+    createdAt: client.createdAt,
+    lastUsedAt: client.lastUsedAt,
+    revokedAt: client.revokedAt,
   };
 }
 
