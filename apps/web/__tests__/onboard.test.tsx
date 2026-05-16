@@ -118,6 +118,76 @@ describe('OnboardPage', () => {
     expect(screen.getByText(/Connect Notion/i)).toBeInTheDocument();
     expect(screen.getByText(/Upload Notion zip/i)).toBeInTheDocument();
   });
+
+  it('sends the selected BYOK Composio profile when connecting Notion', async () => {
+    const mutate = vi.fn();
+    const swrMock = useSWR as unknown as ReturnType<typeof vi.fn>;
+    swrMock.mockImplementation((key: unknown) => {
+      if (key === '/api/workspaces/current') {
+        return {
+          data: {
+            workspace: { id: 'ws1', name: 'Speedrun', runtime: 'ready' },
+            connections: [],
+            lastJob: null,
+            invites: [],
+            user: { id: 'u', email: 'a@x.com' },
+          },
+          error: null,
+          mutate,
+          isLoading: false,
+        };
+      }
+      if (key === '/api/workspaces/ws1/connector-auth-profiles') {
+        return {
+          data: {
+            profiles: [
+              {
+                id: 'open42-managed',
+                mode: 'open42_managed',
+                label: 'Open42 managed Composio',
+                services: [{ serviceId: 'notion', configured: true, enabled: true }],
+              },
+              {
+                id: 'profile-byok',
+                mode: 'byok',
+                label: 'Customer Composio',
+                services: [{ serviceId: 'notion', configured: true, enabled: true }],
+              },
+            ],
+          },
+          error: null,
+          mutate: vi.fn(),
+          isLoading: false,
+        };
+      }
+      return { data: undefined, error: null, mutate: vi.fn(), isLoading: false };
+    });
+    const fetchMock = makeFetch({
+      '/api/workspaces/ws1/connections/init': {
+        ok: true,
+        status: 200,
+        body: {},
+      },
+    });
+    global.fetch = fetchMock as unknown as typeof fetch;
+
+    render(<OnboardPage />);
+    fireEvent.click(screen.getByRole('button', { name: /customer composio/i }));
+    fireEvent.click(screen.getByRole('button', { name: /connect notion/i }));
+
+    await waitFor(() => {
+      const initCall = fetchMock.mock.calls.find(
+        (call) => String(call[0]) === '/api/workspaces/ws1/connections/init',
+      );
+      expect(initCall).toBeTruthy();
+      const init = initCall?.[1] as RequestInit;
+      expect(JSON.parse(String(init.body))).toMatchObject({
+        kind: 'notion-composio',
+        serviceId: 'notion',
+        authProfileId: 'profile-byok',
+      });
+    });
+  });
 });
 
 /**
