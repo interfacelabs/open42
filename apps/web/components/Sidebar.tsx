@@ -1,8 +1,20 @@
 import Link from 'next/link';
 import { useRouter } from 'next/router';
-import { ReactNode, useEffect } from 'react';
+import { ReactNode, useEffect, useRef, useState } from 'react';
 import useSWR from 'swr';
-import { MessageSquarePlus, Plug, Sparkles, X } from 'lucide-react';
+import {
+  ChevronUp,
+  CreditCard,
+  KeyRound,
+  MessageSquarePlus,
+  Plug,
+  Settings,
+  Shield,
+  Sparkles,
+  User,
+  Users,
+  X,
+} from 'lucide-react';
 
 import WorkspaceSwitcher from '@/components/WorkspaceSwitcher';
 import { fetcher, sourceKey, sourceLabel } from '@/lib/api';
@@ -60,6 +72,8 @@ export function Sidebar() {
   // explicit workspace_id in the path. The sidebar reads currentWorkspaceId
   // from the Zustand store; SWR sits idle on `null` until hydration.
   const workspaceId = useWorkspaceStore((s) => s.currentWorkspaceId);
+  const workspaces = useWorkspaceStore((s) => s.workspaces);
+  const currentWorkspace = workspaces.find((workspace) => workspace.id === workspaceId) ?? null;
   const { data: skillsData } = useSWR<SkillsListResponse>(
     workspaceId ? `/api/workspaces/${encodeURIComponent(workspaceId)}/skills` : null,
     fetcher,
@@ -216,7 +230,7 @@ export function Sidebar() {
         </Section>
       </nav>
 
-      <UserPill email={email} />
+      <UserPill email={email} role={currentWorkspace?.role ?? null} />
       </aside>
     </>
   );
@@ -270,12 +284,91 @@ function Item({
   );
 }
 
-function UserPill({ email }: { email: string | null }) {
+function UserPill({
+  email,
+  role,
+}: {
+  email: string | null;
+  role: 'owner' | 'admin' | 'member' | null;
+}) {
   const handle = email ? handleFromEmail(email) : '—';
   const initial = handle.charAt(0).toUpperCase();
+  const [open, setOpen] = useState(false);
+  const containerRef = useRef<HTMLDivElement | null>(null);
+  const canManageWorkspace = role === 'owner' || role === 'admin';
+  const isCloudEdition = process.env.NEXT_PUBLIC_OPEN42_EDITION === 'cloud';
+
+  useEffect(() => {
+    if (!open) return;
+    function onMouseDown(event: MouseEvent) {
+      if (containerRef.current && !containerRef.current.contains(event.target as Node)) {
+        setOpen(false);
+      }
+    }
+    function onKeyDown(event: KeyboardEvent) {
+      if (event.key === 'Escape') setOpen(false);
+    }
+    document.addEventListener('mousedown', onMouseDown);
+    document.addEventListener('keydown', onKeyDown);
+    return () => {
+      document.removeEventListener('mousedown', onMouseDown);
+      document.removeEventListener('keydown', onKeyDown);
+    };
+  }, [open]);
+
   return (
-    <div className="border-t border-border-soft p-3">
-      <div className="flex items-center gap-2.5 rounded-md px-2 py-1.5">
+    <div className="relative border-t border-border-soft p-3" ref={containerRef}>
+      {open ? (
+        <div
+          role="menu"
+          className="absolute bottom-full left-3 right-3 z-30 mb-2 overflow-hidden rounded-lg border border-border bg-white py-1 shadow-lg"
+        >
+          <MenuLink href="/settings/account" icon={<User size={14} strokeWidth={1.6} />}>
+            Account settings
+          </MenuLink>
+          {isCloudEdition && canManageWorkspace ? (
+            <MenuLink href="/settings/plan" icon={<CreditCard size={14} strokeWidth={1.6} />}>
+              Billing
+            </MenuLink>
+          ) : null}
+
+          <div className="my-1 border-t border-border-soft" />
+
+          <MenuLink href="/settings/connections" icon={<Settings size={14} strokeWidth={1.6} />}>
+            Workspace settings
+          </MenuLink>
+          {canManageWorkspace ? (
+            <>
+              <MenuLink href="/settings/members" icon={<Users size={14} strokeWidth={1.6} />}>
+                Manage users
+              </MenuLink>
+              <MenuLink href="/settings/api-keys" icon={<KeyRound size={14} strokeWidth={1.6} />}>
+                Chat BYOK
+              </MenuLink>
+              <MenuLink
+                href="/settings/connections/add"
+                icon={<Shield size={14} strokeWidth={1.6} />}
+              >
+                Composio BYOK
+              </MenuLink>
+            </>
+          ) : null}
+
+          <div className="my-1 border-t border-border-soft" />
+
+          <MenuLink href="/sign_out" icon={<X size={14} strokeWidth={1.6} />}>
+            Sign out
+          </MenuLink>
+        </div>
+      ) : null}
+
+      <button
+        type="button"
+        className="flex w-full items-center gap-2.5 rounded-md px-2 py-1.5 text-left transition-colors duration-140 hover:bg-white"
+        onClick={() => setOpen((value) => !value)}
+        aria-haspopup="menu"
+        aria-expanded={open}
+      >
         <span
           aria-hidden="true"
           className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-text-primary text-[11px] font-medium text-white"
@@ -288,8 +381,27 @@ function UserPill({ email }: { email: string | null }) {
           </span>
           <span className="font-mono text-[10px] text-text-faint">v0.1</span>
         </span>
-      </div>
+        <ChevronUp
+          size={14}
+          strokeWidth={1.6}
+          className={cn('shrink-0 text-text-faint transition-transform', open && 'rotate-180')}
+          aria-hidden="true"
+        />
+      </button>
     </div>
+  );
+}
+
+function MenuLink({ href, icon, children }: { href: string; icon: ReactNode; children: ReactNode }) {
+  return (
+    <Link
+      href={href}
+      role="menuitem"
+      className="flex h-8 items-center gap-2 px-2.5 text-[13px] text-text-body transition-colors duration-140 hover:bg-panel-soft hover:text-text-primary"
+    >
+      <span className="shrink-0 text-text-faint">{icon}</span>
+      <span className="truncate">{children}</span>
+    </Link>
   );
 }
 
