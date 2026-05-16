@@ -17,7 +17,7 @@ for (const file of ['.env.local', '.env']) {
 const publicUrl = process.env.WEB_PUBLIC_URL ?? 'http://localhost:3000';
 const webPort = process.env.WEB_PORT ?? portFromUrl(publicUrl) ?? '3000';
 const nextCli = resolve(repoRoot, 'node_modules/next/dist/bin/next');
-const child = spawn(process.execPath, [nextCli, 'dev', '-p', webPort], {
+const child = spawn(process.execPath, [nextCli, 'dev', '--webpack', '-p', webPort], {
   cwd: resolve(repoRoot, 'apps/web'),
   stdio: 'inherit',
   env: process.env,
