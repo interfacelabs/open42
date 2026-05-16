@@ -26,6 +26,7 @@ Open42 encrypts:
 
 - gbrain OAuth client secrets.
 - workspace BYOK provider keys.
+- Composio BYOK API keys and per-service auth config IDs.
 
 The encryption key is `OPEN42_KEK`. Placeholder values are rejected at API boot.
 
@@ -49,3 +50,6 @@ request/response bodies and provider payloads should not be logged.
 Composio webhooks mount before JSON parsing so signature verification sees the
 raw request body. Stripe webhooks are cloud-only and use a separate raw body
 router plus event idempotency tracking.
+
+Composio BYOK profiles use polling. The global Composio webhook secret only
+applies to Open42-managed Composio connections.

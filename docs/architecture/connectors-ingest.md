@@ -18,10 +18,24 @@ source URL, optional modified time, tags, and author metadata.
 
 ## Implemented Connectors
 
-| Connector | Mode | Notes |
-| --- | --- | --- |
-| `notion-zip` | one-shot | Parses Notion zip exports, skips images, limits entry count and byte size, converts CSV to markdown tables, strips Notion filename UUIDs. |
-| `notion-composio` | pollable | Uses Composio tools to search Notion pages and fetch page content with page, block, byte, and time budgets. |
+| Connector         | Mode     | Notes                                                                                                                                     |
+| ----------------- | -------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| `notion-zip`      | one-shot | Parses Notion zip exports, skips images, limits entry count and byte size, converts CSV to markdown tables, strips Notion filename UUIDs. |
+| `notion-composio` | pollable | Uses Composio tools to search Notion pages and fetch page content with page, block, byte, and time budgets.                               |
+
+## Composio Service Catalog
+
+The API owns the Composio service catalog in
+`apps/api/src/connectors/catalog.ts`. The catalog is returned with the
+connections payload so product surfaces render the same provider list the backend
+enforces. Only services marked `available` are accepted by the connection init
+route; planned entries are visible but not connectable.
+
+Composio connections also store the service id and connector auth profile used
+at OAuth init time. `NULL` `connector_auth_profile_id` means the connection uses
+Open42-managed Composio. BYOK rows point at a workspace-scoped
+`connector_auth_profiles` row, and ingest/disconnect resolve Composio through
+that stored profile.
 
 ## Ingest Cycle
 
