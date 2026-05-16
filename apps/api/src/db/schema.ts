@@ -66,6 +66,10 @@ export const connectionStatusEnum = pgEnum('connection_status', [
 export const ingestModeEnum = pgEnum('ingest_mode', ['import_once', 'periodic_pull']);
 export const llmProviderEnum = pgEnum('llm_provider', ['openai', 'anthropic']);
 export const llmScopeEnum = pgEnum('llm_scope', ['chat', 'embed']);
+export const connectorAuthProfileModeEnum = pgEnum('connector_auth_profile_mode', [
+  'open42_managed',
+  'byok',
+]);
 export const skillRevisionRoleEnum = pgEnum('skill_revision_role', ['you', 'brain']);
 
 // =====================================================================
@@ -266,6 +270,67 @@ export const ingestJobs = pgTable(
 );
 
 // =====================================================================
+// connector_auth_profiles (per-workspace Composio isolation profiles)
+// BYOK API keys are AES-GCM-sealed via envelope.encryptSecret with
+// `purpose: 'composio_api_key'`. Plaintext NEVER stored.
+// =====================================================================
+
+export const connectorAuthProfiles = pgTable(
+  'connector_auth_profiles',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    workspaceId: uuid('workspace_id')
+      .notNull()
+      .references(() => workspaces.id, { onDelete: 'cascade' }),
+    provider: text('provider').notNull().default('composio'),
+    mode: connectorAuthProfileModeEnum('mode').notNull(),
+    label: text('label').notNull(),
+    apiKeyCiphertext: bytea('api_key_ciphertext'),
+    baseUrl: text('base_url'),
+    createdByUserId: uuid('created_by_user_id').references(() => users.id, {
+      onDelete: 'set null',
+    }),
+    revokedAt: timestamp('revoked_at', { withTimezone: true }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    workspaceIdx: index('connector_auth_profiles_workspace_idx').on(t.workspaceId),
+    activeWorkspaceIdx: index('connector_auth_profiles_active_workspace_idx')
+      .on(t.workspaceId)
+      .where(sql`${t.revokedAt} IS NULL`),
+  }),
+);
+
+// =====================================================================
+// connector_auth_profile_services (service auth config IDs per profile)
+// Auth config IDs are less sensitive than API keys, but encrypted to avoid
+// leaking a customer Composio project shape into logs or accidental responses.
+// =====================================================================
+
+export const connectorAuthProfileServices = pgTable(
+  'connector_auth_profile_services',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    profileId: uuid('profile_id')
+      .notNull()
+      .references(() => connectorAuthProfiles.id, { onDelete: 'cascade' }),
+    serviceId: text('service_id').notNull(),
+    authConfigIdCiphertext: bytea('auth_config_id_ciphertext').notNull(),
+    enabled: boolean('enabled').notNull().default(true),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    profileServiceUniq: uniqueIndex('connector_auth_profile_services_uniq').on(
+      t.profileId,
+      t.serviceId,
+    ),
+    serviceIdx: index('connector_auth_profile_services_service_idx').on(t.serviceId),
+  }),
+);
+
+// =====================================================================
 // connections (per-workspace third-party data sources)
 // =====================================================================
 
@@ -277,6 +342,11 @@ export const connections = pgTable(
       .notNull()
       .references(() => workspaces.id, { onDelete: 'cascade' }),
     kind: connectionKindEnum('kind').notNull(),
+    serviceId: text('service_id'),
+    connectorAuthProfileId: uuid('connector_auth_profile_id').references(
+      () => connectorAuthProfiles.id,
+      { onDelete: 'restrict' },
+    ),
     status: connectionStatusEnum('status').notNull().default('pending_import'),
     displayName: text('display_name').notNull(),
     composioConnectedAccountId: text('composio_connected_account_id'),
@@ -316,6 +386,11 @@ export const connectionInitStates = pgTable(
       .notNull()
       .references(() => users.id, { onDelete: 'cascade' }),
     kind: connectionKindEnum('kind').notNull(),
+    serviceId: text('service_id'),
+    connectorAuthProfileId: uuid('connector_auth_profile_id').references(
+      () => connectorAuthProfiles.id,
+      { onDelete: 'cascade' },
+    ),
     composioPendingId: text('composio_pending_id'),
     expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
@@ -590,6 +665,10 @@ export type Connection = typeof connections.$inferSelect;
 export type NewConnection = typeof connections.$inferInsert;
 export type ConnectionInitState = typeof connectionInitStates.$inferSelect;
 export type NewConnectionInitState = typeof connectionInitStates.$inferInsert;
+export type ConnectorAuthProfile = typeof connectorAuthProfiles.$inferSelect;
+export type NewConnectorAuthProfile = typeof connectorAuthProfiles.$inferInsert;
+export type ConnectorAuthProfileService = typeof connectorAuthProfileServices.$inferSelect;
+export type NewConnectorAuthProfileService = typeof connectorAuthProfileServices.$inferInsert;
 export type McpAuditLog = typeof mcpAuditLog.$inferSelect;
 export type NewMcpAuditLog = typeof mcpAuditLog.$inferInsert;
 export type WorkspaceMcpClient = typeof workspaceMcpClients.$inferSelect;

@@ -26,7 +26,8 @@ import { docStagingPath } from './doc-path.js';
 export interface OrchestratorDeps {
   composio: ComposioClient;
   gbrain: (workspaceId: string) => Promise<GbrainClient>;
-  resolveConnector: (kind: string) => Connector;
+  resolveConnector: (kind: string, opts?: { composio?: ComposioClient | null }) => Connector;
+  resolveComposioClient?: (connection: ConnectionRow) => Promise<ComposioClient>;
   now?: () => Date;
   cycleConcurrency?: number;
   gbrainPollMaxMs?: number;
@@ -249,8 +250,7 @@ export async function runWorkspaceCycle(
     for (const id of successfulIds) {
       const connection = connections.find((item) => item.id === id);
       if (!connection) continue;
-      const connector = deps.resolveConnector(connection.kind);
-      const status = connector.mode === 'one_shot' ? 'completed' : 'active';
+      const status = connection.kind === 'notion-zip' ? 'completed' : 'active';
       const cursor = cursorsToCommit.get(id) ?? {};
       const owned = await commitIfStillOwned(async () => {
         await db
@@ -319,10 +319,29 @@ async function extractConnection(
   },
 ): Promise<void> {
   const { connection, cycleDir, abortController, summary, successfulIds, cursorsToCommit } = params;
+  let composio = deps.composio;
+  if (connection.composioConnectedAccountId && deps.resolveComposioClient) {
+    try {
+      composio = await deps.resolveComposioClient(connection);
+    } catch (err) {
+      const message = errorMessage(err);
+      await db
+        .update(schema.connections)
+        .set({ status: 'errored', lastError: `composio profile error: ${message}` })
+        .where(eq(schema.connections.id, connection.id));
+      summary.push({
+        connection_id: connection.id,
+        kind: connection.kind,
+        pages: 0,
+        error: message,
+      });
+      return;
+    }
+  }
 
   if (connection.composioConnectedAccountId) {
     try {
-      const account = await deps.composio.getConnection(connection.composioConnectedAccountId);
+      const account = await composio.getConnection(connection.composioConnectedAccountId);
       if (account.user_id !== connection.workspaceId) {
         await db
           .update(schema.connections)
@@ -355,7 +374,7 @@ async function extractConnection(
     }
   }
 
-  const connector = deps.resolveConnector(connection.kind);
+  const connector = deps.resolveConnector(connection.kind, { composio });
   const connDir = connectionStagingDir(cycleDir, connection.id);
   await mkdir(connDir, { recursive: true });
 

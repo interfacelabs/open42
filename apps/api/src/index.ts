@@ -19,6 +19,7 @@ import {
   assertBootSecrets,
 } from './env.js';
 import { createComposioClient, noopComposioStub, type ComposioClient } from './composio/client.js';
+import { resolveComposioClientForConnection } from './composio/profiles.js';
 import { makeConnectorRegistry } from './connectors/registry.js';
 import { buildGbrainForWorkspace } from './gbrain/factory.js';
 import { startScheduler, type SchedulerHandle } from './ingest/orchestrator.js';
@@ -33,6 +34,7 @@ import { buildComposioRouter } from './routes/connections/composio.js';
 import { buildConnectionsRouter } from './routes/connections/index.js';
 import { buildPublicGbrainProxyRouter } from './routes/gbrain-public-proxy.js';
 import { buildAnthropicProxy, buildOpenAIProxy } from './routes/proxy/index.js';
+import { buildConnectorAuthProfilesRouter } from './routes/workspaces/connector-auth-profiles.js';
 import { workspaceCredentialsRouter } from './routes/workspaces/credentials.js';
 import { buildAcceptRouter } from './routes/workspaces/accept.js';
 import { buildIngestRouter } from './routes/workspaces/ingest.js';
@@ -76,7 +78,7 @@ assertBootSecrets();
 export let composio: ComposioClient | null = null;
 export let scheduler: SchedulerHandle | null = null;
 let orchestratorDeps: OrchestratorDeps | null = null;
-const connectionRouteDeps: { composio: ComposioClient | null } = { composio: null };
+const connectionRouteDeps = { resolveComposioClient: resolveComposioClientForConnection };
 const cloudApi = await loadCloudApi();
 export let cloudHandle: { stop(): void | Promise<void> } | null = null;
 
@@ -103,8 +105,8 @@ void (async () => {
       composio: composio ?? noopComposioStub(),
       gbrain: buildGbrainForWorkspace,
       resolveConnector: registry.resolveConnectorByKind,
+      resolveComposioClient: resolveComposioClientForConnection,
     };
-    connectionRouteDeps.composio = composio;
     scheduler = startScheduler(orchestratorDeps);
   } catch (err) {
     logger.error({ err: sanitizeErrorForLog(err) }, 'ingest_scheduler_boot_failed');
@@ -198,6 +200,11 @@ app.use(
   '/workspaces/:id/credentials',
   requireRole(['owner'], { from: 'param' }, 'forbidden_owner_only'),
   workspaceCredentialsRouter,
+);
+app.use(
+  '/workspaces/:id/connector-auth-profiles',
+  requireRole(['owner', 'admin'], { from: 'param' }, 'forbidden_admin_only'),
+  buildConnectorAuthProfilesRouter(),
 );
 // MCP proxy is open to any workspace member: owners/admins manage the proxy
 // and named clients; regular members can self-claim a single personal client

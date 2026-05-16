@@ -2,21 +2,18 @@ import { Router } from 'express';
 import { and, eq, sql } from 'drizzle-orm';
 
 import { getWorkspaceReadiness } from '../../auth/membership.js';
-import type { ComposioClient } from '../../composio/client.js';
-import { createComposioClient } from '../../composio/client.js';
+import { ComposioProfileError, resolveComposioProfileForInit } from '../../composio/profiles.js';
+import {
+  findConnectableComposioServiceById,
+  findConnectableComposioServiceByConnectionKind,
+  serviceIdForConnectionKind,
+} from '../../connectors/catalog.js';
 import { generateNonce, signState, verifyState } from '../../connections/state-hmac.js';
 import { db, schema } from '../../db/client.js';
-import {
-  COMPOSIO_API_KEY,
-  COMPOSIO_BASE_URL,
-  COMPOSIO_NOTION_AUTH_CONFIG_ID,
-  OPEN42_COMPOSIO_ENABLED,
-  OPEN42_INGEST_HMAC_SECRET,
-  WEB_PUBLIC_URL,
-} from '../../env.js';
+import { OPEN42_INGEST_HMAC_SECRET, WEB_PUBLIC_URL } from '../../env.js';
 
 export interface ComposioRouterDeps {
-  composio?: ComposioClient;
+  resolveProfile?: typeof resolveComposioProfileForInit;
   kick?: (workspaceId: string) => Promise<void>;
 }
 
@@ -30,17 +27,7 @@ export interface ComposioRouterDeps {
 export function buildComposioRouter(depsIn: ComposioRouterDeps = {}) {
   const router = Router({ mergeParams: true });
   const kick = depsIn.kick ?? (async () => undefined);
-  let cachedComposio: Promise<ComposioClient> | null = null;
-
-  const getComposio = (): Promise<ComposioClient> | null => {
-    if (depsIn.composio) return Promise.resolve(depsIn.composio);
-    if (!OPEN42_COMPOSIO_ENABLED || !COMPOSIO_API_KEY) return null;
-    cachedComposio ??= createComposioClient({
-      apiKey: COMPOSIO_API_KEY,
-      baseUrl: COMPOSIO_BASE_URL,
-    });
-    return cachedComposio;
-  };
+  const resolveProfile = depsIn.resolveProfile ?? resolveComposioProfileForInit;
 
   router.post('/init', async (req, res, next) => {
     try {
@@ -48,23 +35,31 @@ export function buildComposioRouter(depsIn: ComposioRouterDeps = {}) {
         res.status(503).json({ error: 'composio_not_configured', detail: 'hmac_secret_missing' });
         return;
       }
-      const composio = getComposio();
-      if (!composio) {
-        res.status(503).json({ error: 'composio_not_configured' });
-        return;
-      }
-      if (req.body?.kind !== 'notion-composio') {
+      const connectionKind = typeof req.body?.kind === 'string' ? req.body.kind : '';
+      const requestedServiceId =
+        typeof req.body?.serviceId === 'string'
+          ? req.body.serviceId
+          : serviceIdForConnectionKind(connectionKind);
+      const service =
+        (connectionKind && findConnectableComposioServiceByConnectionKind(connectionKind)) ||
+        (requestedServiceId && findConnectableComposioServiceById(requestedServiceId));
+      if (!service || !requestedServiceId || requestedServiceId !== service.serviceId) {
         res.status(400).json({ error: 'unsupported_connection_kind' });
         return;
       }
-      if (!COMPOSIO_NOTION_AUTH_CONFIG_ID) {
-        res
-          .status(503)
-          .json({ error: 'composio_not_configured', detail: 'notion_auth_config_id_missing' });
+      if (service.serviceId !== 'notion') {
+        res.status(400).json({ error: 'unsupported_connection_kind' });
         return;
       }
       const session = req.session!;
       const workspaceId = req.workspace!.id;
+      const authProfileId =
+        typeof req.body?.authProfileId === 'string' ? req.body.authProfileId : null;
+      const profile = await resolveProfile({
+        workspaceId,
+        serviceId: service.serviceId,
+        authProfileId,
+      });
       // Reject the request if the tenant runtime isn't ready yet — otherwise
       // we'd hand back an OAuth redirect that, after callback, tries to ingest
       // against a gbrain that doesn't exist yet. 425 Too Early lets the client
@@ -90,17 +85,17 @@ export function buildComposioRouter(depsIn: ComposioRouterDeps = {}) {
         userId: session.userId,
         nonce: generateNonce(),
         expiresAt,
+        serviceId: service.serviceId,
+        connectorAuthProfileId: profile.profileId,
       });
       const redirectUri = `${WEB_PUBLIC_URL}/connections/composio/callback?state=${encodeURIComponent(
         state,
       )}`;
 
-      const initRes = await (
-        await composio
-      ).initiateConnection({
+      const initRes = await profile.client.initiateConnection({
         user_id: workspaceId,
-        app: 'notion',
-        auth_config_id: COMPOSIO_NOTION_AUTH_CONFIG_ID,
+        app: service.serviceId,
+        auth_config_id: profile.authConfigId,
         redirect_uri: redirectUri,
       });
 
@@ -109,12 +104,18 @@ export function buildComposioRouter(depsIn: ComposioRouterDeps = {}) {
         workspaceId,
         userId: session.userId,
         kind: 'notion-composio',
+        serviceId: service.serviceId,
+        connectorAuthProfileId: profile.profileId,
         composioPendingId: initRes.pending_connected_account_id,
         expiresAt: new Date(expiresAt),
       });
 
       res.json({ redirect_url: initRes.redirect_url });
     } catch (err) {
+      if (err instanceof ComposioProfileError) {
+        res.status(err.status).json({ error: err.code });
+        return;
+      }
       next(err);
     }
   });
@@ -122,11 +123,6 @@ export function buildComposioRouter(depsIn: ComposioRouterDeps = {}) {
   router.post('/composio/finalize', async (req, res, next) => {
     try {
       if (!OPEN42_INGEST_HMAC_SECRET) {
-        res.status(503).json({ error: 'composio_not_configured' });
-        return;
-      }
-      const composio = getComposio();
-      if (!composio) {
         res.status(503).json({ error: 'composio_not_configured' });
         return;
       }
@@ -185,6 +181,8 @@ export function buildComposioRouter(depsIn: ComposioRouterDeps = {}) {
         initState.workspaceId !== payload.workspaceId ||
         initState.userId !== payload.userId ||
         initState.kind !== 'notion-composio' ||
+        (payload.serviceId && initState.serviceId && payload.serviceId !== initState.serviceId) ||
+        (payload.connectorAuthProfileId ?? null) !== (initState.connectorAuthProfileId ?? null) ||
         initState.expiresAt.getTime() < Date.now()
       ) {
         res.status(400).json({ error: 'state_metadata_mismatch' });
@@ -195,7 +193,13 @@ export function buildComposioRouter(depsIn: ComposioRouterDeps = {}) {
         return;
       }
 
-      const account = await (await composio).getConnection(connectedAccountId);
+      const serviceId = initState.serviceId ?? payload.serviceId ?? 'notion';
+      const profile = await resolveProfile({
+        workspaceId: payload.workspaceId,
+        serviceId,
+        authProfileId: initState.connectorAuthProfileId,
+      });
+      const account = await profile.client.getConnection(connectedAccountId);
       if (account.status !== 'ACTIVE') {
         res.status(400).json({ error: 'account_not_active', status: account.status });
         return;
@@ -205,6 +209,8 @@ export function buildComposioRouter(depsIn: ComposioRouterDeps = {}) {
         await db.insert(schema.connections).values({
           workspaceId: payload.workspaceId,
           kind: 'notion-composio',
+          serviceId: profile.service.serviceId,
+          connectorAuthProfileId: profile.profileId,
           status: 'pending_import',
           displayName: 'Notion · Live',
           composioConnectedAccountId: connectedAccountId,
@@ -221,6 +227,10 @@ export function buildComposioRouter(depsIn: ComposioRouterDeps = {}) {
       void kick(payload.workspaceId).catch(() => undefined);
       res.json({ ok: true, redirectTo: '/' });
     } catch (err) {
+      if (err instanceof ComposioProfileError) {
+        res.status(err.status).json({ error: err.code });
+        return;
+      }
       next(err);
     }
   });

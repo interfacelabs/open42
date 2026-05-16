@@ -5,6 +5,8 @@ export interface StatePayload {
   userId: string;
   nonce: string;
   expiresAt: number;
+  serviceId?: string;
+  connectorAuthProfileId?: string | null;
 }
 
 export function signState(secret: string, payload: StatePayload): string {
