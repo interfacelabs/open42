@@ -5,6 +5,7 @@ import {
   MessageSquare,
   PanelRightClose,
   Plug,
+  Plug2,
   Upload,
 } from 'lucide-react';
 
@@ -241,6 +242,12 @@ const QUICK_ACTIONS: Array<{
     label: 'Manage connections',
     sub: 'Tokens, scopes, refresh',
     icon: <Plug size={14} strokeWidth={1.6} />,
+  },
+  {
+    href: '/settings/mcp',
+    label: 'Connect AI tools',
+    sub: 'Create MCP credentials for Claude Code and other MCP clients.',
+    icon: <Plug2 size={14} strokeWidth={1.6} />,
   },
 ];
 

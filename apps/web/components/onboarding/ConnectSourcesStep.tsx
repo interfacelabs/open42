@@ -20,6 +20,7 @@ import {
 import { motion } from 'motion/react';
 import { ArrowRight } from 'lucide-react';
 
+import { OnboardingMcpPanel } from '@/components/onboarding/OnboardingMcpPanel';
 import { csrfHeaders } from '@/lib/csrf';
 import { EASE_ENTER } from '@/lib/motion';
 import type { WorkspaceRuntime } from '@/lib/onboarding/derive';
@@ -182,6 +183,8 @@ export function ConnectSourcesStep({ runtime, workspaceId, mutate }: ConnectSour
       </div>
 
       <ComingSoonSources />
+
+      <OnboardingMcpPanel runtime={runtime} workspaceId={workspaceId} />
 
       <div className="mt-7">
         <button
