@@ -5,8 +5,8 @@
  * Runs on the free-tenant Hetzner VPS and exposes a tiny private HTTP API used
  * by the core Open42 API. It starts one gbrain tenant container per workspace,
  * with one Docker volume per tenant. Bind this service and tenant ports to the
- * Hetzner private-network address, then restrict inbound traffic to the core
- * API host with Hetzner firewall rules.
+ * host Tailscale address, then restrict inbound traffic with tailnet ACLs and
+ * host firewall rules.
  */
 import { createServer } from 'node:http';
 import { spawn } from 'node:child_process';
