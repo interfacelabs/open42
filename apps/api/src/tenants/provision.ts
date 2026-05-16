@@ -20,6 +20,8 @@ const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../../../..')
 export interface TenantProvisionEnv {
   TENANT_PROVISIONER?: string;
   API_PUBLIC_URL?: string;
+  OPEN42_EDITION?: string;
+  OPEN42_ALLOW_MULTI_WORKSPACE?: string;
   OPEN42_DEFAULT_TENANT_TIER?: string;
   OPEN42_FREE_TENANT_PROVISIONER?: string;
   OPEN42_FREE_TENANT_WORKSPACE_IDS?: string;
@@ -85,7 +87,11 @@ export interface TenantProvisionRepo {
     proxyTokenHash: Buffer;
     gbrainVersion: string;
   }): Promise<{ id: string }>;
-  markWorkspaceFailedById?(workspaceId: string, errorCode: string): Promise<void>;
+  markWorkspaceFailedById?(
+    workspaceId: string,
+    errorCode: string,
+    errorDetail?: string | null,
+  ): Promise<void>;
   resetWorkspaceById?(workspaceId: string): Promise<void>;
   resolveWorkspaceTenantTier?(workspaceId: string): Promise<TenantRuntimeTier | null>;
 }
@@ -128,6 +134,21 @@ export function classifyProvisioningError(err: unknown): ProvisioningErrorCode {
   return 'provisioning_failed';
 }
 
+export function provisionFailureDetail(err: unknown): string {
+  const raw = err instanceof Error ? err.message : String(err ?? '');
+  return redactProvisioningFailure(raw).slice(0, 12_000);
+}
+
+function redactProvisioningFailure(value: string): string {
+  return value
+    .replace(/tnt_[0-9a-f-]{36}_[0-9a-f]{32}/gi, 'tnt_[redacted]')
+    .replace(
+      /\b(ANTHROPIC_API_KEY|GBRAIN_POSTGRES_PASSWORD|HETZNER_TENANT_AGENT_TOKEN|OPEN42_TENANT_PROXY_TOKEN|OPENAI_API_KEY|TENANT_AGENT_TOKEN)=\S+/g,
+      '$1=[redacted]',
+    )
+    .replace(/Bearer\s+[A-Za-z0-9._~+/=-]+/g, 'Bearer [redacted]');
+}
+
 /**
  * Wrap provisionTenant so async failures land in the DB instead of stdout.
  * On error: marks the workspace `failed` with a stable error code; on success:
@@ -145,7 +166,7 @@ export async function safelyProvisionTenant(
   } catch (err) {
     const code = classifyProvisioningError(err);
     try {
-      await repo.markWorkspaceFailedById?.(options.workspaceId, code);
+      await repo.markWorkspaceFailedById?.(options.workspaceId, code, provisionFailureDetail(err));
     } catch (markErr) {
       // Last-resort: log to stderr. The startup sweep will catch this row eventually.
       console.error('[provision] failed to mark workspace failed', markErr);
@@ -268,7 +289,7 @@ async function provisionTenantResources(options: {
   if (options.provider === 'compose' && !options.env.OPEN42_TENANT_PROXY_TOKEN?.trim()) {
     throw new Error('OPEN42_TENANT_PROXY_TOKEN is required for compose provisioning');
   }
-  const proxyToken = resolveProvisionProxyToken(workspaceId, options.env);
+  const proxyToken = resolveProvisionProxyToken(workspaceId, options.env, options.provider);
   const provisioner = resolveTenantProvisioner(options.provider);
   const tenant = await provisioner({
     env: options.env,
@@ -707,13 +728,14 @@ export function createDrizzleTenantRepo(): TenantProvisionRepo {
         return workspace;
       });
     },
-    async markWorkspaceFailedById(workspaceId, errorCode) {
+    async markWorkspaceFailedById(workspaceId, errorCode, errorDetail) {
       const { db: defaultDb, schema } = await import('../db/client.js');
       await defaultDb
         .update(schema.workspaces)
         .set({
           status: 'failed',
           lastError: errorCode,
+          lastErrorDetail: errorDetail ?? null,
           provisionAttempts: sql`${schema.workspaces.provisionAttempts} + 1`,
         })
         .where(eq(schema.workspaces.id, workspaceId));
@@ -725,6 +747,7 @@ export function createDrizzleTenantRepo(): TenantProvisionRepo {
         .set({
           status: 'provisioning',
           lastError: null,
+          lastErrorDetail: null,
           provisioningStartedAt: new Date(),
         })
         .where(eq(schema.workspaces.id, workspaceId));
@@ -773,13 +796,25 @@ function localOpen42ApiBaseUrl(
 function resolveProvisionProxyToken(
   workspaceId: string,
   env: TenantProvisionEnv,
+  provider: string,
 ): { token: string; hash: Buffer } {
   const configured = env.OPEN42_TENANT_PROXY_TOKEN?.trim();
   if (!configured) return generateProxyToken(workspaceId);
-  if (!configured.startsWith(`tnt_${workspaceId}_`)) {
-    throw new Error('OPEN42_TENANT_PROXY_TOKEN workspace id does not match workspace row');
+  if (configured.startsWith(`tnt_${workspaceId}_`)) {
+    return { token: configured, hash: hashProxyTokenForStorage(configured) };
   }
-  return { token: configured, hash: hashProxyTokenForStorage(configured) };
+  if (provider !== 'compose' && allowsMultiWorkspaceProxyTokens(env)) {
+    return generateProxyToken(workspaceId);
+  }
+  throw new Error('OPEN42_TENANT_PROXY_TOKEN workspace id does not match workspace row');
+}
+
+function allowsMultiWorkspaceProxyTokens(env: TenantProvisionEnv): boolean {
+  return env.OPEN42_EDITION === 'cloud' || boolEnvTrue(env.OPEN42_ALLOW_MULTI_WORKSPACE);
+}
+
+function boolEnvTrue(value: string | undefined): boolean {
+  return ['1', 'true', 'yes', 'on'].includes((value ?? '').toLowerCase());
 }
 
 function resolveTenantProvisioner(name: string): TenantProvisioner {

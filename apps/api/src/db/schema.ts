@@ -111,6 +111,7 @@ export const workspaces = pgTable(
     gbrainVersion: text('gbrain_version').notNull(),
     status: workspaceStatusEnum('status').notNull().default('provisioning'),
     lastError: text('last_error'),
+    lastErrorDetail: text('last_error_detail'),
     provisionAttempts: integer('provision_attempts').notNull().default(0),
     provisioningStartedAt: timestamp('provisioning_started_at', { withTimezone: true })
       .notNull()
