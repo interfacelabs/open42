@@ -28,6 +28,10 @@
       "types": "./dist/env.d.ts",
       "default": "./dist/env.js"
     },
+    "./gbrain/public-proxy": {
+      "types": "./dist/gbrain/public-proxy.d.ts",
+      "default": "./dist/gbrain/public-proxy.js"
+    },
     "./middleware/error-sanitize": {
       "types": "./dist/middleware/error-sanitize.d.ts",
       "default": "./dist/middleware/error-sanitize.js"

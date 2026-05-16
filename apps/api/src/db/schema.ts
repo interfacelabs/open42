@@ -102,6 +102,7 @@ export const workspaces = pgTable(
     gbrainOauthClientId: text('gbrain_oauth_client_id'),
     // AES-GCM(client_secret, OPEN42_KEK). Plaintext NEVER stored.
     gbrainOauthClientSecretCiphertext: bytea('gbrain_oauth_client_secret_ciphertext'),
+    gbrainMcpProxyEnabled: boolean('gbrain_mcp_proxy_enabled').notNull().default(false),
     proxyTokenHash: bytea('proxy_token_hash'),
     gbrainVersion: text('gbrain_version').notNull(),
     status: workspaceStatusEnum('status').notNull().default('provisioning'),

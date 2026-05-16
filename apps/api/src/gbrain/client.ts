@@ -127,12 +127,14 @@ export class GbrainClient {
     return this.callTool('get_versions', { slug });
   }
 
-  async listPages(params: {
-    type?: string;
-    tag?: string;
-    limit?: number;
-    include_deleted?: boolean;
-  } = {}): Promise<unknown> {
+  async listPages(
+    params: {
+      type?: string;
+      tag?: string;
+      limit?: number;
+      include_deleted?: boolean;
+    } = {},
+  ): Promise<unknown> {
     return this.callTool('list_pages', params);
   }
 
@@ -290,11 +292,9 @@ export class GbrainClient {
     const bodyLength = text.length;
     const payload = parseMcpHttpPayload(text);
     if (!response.ok) {
-      throw new GbrainHttpError(
-        `gbrain ${operation} HTTP ${response.status}`,
-        response.status,
-        { bodyLength },
-      );
+      throw new GbrainHttpError(`gbrain ${operation} HTTP ${response.status}`, response.status, {
+        bodyLength,
+      });
     }
     return { payload, bodyLength };
   }
@@ -343,27 +343,55 @@ export async function registerGbrainOAuthClient(
   baseUrl: string,
   fetchImpl: Fetch = fetch,
 ): Promise<{ client_id: string; client_secret: string }> {
+  return registerGbrainOAuthClientWithOptions(baseUrl, {
+    clientName: 'open42',
+    grantTypes: ['client_credentials'],
+    redirectUris: [],
+    scope: 'read write admin',
+    tokenEndpointAuthMethod: 'client_secret_post',
+    fetchImpl,
+  });
+}
+
+export async function registerGbrainOAuthClientWithOptions(
+  baseUrl: string,
+  options: {
+    clientName: string;
+    grantTypes: string[];
+    redirectUris: string[];
+    scope: string;
+    tokenEndpointAuthMethod?: string;
+    fetchImpl?: Fetch;
+  },
+): Promise<{ client_id: string; client_secret: string }> {
   const root = baseUrl.replace(/\/+$/, '');
+  const fetchImpl = options.fetchImpl ?? fetch;
   const response = await fetchImpl(`${root}/register`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      client_name: 'open42',
-      grant_types: ['client_credentials'],
-      redirect_uris: [],
-      scope: 'read write admin',
-      token_endpoint_auth_method: 'client_secret_post',
+      client_name: options.clientName,
+      grant_types: options.grantTypes,
+      redirect_uris: options.redirectUris,
+      scope: options.scope,
+      token_endpoint_auth_method: options.tokenEndpointAuthMethod ?? 'client_secret_post',
     }),
   });
   const text = await response.text();
   const bodyLength = text.length;
   let payload: Partial<{ client_id: string; client_secret: string }> = {};
   try {
-    payload = text ? (JSON.parse(text) as Partial<{ client_id: string; client_secret: string }>) : {};
+    payload = text
+      ? (JSON.parse(text) as Partial<{ client_id: string; client_secret: string }>)
+      : {};
   } catch {
     // Leave payload empty — body content must NOT be attached to the error.
   }
-  if (!response.ok || typeof payload.client_id !== 'string' || typeof payload.client_secret !== 'string') {
+  if (
+    !response.ok ||
+    typeof payload.client_id !== 'string' ||
+    typeof payload.client_secret !== 'string'
+  ) {
     throw new GbrainHttpError('gbrain OAuth client registration failed', response.status, {
       bodyLength,
     });

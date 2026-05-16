@@ -28,6 +28,11 @@ The API mounts:
 Cloud mode additionally mounts `/webhooks/stripe` and
 `/workspaces/:id/billing`.
 
+In cloud mode, `*.proxy.open42.ai` is routed to the API as an opt-in public
+gbrain MCP proxy. Only gbrain MCP/OAuth endpoints are forwarded, and the
+workspace owner/admin must enable the proxy before the host resolves to a
+tenant runtime.
+
 ## API To gbrain
 
 Open42 talks to gbrain through `GbrainClient` over HTTP:
@@ -37,6 +42,11 @@ Open42 talks to gbrain through `GbrainClient` over HTTP:
 
 The API records structural MCP audit metadata in `mcp_audit_log`. It does not
 log gbrain request or response bodies.
+
+When `OPEN42_GBRAIN_PROXY_DOMAIN` is configured, new tenant runtimes receive a
+stable public issuer URL of the form
+`https://ws-<workspace-id-hex>.<domain>`. Open42 still stores and uses the
+private gbrain base URL for internal calls.
 
 ## Tenant To Provider Proxy
 
