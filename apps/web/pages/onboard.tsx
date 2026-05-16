@@ -154,7 +154,12 @@ export default function OnboardPage() {
     : mode === 'create'
       ? 'workspace'
       : null;
-  const topbarWorkspaceName = current?.workspace?.name ?? '';
+  const topbarWorkspaceName =
+    mode === 'create'
+      ? current?.workspace?.id === createdWorkspaceId
+        ? current.workspace.name
+        : ''
+      : (current?.workspace?.name ?? '');
 
   const inviteLines = useMemo(() => parseInviteEmails(inviteText), [inviteText]);
 
@@ -575,7 +580,7 @@ function WorkspaceStep({
           maxLength={80}
           value={name}
           onChange={(event) => setName(event.target.value)}
-          placeholder="Speedrun Labs"
+          placeholder="Acme Corp"
           className="h-11 w-full rounded-input border border-input bg-white px-3.5 text-[15px] text-text-primary outline-none transition-[border-color,box-shadow] duration-140 focus:border-accent focus:shadow-[0_0_0_4px_rgba(29,77,255,0.10)]"
         />
         <p className="mt-2 text-xs text-text-subtle">

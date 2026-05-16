@@ -247,9 +247,9 @@ describe('OnboardPage — mode=create', () => {
     });
     render(<OnboardPage />);
     expect(screen.getByLabelText(/workspace name/i)).toBeInTheDocument();
-    expect(
-      screen.getByRole('heading', { name: /name your brain/i }),
-    ).toBeInTheDocument();
+    expect(screen.getByPlaceholderText('Acme Corp')).toBeInTheDocument();
+    expect(screen.queryByText(/Existing/)).not.toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: /name your brain/i })).toBeInTheDocument();
   });
 
   it('renders workspace step even while SWR is still loading', () => {
