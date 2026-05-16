@@ -2,7 +2,12 @@ import { afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { eq } from 'drizzle-orm';
 
 import type { ComposioClient } from '../composio/client.js';
-import type { Connector, ExtractOptions, ExtractResult, NormalizedDoc } from '../connectors/interface.js';
+import type {
+  Connector,
+  ExtractOptions,
+  ExtractResult,
+  NormalizedDoc,
+} from '../connectors/interface.js';
 import type { GbrainClient } from '../gbrain/client.js';
 
 const RUN_DB_TESTS = !!process.env.DATABASE_URL;
@@ -21,7 +26,9 @@ describeDb('runWorkspaceCycle', () => {
 
   afterEach(async () => {
     for (const workspaceId of workspaceIds.splice(0)) {
-      await dbMod.db.delete(dbMod.schema.workspaces).where(eq(dbMod.schema.workspaces.id, workspaceId));
+      await dbMod.db
+        .delete(dbMod.schema.workspaces)
+        .where(eq(dbMod.schema.workspaces.id, workspaceId));
     }
     for (const userId of userIds.splice(0)) {
       await dbMod.db.delete(dbMod.schema.users).where(eq(dbMod.schema.users.id, userId));
@@ -93,6 +100,61 @@ describeDb('runWorkspaceCycle', () => {
       .where(eq(dbMod.schema.ingestJobs.id, result.jobId));
     expect(job?.status).toBe('completed');
     expect(job?.pagesTotal).toBe(1);
+  });
+  it('uses the connection auth profile resolver instead of the global Composio client', async () => {
+    const workspaceId = await makeWorkspace();
+    const profileId = await makeComposioProfile(workspaceId);
+    const [connection] = await dbMod.db
+      .insert(dbMod.schema.connections)
+      .values({
+        workspaceId,
+        kind: 'notion-composio',
+        serviceId: 'notion',
+        connectorAuthProfileId: profileId,
+        status: 'pending_import',
+        displayName: 'Notion Live BYOK',
+        composioConnectedAccountId: 'acc-byok',
+        cursor: {},
+      })
+      .returning();
+    if (!connection) throw new Error('connection insert failed');
+
+    let globalGetConnectionCalls = 0;
+    let byokGetConnectionCalls = 0;
+    const result = await mod.runWorkspaceCycle(
+      {
+        composio: {
+          ...composioForWorkspace(workspaceId),
+          getConnection: async () => {
+            globalGetConnectionCalls += 1;
+            throw new Error('global composio should not be used');
+          },
+        },
+        resolveComposioClient: async (resolvedConnection) => {
+          expect(resolvedConnection.connectorAuthProfileId).toBe(profileId);
+          return {
+            ...composioForWorkspace(workspaceId),
+            getConnection: async (id) => {
+              byokGetConnectionCalls += 1;
+              return { id, status: 'ACTIVE', user_id: workspaceId, app: 'notion' };
+            },
+          };
+        },
+        gbrain: async () => {
+          throw new Error('gbrain should not be called for zero-doc cycle');
+        },
+        resolveConnector: (_kind, opts) => {
+          expect(opts?.composio).toBeTruthy();
+          return pollableConnector([]);
+        },
+        heartbeatIntervalMs: 60_000,
+      },
+      workspaceId,
+    );
+
+    expect(result.status).toBe('completed');
+    expect(globalGetConnectionCalls).toBe(0);
+    expect(byokGetConnectionCalls).toBe(1);
   });
   it.todo('records connector failure while allowing other connectors to succeed');
   it.todo('advances zero-doc successful connectors without submitting to gbrain');
@@ -168,6 +230,21 @@ describeDb('runWorkspaceCycle', () => {
     if (!workspace) throw new Error('workspace insert failed');
     workspaceIds.push(workspace.id);
     return workspace.id;
+  }
+
+  async function makeComposioProfile(workspaceId: string): Promise<string> {
+    const [profile] = await dbMod.db
+      .insert(dbMod.schema.connectorAuthProfiles)
+      .values({
+        workspaceId,
+        provider: 'composio',
+        mode: 'byok',
+        label: 'Customer Composio',
+        apiKeyCiphertext: Buffer.from('ciphertext'),
+      })
+      .returning();
+    if (!profile) throw new Error('profile insert failed');
+    return profile.id;
   }
 
   function composioForWorkspace(workspaceId: string): ComposioClient {
