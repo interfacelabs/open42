@@ -9,6 +9,7 @@ import {
   classifyProvisioningError,
   gbrainGitRef,
   provisionTenant,
+  provisionFailureDetail,
   registerTenantProvisioner,
   safelyProvisionTenant,
 } from './provision.js';
@@ -156,6 +157,98 @@ describe('provisionTenant', () => {
       gbrainBaseUrl: 'http://[fdaa::2]:8080',
     });
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('generates a workspace-scoped proxy token in multi-workspace mode', async () => {
+    process.env.OPEN42_KEK = '6'.repeat(64);
+    const workspaceId = '22222222-2222-4222-8222-222222222222';
+    const staleToken = 'tnt_11111111-1111-4111-8111-111111111111_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+    const issuedTokens: string[] = [];
+    const stored: any[] = [];
+    registerTenantProvisioner('test-multi-workspace-token', async (options) => {
+      issuedTokens.push(options.proxyToken);
+      return {
+        tenantRuntimeId: 'runtime-token',
+        gbrainPrivateAddress: '127.0.0.1:19042',
+        gbrainBaseUrl: 'http://127.0.0.1:19042',
+      };
+    });
+    const repo: TenantProvisionRepo = {
+      async ensureWorkspaceForProvisioning() {
+        return { id: workspaceId };
+      },
+      async createWorkspace(input) {
+        stored.push(input);
+        return { id: workspaceId };
+      },
+    };
+    const fetchMock = vi.fn(async (url: string | URL | Request) => {
+      const href = String(url);
+      if (href === 'http://127.0.0.1:19042/health') {
+        return json({ status: 'ok', version: '0.31.3' });
+      }
+      if (href === 'http://127.0.0.1:19042/register') {
+        return json({ client_id: 'client-token', client_secret: 'secret-token' });
+      }
+      if (href === 'http://127.0.0.1:19042/token') {
+        return json({ access_token: 'access-token', expires_in: 3600 });
+      }
+      throw new Error(`unexpected URL ${href}`);
+    });
+
+    await expect(
+      provisionTenant({
+        workspaceId,
+        ownerUserId: 'user-token',
+        repo,
+        fetch: fetchMock as typeof fetch,
+        sleep: async () => undefined,
+        env: {
+          TENANT_PROVISIONER: 'test-multi-workspace-token',
+          OPEN42_ALLOW_MULTI_WORKSPACE: 'true',
+          OPEN42_TENANT_PROXY_TOKEN: staleToken,
+          GBRAIN_VERSION: '0.31.3',
+        },
+      }),
+    ).resolves.toMatchObject({
+      workspaceId,
+      tenantRuntimeId: 'runtime-token',
+    });
+
+    expect(issuedTokens).toHaveLength(1);
+    expect(issuedTokens[0]).not.toBe(staleToken);
+    expect(issuedTokens[0]).toMatch(/^tnt_22222222-2222-4222-8222-222222222222_[0-9a-f]{32}$/);
+    expect(stored[0].proxyTokenHash).toBeInstanceOf(Buffer);
+    expect(stored[0].proxyTokenHash).toHaveLength(32);
+  });
+
+  it('rejects a mismatched configured proxy token for compose provisioning', async () => {
+    process.env.OPEN42_KEK = '7'.repeat(64);
+    const workspaceId = '22222222-2222-4222-8222-222222222222';
+    const repo: TenantProvisionRepo = {
+      async ensureWorkspaceForProvisioning() {
+        return { id: workspaceId };
+      },
+      async createWorkspace() {
+        throw new Error('should_not_create_workspace');
+      },
+    };
+
+    await expect(
+      provisionTenant({
+        workspaceId,
+        ownerUserId: 'user-token',
+        repo,
+        env: {
+          TENANT_PROVISIONER: 'compose',
+          OPEN42_ALLOW_MULTI_WORKSPACE: 'true',
+          OPEN42_TENANT_PROXY_TOKEN:
+            'tnt_11111111-1111-4111-8111-111111111111_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+          GBRAIN_BASE_URL: 'http://gbrain:8080',
+          GBRAIN_VERSION: '0.31.3',
+        },
+      }),
+    ).rejects.toThrow('OPEN42_TENANT_PROXY_TOKEN workspace id does not match workspace row');
   });
 
   it('routes a hybrid free workspace through the Hetzner tenant agent', async () => {
@@ -356,6 +449,20 @@ describe('classifyProvisioningError', () => {
     ['some unexpected non-matching message', 'provisioning_failed'],
   ])('classifies %j as %s', (msg, expected) => {
     expect(classifyProvisioningError(new Error(msg))).toBe(expected);
+  });
+});
+
+describe('provisionFailureDetail', () => {
+  it('redacts tenant proxy tokens and env-shaped secrets', () => {
+    expect(
+      provisionFailureDetail(
+        new Error(
+          'failed OPENAI_API_KEY=sk-test ANTHROPIC_API_KEY=secret Bearer abc.def tnt_11111111-1111-4111-8111-111111111111_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+        ),
+      ),
+    ).toBe(
+      'failed OPENAI_API_KEY=[redacted] ANTHROPIC_API_KEY=[redacted] Bearer [redacted] tnt_[redacted]',
+    );
   });
 });
 

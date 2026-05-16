@@ -10,10 +10,11 @@
  * otherwise so the standard `npm test` stays hermetic.
  *
  * Coverage:
- *   - resetWorkspaceProvisioningRow: clears last_error, resets the attempt
- *     counter to 0, and advances provisioning_started_at to "now".
+ *   - resetWorkspaceProvisioningRow: clears last_error + last_error_detail,
+ *     resets the attempt counter to 0, and advances provisioning_started_at
+ *     to "now".
  *   - markWorkspaceFailed: flips status='failed' and persists the classified
- *     error code.
+ *     error code plus the redacted internal failure detail.
  *   - resolveLegacyProvisioningWorkspaceId: returns the most-recent
  *     provisioning workspace for an owner (backward-compat for jobs
  *     enqueued by the pre-workspaceId worker), or null when none qualifies.
@@ -69,10 +70,7 @@ describeDb('provision-worker SQL paths (DB integration)', () => {
   });
 
   async function seedUser(email: string) {
-    const [user] = await dbMod.db
-      .insert(dbMod.schema.users)
-      .values({ email })
-      .returning();
+    const [user] = await dbMod.db.insert(dbMod.schema.users).values({ email }).returning();
     if (!user) throw new Error('seedUser failed');
     userIds.push(user.id);
     return user;
@@ -107,6 +105,7 @@ describeDb('provision-worker SQL paths (DB integration)', () => {
         provisioningStartedAt: oldStart,
         provisionAttempts: 3,
         lastError: 'timeout',
+        lastErrorDetail: 'full timeout stack',
       });
 
       const before = Date.now();
@@ -119,27 +118,31 @@ describeDb('provision-worker SQL paths (DB integration)', () => {
         .limit(1);
       expect(refreshed?.status).toBe('provisioning');
       expect(refreshed?.lastError).toBeNull();
+      expect(refreshed?.lastErrorDetail).toBeNull();
       expect(refreshed?.provisionAttempts).toBe(0);
       // provisioningStartedAt was '2026-01-01'; it should now be > the
       // snapshot we took just before the call.
       expect(refreshed?.provisioningStartedAt).toBeInstanceOf(Date);
       expect(refreshed!.provisioningStartedAt.getTime()).toBeGreaterThanOrEqual(before);
-      expect(refreshed!.provisioningStartedAt.getTime()).toBeGreaterThan(
-        oldStart.getTime(),
-      );
+      expect(refreshed!.provisioningStartedAt.getTime()).toBeGreaterThan(oldStart.getTime());
     });
   });
 
   describe('markWorkspaceFailed', () => {
-    it('flips status to "failed" and persists the classified error code', async () => {
+    it('persists the classified error code and internal detail', async () => {
       const tag = `${Date.now()}-${Math.random()}`;
       const owner = await seedUser(`pw-failed-${tag}@open42.test`);
       const ws = await seedWorkspace(owner.id, {
         status: 'provisioning',
         lastError: null,
+        lastErrorDetail: null,
       });
 
-      await workerMod.markWorkspaceFailed(ws.id, 'docker_pull_failed');
+      await workerMod.markWorkspaceFailed(
+        ws.id,
+        'docker_pull_failed',
+        'docker pull failed with exit code 1',
+      );
 
       const [refreshed] = await dbMod.db
         .select()
@@ -148,6 +151,7 @@ describeDb('provision-worker SQL paths (DB integration)', () => {
         .limit(1);
       expect(refreshed?.status).toBe('failed');
       expect(refreshed?.lastError).toBe('docker_pull_failed');
+      expect(refreshed?.lastErrorDetail).toBe('docker pull failed with exit code 1');
     });
   });
 

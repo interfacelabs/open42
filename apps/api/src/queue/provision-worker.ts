@@ -27,12 +27,13 @@ import { and, desc, eq, sql } from 'drizzle-orm';
 import pino from 'pino';
 
 import { db, schema } from '../db/client.js';
-import { provisionTenant, classifyProvisioningError } from '../tenants/provision.js';
-import { buildBullSubscriber } from './connection.js';
 import {
-  PROVISION_QUEUE_NAME,
-  type ProvisionJobData,
-} from './provision-queue.js';
+  classifyProvisioningError,
+  provisionFailureDetail,
+  provisionTenant,
+} from '../tenants/provision.js';
+import { buildBullSubscriber } from './connection.js';
+import { PROVISION_QUEUE_NAME, type ProvisionJobData } from './provision-queue.js';
 
 const logger = pino({ name: 'provision-worker' });
 
@@ -127,17 +128,18 @@ export function startProvisionWorker(): Worker<ProvisionJobData> {
       );
       return;
     }
-    logger.error(
-      { jobId: job.id, err: err?.message },
-      'provision_job_failed_terminal',
-    );
+    logger.error({ jobId: job.id, err: err?.message }, 'provision_job_failed_terminal');
     // Resolve workspaceId with the legacy fallback so the failure handler
     // still flips the DB row to 'failed' for jobs enqueued by the old worker
     // (which only carried ownerUserId). Without this the workspace would
     // stay 'provisioning' forever after the deploy boundary.
     const workspaceId = await resolveJobWorkspaceId(job);
     if (!workspaceId) return;
-    await markWorkspaceFailed(workspaceId, classifyProvisioningError(err));
+    await markWorkspaceFailed(
+      workspaceId,
+      classifyProvisioningError(err),
+      provisionFailureDetail(err),
+    );
   });
 
   worker.on('error', (err) => {
@@ -173,14 +175,13 @@ export async function processProvisionJob(job: Job<ProvisionJobData>): Promise<v
   await provisionTenant({ workspaceId, ownerUserId });
 }
 
-export async function resetWorkspaceProvisioningRow(
-  workspaceId: string,
-): Promise<void> {
+export async function resetWorkspaceProvisioningRow(workspaceId: string): Promise<void> {
   await db
     .update(schema.workspaces)
     .set({
       status: 'provisioning',
       lastError: null,
+      lastErrorDetail: null,
       // Reset the attempt counter alongside the timestamp — this row is
       // about to be re-tried as a fresh attempt, so the user-visible
       // "attempt N of M" UI on the provisioning screen should restart at 0.
@@ -195,6 +196,7 @@ export async function resetWorkspaceProvisioningRow(
 export async function markWorkspaceFailed(
   workspaceId: string,
   errorCode: string,
+  errorDetail?: string | null,
 ): Promise<void> {
   try {
     await db
@@ -202,6 +204,7 @@ export async function markWorkspaceFailed(
       .set({
         status: 'failed',
         lastError: errorCode,
+        lastErrorDetail: errorDetail ?? null,
       })
       .where(eq(schema.workspaces.id, workspaceId));
   } catch (err) {
