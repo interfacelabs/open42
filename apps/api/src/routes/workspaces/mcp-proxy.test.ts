@@ -20,6 +20,16 @@ function makeRepo(
       ...overrides,
     })),
     setEnabled: vi.fn(async () => {}),
+    listClients: vi.fn(async () => []),
+    createClient: vi.fn(async (input) => ({
+      id: 'stored-client-1',
+      label: input.label,
+      scopes: input.scopes,
+      createdAt: new Date('2026-05-16T12:00:00Z'),
+      lastUsedAt: null,
+      revokedAt: null,
+    })),
+    revokeClient: vi.fn(async () => true),
   } satisfies WorkspaceMcpProxyRepo;
 }
 
@@ -59,6 +69,7 @@ describe('workspace MCP proxy management', () => {
       available: true,
       issuerUrl: PUBLIC_BASE_URL,
       mcpUrl: `${PUBLIC_BASE_URL}/mcp`,
+      clients: [],
     });
   });
 
@@ -100,6 +111,14 @@ describe('workspace MCP proxy management', () => {
 
     expect(res.status).toBe(201);
     expect(res.body).toEqual({
+      client: {
+        id: 'stored-client-1',
+        label: 'Claude Code',
+        scopes: 'read write',
+        createdAt: '2026-05-16T12:00:00.000Z',
+        lastUsedAt: null,
+        revokedAt: null,
+      },
       clientId: 'client-1',
       clientSecret: 'secret-1',
       scope: 'read write',
@@ -118,5 +137,23 @@ describe('workspace MCP proxy management', () => {
       scope: 'read write',
       token_endpoint_auth_method: 'client_secret_post',
     });
+    expect(repo.createClient).toHaveBeenCalledWith({
+      workspaceId: WORKSPACE_ID,
+      createdByUserId: 'user-1',
+      label: 'Claude Code',
+      clientId: 'client-1',
+      scopes: 'read write',
+    });
+  });
+
+  it('revokes a client', async () => {
+    const repo = makeRepo({ gbrainMcpProxyEnabled: true });
+    const res = await request(makeApp({ repo })).delete(
+      `/workspaces/${WORKSPACE_ID}/mcp-proxy/clients/stored-client-1`,
+    );
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ ok: true });
+    expect(repo.revokeClient).toHaveBeenCalledWith(WORKSPACE_ID, 'stored-client-1');
   });
 });

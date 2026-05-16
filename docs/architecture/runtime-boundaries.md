@@ -48,6 +48,12 @@ stable public issuer URL of the form
 `https://ws-<workspace-id-hex>.<domain>`. Open42 still stores and uses the
 private gbrain base URL for internal calls.
 
+Public MCP access is additionally gated by Open42's MCP client registry:
+owner/admin users create a named client through Open42, public `/token` only
+forwards for active registered client ids, and public `/mcp` only forwards
+bearer tokens that were issued through that registered path. Revoking a client
+blocks future token issuance and existing tokens at the Open42 proxy.
+
 ## Tenant To Provider Proxy
 
 Tenant gbrain runtimes do not receive real OpenAI or Anthropic keys. They get a

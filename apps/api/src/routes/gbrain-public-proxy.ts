@@ -1,9 +1,16 @@
 import { Readable } from 'node:stream';
 
-import { and, eq, isNull } from 'drizzle-orm';
+import { and, eq, isNull, sql } from 'drizzle-orm';
 import { Router, type Request, type Response } from 'express';
 
 import { db, schema } from '../db/client.js';
+import {
+  accessTokenExpiry,
+  bearerToken,
+  clientIdFromTokenRequest,
+  hashMcpCredential,
+  tokenFromRevokeRequest,
+} from '../gbrain/mcp-public-auth.js';
 import {
   workspaceIdFromGbrainPublicProxySlug,
   type GbrainPublicProxyEnv,
@@ -32,7 +39,6 @@ const ALLOWED_GBRAIN_PROXY_PATHS = new Set([
   '/mcp',
   '/health',
   '/token',
-  '/authorize',
   '/revoke',
   '/.well-known/oauth-authorization-server',
   '/.well-known/oauth-protected-resource',
@@ -49,8 +55,30 @@ export interface PublicGbrainProxyWorkspace {
   status: string;
 }
 
+export interface PublicGbrainProxyClient {
+  id: string;
+}
+
+export interface PublicGbrainProxyAccessToken {
+  id: string;
+  clientId: string;
+}
+
 export interface PublicGbrainProxyRepo {
   findWorkspace(workspaceId: string): Promise<PublicGbrainProxyWorkspace | null>;
+  findActiveClient(workspaceId: string, clientId: string): Promise<PublicGbrainProxyClient | null>;
+  recordIssuedAccessToken(input: {
+    workspaceId: string;
+    clientId: string;
+    token: string;
+    expiresAt: Date;
+  }): Promise<void>;
+  findActiveAccessToken(
+    workspaceId: string,
+    token: string,
+  ): Promise<PublicGbrainProxyAccessToken | null>;
+  markAccessTokenUsed(tokenId: string, clientId: string): Promise<void>;
+  revokeAccessToken(workspaceId: string, token: string): Promise<void>;
 }
 
 export interface PublicGbrainProxyDeps {
@@ -89,8 +117,35 @@ export function buildPublicGbrainProxyRouter(deps: PublicGbrainProxyDeps = {}) {
         return;
       }
 
+      const baseUrl =
+        workspace.gbrainBaseUrl ?? formatGbrainBaseUrl(workspace.gbrainPrivateAddress!);
+      if (req.path === '/token') {
+        await proxyTokenRequest(req, res, { baseUrl, fetchImpl, repo, workspaceId });
+        return;
+      }
+
+      if (req.path === '/mcp') {
+        const token = bearerToken(req.header('authorization'));
+        const activeToken = token ? await repo.findActiveAccessToken(workspaceId, token) : null;
+        if (!activeToken) {
+          json(res, 401, { error: 'invalid_token' });
+          return;
+        }
+        await repo.markAccessTokenUsed(activeToken.id, activeToken.clientId);
+      }
+
+      if (req.path === '/revoke') {
+        const body = await requestBody(req);
+        const token = tokenFromRevokeRequest(body);
+        if (token) {
+          await repo.revokeAccessToken(workspaceId, token);
+        }
+        await proxyToGbrain(req, res, { baseUrl, fetchImpl, body });
+        return;
+      }
+
       await proxyToGbrain(req, res, {
-        baseUrl: workspace.gbrainBaseUrl ?? formatGbrainBaseUrl(workspace.gbrainPrivateAddress!),
+        baseUrl,
         fetchImpl,
       });
     } catch (err) {
@@ -117,6 +172,94 @@ function createDrizzlePublicGbrainProxyRepo(): PublicGbrainProxyRepo {
         .limit(1);
       return row ?? null;
     },
+    async findActiveClient(workspaceId, clientId) {
+      const [row] = await db
+        .select({ id: schema.workspaceMcpClients.id })
+        .from(schema.workspaceMcpClients)
+        .where(
+          and(
+            eq(schema.workspaceMcpClients.workspaceId, workspaceId),
+            eq(schema.workspaceMcpClients.clientIdHash, hashMcpCredential(clientId)),
+            isNull(schema.workspaceMcpClients.revokedAt),
+          ),
+        )
+        .limit(1);
+      return row ?? null;
+    },
+    async recordIssuedAccessToken(input) {
+      const now = new Date();
+      await db.transaction(async (tx) => {
+        await tx
+          .insert(schema.workspaceMcpAccessTokens)
+          .values({
+            workspaceId: input.workspaceId,
+            clientId: input.clientId,
+            tokenHash: hashMcpCredential(input.token),
+            expiresAt: input.expiresAt,
+          })
+          .onConflictDoUpdate({
+            target: schema.workspaceMcpAccessTokens.tokenHash,
+            set: {
+              clientId: input.clientId,
+              expiresAt: input.expiresAt,
+              lastUsedAt: null,
+              revokedAt: null,
+            },
+          });
+        await tx
+          .update(schema.workspaceMcpClients)
+          .set({ lastUsedAt: now })
+          .where(eq(schema.workspaceMcpClients.id, input.clientId));
+      });
+    },
+    async findActiveAccessToken(workspaceId, token) {
+      const [row] = await db
+        .select({
+          id: schema.workspaceMcpAccessTokens.id,
+          clientId: schema.workspaceMcpAccessTokens.clientId,
+        })
+        .from(schema.workspaceMcpAccessTokens)
+        .innerJoin(
+          schema.workspaceMcpClients,
+          eq(schema.workspaceMcpClients.id, schema.workspaceMcpAccessTokens.clientId),
+        )
+        .where(
+          and(
+            eq(schema.workspaceMcpAccessTokens.workspaceId, workspaceId),
+            eq(schema.workspaceMcpAccessTokens.tokenHash, hashMcpCredential(token)),
+            isNull(schema.workspaceMcpAccessTokens.revokedAt),
+            isNull(schema.workspaceMcpClients.revokedAt),
+            sql`${schema.workspaceMcpAccessTokens.expiresAt} > NOW()`,
+          ),
+        )
+        .limit(1);
+      return row ?? null;
+    },
+    async markAccessTokenUsed(tokenId, clientId) {
+      const now = new Date();
+      await db.transaction(async (tx) => {
+        await tx
+          .update(schema.workspaceMcpAccessTokens)
+          .set({ lastUsedAt: now })
+          .where(eq(schema.workspaceMcpAccessTokens.id, tokenId));
+        await tx
+          .update(schema.workspaceMcpClients)
+          .set({ lastUsedAt: now })
+          .where(eq(schema.workspaceMcpClients.id, clientId));
+      });
+    },
+    async revokeAccessToken(workspaceId, token) {
+      await db
+        .update(schema.workspaceMcpAccessTokens)
+        .set({ revokedAt: new Date() })
+        .where(
+          and(
+            eq(schema.workspaceMcpAccessTokens.workspaceId, workspaceId),
+            eq(schema.workspaceMcpAccessTokens.tokenHash, hashMcpCredential(token)),
+            isNull(schema.workspaceMcpAccessTokens.revokedAt),
+          ),
+        );
+    },
   };
 }
 
@@ -134,11 +277,11 @@ function workspaceIdFromProxyHost(req: Request, env: GbrainPublicProxyEnv): stri
 async function proxyToGbrain(
   req: Request,
   res: Response,
-  options: { baseUrl: string; fetchImpl: Fetch },
+  options: { baseUrl: string; fetchImpl: Fetch; body?: Buffer },
 ): Promise<void> {
   const upstreamUrl = new URL(req.originalUrl, options.baseUrl.replace(/\/+$/, ''));
   const requestHeaders = upstreamRequestHeaders(req);
-  const body = await requestBody(req);
+  const body = options.body ?? (await requestBody(req));
   const upstream = await options.fetchImpl(upstreamUrl, {
     method: req.method,
     headers: requestHeaders,
@@ -166,6 +309,70 @@ async function proxyToGbrain(
   });
 }
 
+async function proxyTokenRequest(
+  req: Request,
+  res: Response,
+  options: {
+    baseUrl: string;
+    fetchImpl: Fetch;
+    repo: PublicGbrainProxyRepo;
+    workspaceId: string;
+  },
+): Promise<void> {
+  const body = await requestBody(req);
+  const clientId = clientIdFromTokenRequest(body);
+  const client = clientId
+    ? await options.repo.findActiveClient(options.workspaceId, clientId)
+    : null;
+  if (!client) {
+    json(res, 401, { error: 'invalid_client' });
+    return;
+  }
+
+  const upstreamUrl = new URL(req.originalUrl, options.baseUrl.replace(/\/+$/, ''));
+  const upstream = await options.fetchImpl(upstreamUrl, {
+    method: req.method,
+    headers: upstreamRequestHeaders(req),
+    body,
+  });
+  const text = await upstream.text();
+  if (upstream.ok) {
+    const accessToken = parseAccessTokenPayload(text);
+    if (accessToken) {
+      await options.repo.recordIssuedAccessToken({
+        workspaceId: options.workspaceId,
+        clientId: client.id,
+        token: accessToken.accessToken,
+        expiresAt: accessTokenExpiry(accessToken.expiresIn),
+      });
+    }
+  }
+  sendTextResponse(res, upstream, text);
+}
+
+function parseAccessTokenPayload(text: string): { accessToken: string; expiresIn: unknown } | null {
+  try {
+    const payload = JSON.parse(text) as Partial<{ access_token: unknown; expires_in: unknown }>;
+    return typeof payload.access_token === 'string'
+      ? { accessToken: payload.access_token, expiresIn: payload.expires_in }
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+function sendTextResponse(res: Response, upstream: globalThis.Response, text: string): void {
+  res.status(upstream.status);
+  upstream.headers.forEach((value, key) => {
+    if (!STRIP_RESPONSE_HEADERS.has(key.toLowerCase())) {
+      res.setHeader(key, value);
+    }
+  });
+  res.setHeader('Cache-Control', 'no-store');
+  res.setHeader('X-Open42-Gbrain-Proxy', '1');
+  res.send(text);
+}
+
 function upstreamRequestHeaders(req: Request): Headers {
   const headers = new Headers();
   for (const [key, rawValue] of Object.entries(req.headers)) {
@@ -182,6 +389,10 @@ function upstreamRequestHeaders(req: Request): Headers {
   headers.set('x-forwarded-host', req.hostname);
   headers.set('x-forwarded-proto', req.protocol);
   return headers;
+}
+
+function json(res: Response, status: number, body: Record<string, unknown>): void {
+  res.status(status).setHeader('Cache-Control', 'no-store').json(body);
 }
 
 function requestBody(req: Request): Promise<Buffer | undefined> {

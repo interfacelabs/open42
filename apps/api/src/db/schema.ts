@@ -355,6 +355,70 @@ export const mcpAuditLog = pgTable(
 );
 
 // =====================================================================
+// workspace_mcp_clients / workspace_mcp_access_tokens
+//
+// Open42-managed registry for public gbrain MCP access. gbrain still issues
+// OAuth clients/tokens, but the public `*.proxy.open42.ai` edge only forwards
+// `/token` for registered active client ids and only forwards `/mcp` for
+// access tokens issued through that edge. Secrets and bearer tokens are never
+// stored plaintext.
+// =====================================================================
+
+export const workspaceMcpClients = pgTable(
+  'workspace_mcp_clients',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    workspaceId: uuid('workspace_id')
+      .notNull()
+      .references(() => workspaces.id, { onDelete: 'cascade' }),
+    createdByUserId: uuid('created_by_user_id').references(() => users.id, {
+      onDelete: 'set null',
+    }),
+    label: text('label').notNull(),
+    clientIdHash: bytea('client_id_hash').notNull(),
+    scopes: text('scopes').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    lastUsedAt: timestamp('last_used_at', { withTimezone: true }),
+    revokedAt: timestamp('revoked_at', { withTimezone: true }),
+  },
+  (t) => ({
+    workspaceClientHashUniq: uniqueIndex('workspace_mcp_clients_workspace_hash_uniq').on(
+      t.workspaceId,
+      t.clientIdHash,
+    ),
+    workspaceCreatedIdx: index('workspace_mcp_clients_workspace_created_idx').on(
+      t.workspaceId,
+      t.createdAt,
+    ),
+  }),
+);
+
+export const workspaceMcpAccessTokens = pgTable(
+  'workspace_mcp_access_tokens',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    workspaceId: uuid('workspace_id')
+      .notNull()
+      .references(() => workspaces.id, { onDelete: 'cascade' }),
+    clientId: uuid('client_id')
+      .notNull()
+      .references(() => workspaceMcpClients.id, { onDelete: 'cascade' }),
+    tokenHash: bytea('token_hash').notNull(),
+    expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    lastUsedAt: timestamp('last_used_at', { withTimezone: true }),
+    revokedAt: timestamp('revoked_at', { withTimezone: true }),
+  },
+  (t) => ({
+    tokenHashUniq: uniqueIndex('workspace_mcp_access_tokens_hash_uniq').on(t.tokenHash),
+    workspaceExpiresIdx: index('workspace_mcp_access_tokens_workspace_expires_idx').on(
+      t.workspaceId,
+      t.expiresAt,
+    ),
+  }),
+);
+
+// =====================================================================
 // skills, skill_versions, skill_revisions (wide Skillify — workspace-
 // scoped, user-mintable skills with versioned bodies and a chat-style
 // revision log).
@@ -528,5 +592,9 @@ export type ConnectionInitState = typeof connectionInitStates.$inferSelect;
 export type NewConnectionInitState = typeof connectionInitStates.$inferInsert;
 export type McpAuditLog = typeof mcpAuditLog.$inferSelect;
 export type NewMcpAuditLog = typeof mcpAuditLog.$inferInsert;
+export type WorkspaceMcpClient = typeof workspaceMcpClients.$inferSelect;
+export type NewWorkspaceMcpClient = typeof workspaceMcpClients.$inferInsert;
+export type WorkspaceMcpAccessToken = typeof workspaceMcpAccessTokens.$inferSelect;
+export type NewWorkspaceMcpAccessToken = typeof workspaceMcpAccessTokens.$inferInsert;
 export type WorkspaceCredential = typeof workspaceCredentials.$inferSelect;
 export type NewWorkspaceCredential = typeof workspaceCredentials.$inferInsert;
