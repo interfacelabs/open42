@@ -15,6 +15,7 @@ const LOGO_BASE = 'https://logos.composio.dev/api';
 
 export const PROVIDER_LOGOS: Record<string, string> = {
   notion: `${LOGO_BASE}/notion`,
+  googledocs: `${LOGO_BASE}/googledocs`,
   googledrive: `${LOGO_BASE}/googledrive`,
   slack: `${LOGO_BASE}/slack`,
   gmail: `${LOGO_BASE}/gmail`,

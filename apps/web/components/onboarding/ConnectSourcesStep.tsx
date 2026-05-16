@@ -10,21 +10,27 @@
  * "no sources yet" case gracefully (chat just has nothing to cite).
  */
 import { useRouter } from 'next/router';
-import {
-  ChangeEvent,
-  ReactNode,
-  useCallback,
-  useRef,
-  useState,
-} from 'react';
+import Link from 'next/link';
+import { ChangeEvent, ReactNode, useCallback, useRef, useState } from 'react';
 import { motion } from 'motion/react';
 import { ArrowRight } from 'lucide-react';
+import useSWR from 'swr';
 
 import { OnboardingMcpPanel } from '@/components/onboarding/OnboardingMcpPanel';
+import { fetcher as apiFetcher, type FetchError } from '@/lib/api';
+import {
+  authProfileIdForRequest,
+  connectorProfilesForService,
+  OPEN42_MANAGED_PROFILE_ID,
+  type ConnectorAuthProfile,
+  type ConnectorAuthProfilesPayload,
+  profileModeLabel,
+} from '@/lib/connector-auth-profiles';
 import { csrfHeaders } from '@/lib/csrf';
 import { EASE_ENTER } from '@/lib/motion';
 import type { WorkspaceRuntime } from '@/lib/onboarding/derive';
 import { providerLogo } from '@/lib/provider-logos';
+import { cn } from '@/lib/utils';
 
 const COMING_SOON_SOURCES: Array<{
   name: string;
@@ -32,7 +38,7 @@ const COMING_SOON_SOURCES: Array<{
   monogram: string;
   eta: string;
 }> = [
-  { name: 'Google Drive', slug: 'googledrive', monogram: 'D', eta: 'Q3' },
+  { name: 'Google Docs', slug: 'googledocs', monogram: 'D', eta: 'Q3' },
   { name: 'Slack', slug: 'slack', monogram: 'S', eta: 'Q3' },
   { name: 'Gmail', slug: 'gmail', monogram: 'G', eta: 'Q3' },
   { name: 'Confluence', slug: 'confluence', monogram: 'C', eta: 'Q4' },
@@ -41,6 +47,13 @@ const COMING_SOON_SOURCES: Array<{
   { name: 'Box / Dropbox', slug: 'dropbox', monogram: 'B', eta: 'Q4' },
   { name: 'Markdown / files', slug: null, monogram: 'M', eta: 'soon' },
 ];
+
+const FALLBACK_MANAGED_PROFILE: ConnectorAuthProfile = {
+  id: OPEN42_MANAGED_PROFILE_ID,
+  mode: 'open42_managed',
+  label: 'Open42 managed Composio',
+  services: [{ serviceId: 'notion', configured: true, enabled: true }],
+};
 
 interface ConnectSourcesStepProps {
   runtime: WorkspaceRuntime;
@@ -52,7 +65,16 @@ export function ConnectSourcesStep({ runtime, workspaceId, mutate }: ConnectSour
   const router = useRouter();
   const [busy, setBusy] = useState<'notion' | 'zip' | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [selectedProfileId, setSelectedProfileId] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const profilesUrl = workspaceId
+    ? `/api/workspaces/${encodeURIComponent(workspaceId)}/connector-auth-profiles`
+    : null;
+  const { data: profilesData, error: profilesError } = useSWR<ConnectorAuthProfilesPayload>(
+    profilesUrl,
+    apiFetcher,
+    { shouldRetryOnError: false },
+  );
 
   // The provisioning step gates entry on runtime===ready, but we still defend
   // here in case of a race (user deep-links to ?step=connect before runtime
@@ -65,16 +87,32 @@ export function ConnectSourcesStep({ runtime, workspaceId, mutate }: ConnectSour
       ? 'Brain runtime hasn\u2019t finished provisioning. Go back and retry before connecting a source.'
       : 'Still spinning up your brain runtime. We\u2019ll unlock these in a moment.'
     : null;
+  const profilesForbidden = (profilesError as FetchError | undefined)?.status === 403;
+  const profilesUnavailable = Boolean(profilesError && !profilesForbidden);
+  const notionProfiles = profilesData?.profiles
+    ? connectorProfilesForService(profilesData.profiles, 'notion')
+    : profilesError
+      ? profilesForbidden
+        ? [FALLBACK_MANAGED_PROFILE]
+        : []
+      : [FALLBACK_MANAGED_PROFILE];
+  const selectedProfile =
+    notionProfiles.find((profile) => profile.id === selectedProfileId) ?? notionProfiles[0] ?? null;
+  const liveProfileReady = notionProfiles.length > 0;
 
   const connectNotion = useCallback(async () => {
-    if (busy || blocked || !workspaceId) return;
+    if (busy || blocked || !workspaceId || !liveProfileReady) return;
     setBusy('notion');
     setError(null);
     try {
       const response = await fetch(`/api/workspaces/${workspaceId}/connections/init`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', ...csrfHeaders() },
-        body: JSON.stringify({ kind: 'notion-composio' }),
+        body: JSON.stringify({
+          kind: 'notion-composio',
+          serviceId: 'notion',
+          authProfileId: authProfileIdForRequest(selectedProfile?.id),
+        }),
       });
       const payload = await response.json().catch(() => ({}));
       if (!response.ok) {
@@ -95,7 +133,7 @@ export function ConnectSourcesStep({ runtime, workspaceId, mutate }: ConnectSour
       setError('network_error');
       setBusy(null);
     }
-  }, [busy, blocked, mutate, router, workspaceId]);
+  }, [busy, blocked, liveProfileReady, mutate, router, selectedProfile, workspaceId]);
 
   const onFilePick = useCallback(() => {
     if (busy || blocked) return;
@@ -151,22 +189,19 @@ export function ConnectSourcesStep({ runtime, workspaceId, mutate }: ConnectSour
     >
       <h1 className="text-[38px] font-medium leading-[1.06] tracking-[-0.025em] text-text-primary">
         Your brain{' '}
-        <em className="font-newsreader font-normal italic text-text-primary">
-          is empty.
-        </em>
+        <em className="font-newsreader font-normal italic text-text-primary">is empty.</em>
       </h1>
       <p className="mt-3.5 max-w-[42ch] text-sm leading-body text-text-body">
-        Drop in a source &mdash; we&rsquo;ll read it, index it, and cite it for every
-        answer it produces. You can add more later.
+        Drop in a source &mdash; we&rsquo;ll read it, index it, and cite it for every answer it
+        produces. You can add more later.
       </p>
 
       <div className="mt-8 grid max-w-[520px] grid-cols-1 gap-3.5 sm:grid-cols-2">
         <SourceCard
           name="Connect Notion"
-          sub="Live sync via OAuth. We'll keep your workspace fresh as pages change."
-          tag={blocked ? 'WAITING ON RUNTIME' : 'RECOMMENDED'}
-          tagAccent
-          disabled={busy !== null || blocked}
+          sub={notionCardSubtitle(selectedProfile, profilesUnavailable)}
+          tag={blocked ? 'WAITING ON RUNTIME' : liveProfileReady ? 'RECOMMENDED' : 'SETUP NEEDED'}
+          disabled={busy !== null || blocked || !liveProfileReady}
           onClick={() => void connectNotion()}
           icon={<ProviderLogo slug="notion" name="Notion" />}
           loading={busy === 'notion'}
@@ -181,6 +216,13 @@ export function ConnectSourcesStep({ runtime, workspaceId, mutate }: ConnectSour
           loading={busy === 'zip'}
         />
       </div>
+
+      <ConnectionProfileChooser
+        profiles={notionProfiles}
+        selectedProfileId={selectedProfile?.id ?? null}
+        profilesUnavailable={profilesUnavailable}
+        onSelect={setSelectedProfileId}
+      />
 
       <ComingSoonSources />
 
@@ -279,18 +321,119 @@ function ComingSoonSources() {
   );
 }
 
+function ConnectionProfileChooser({
+  profiles,
+  selectedProfileId,
+  profilesUnavailable,
+  onSelect,
+}: {
+  profiles: ConnectorAuthProfile[];
+  selectedProfileId: string | null;
+  profilesUnavailable: boolean;
+  onSelect: (profileId: string) => void;
+}) {
+  if (profilesUnavailable) {
+    return (
+      <div className="mt-4 max-w-[520px] rounded-xl border border-border-soft bg-white px-4 py-3">
+        <p className="text-[13px] font-medium text-text-primary">
+          Live Notion profiles could not load.
+        </p>
+        <p className="mt-0.5 text-[12px] leading-[1.55] text-text-subtle">
+          Upload a zip now, or configure Composio from Settings once the workspace is open.
+        </p>
+      </div>
+    );
+  }
+
+  if (profiles.length === 0) {
+    return (
+      <div className="mt-4 max-w-[520px] rounded-xl border border-border-soft bg-white px-4 py-3">
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <p className="text-[13px] font-medium text-text-primary">
+              Live Notion needs a Composio profile.
+            </p>
+            <p className="mt-0.5 text-[12px] leading-[1.55] text-text-subtle">
+              Add Open42 managed Composio or your own Composio account in Settings.
+            </p>
+          </div>
+          <Link
+            href="/settings/connections/add"
+            className="text-[12.5px] font-medium text-blue hover:underline"
+          >
+            Open Settings
+          </Link>
+        </div>
+      </div>
+    );
+  }
+
+  if (profiles.length === 1) {
+    const profile = profiles[0]!;
+    if (profile.id === OPEN42_MANAGED_PROFILE_ID) return null;
+    return (
+      <div className="mt-4 max-w-[520px] rounded-xl border border-border-soft bg-white px-4 py-3">
+        <p className="text-[13px] font-medium text-text-primary">Using {profile.label}</p>
+        <p className="mt-0.5 font-mono text-[10px] uppercase tracking-[0.06em] text-text-faint">
+          {profileModeLabel(profile.mode)} · Notion ready
+        </p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="mt-4 max-w-[520px] rounded-xl border border-border-soft bg-white px-4 py-3">
+      <p className="text-[13px] font-medium text-text-primary">Connection profile</p>
+      <div className="mt-2 grid gap-2 sm:grid-cols-2">
+        {profiles.map((profile) => {
+          const selected = selectedProfileId === profile.id;
+          return (
+            <button
+              key={profile.id}
+              type="button"
+              onClick={() => onSelect(profile.id)}
+              className={cn(
+                'rounded-lg border px-3 py-2 text-left transition-colors duration-140',
+                selected
+                  ? 'border-blue-line bg-blue-soft/40'
+                  : 'border-border-soft hover:border-blue-line',
+              )}
+            >
+              <span className="block truncate text-[12.5px] font-medium text-text-primary">
+                {profile.label}
+              </span>
+              <span className="mt-0.5 block font-mono text-[10px] uppercase tracking-[0.06em] text-text-faint">
+                {profileModeLabel(profile.mode)}
+              </span>
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function notionCardSubtitle(
+  profile: ConnectorAuthProfile | null,
+  profilesUnavailable: boolean,
+): string {
+  if (profilesUnavailable) {
+    return 'Live sync is temporarily unavailable. Zip import still works.';
+  }
+  if (!profile) {
+    return 'Set up Composio first, or upload a Notion export zip.';
+  }
+  if (profile.id === OPEN42_MANAGED_PROFILE_ID) {
+    return "Live sync via OAuth. We'll keep your workspace fresh as pages change.";
+  }
+  return `Live sync through ${profile.label}. We'll keep pages fresh as they change.`;
+}
+
 function ProviderLogo({ slug, name }: { slug: string; name: string }) {
   const src = providerLogo(slug);
   if (!src) return null;
   return (
-    <img
-      src={src}
-      alt={`${name} logo`}
-      width={16}
-      height={16}
-      className="h-4 w-4"
-      loading="lazy"
-    />
+    <img src={src} alt={`${name} logo`} width={16} height={16} className="h-4 w-4" loading="lazy" />
   );
 }
 
@@ -298,7 +441,6 @@ function SourceCard({
   name,
   sub,
   tag,
-  tagAccent,
   icon,
   onClick,
   disabled,
@@ -307,7 +449,6 @@ function SourceCard({
   name: string;
   sub: string;
   tag: string;
-  tagAccent?: boolean;
   icon: ReactNode;
   onClick: () => void;
   disabled?: boolean;
@@ -318,7 +459,7 @@ function SourceCard({
       type="button"
       onClick={onClick}
       disabled={disabled}
-      className="group flex min-h-[132px] flex-col justify-between rounded-xl border border-[#e5e5e5] bg-white p-4 text-left transition-[border-color,box-shadow,transform] duration-150 hover:border-accent hover:shadow-[0_4px_14px_rgba(29,77,255,0.08)] active:translate-y-px disabled:cursor-not-allowed disabled:opacity-60"
+      className="group flex min-h-[132px] flex-col justify-between rounded-xl border border-border-soft bg-white p-4 text-left transition-[border-color,box-shadow,transform] duration-150 hover:border-blue-line hover:shadow-card active:translate-y-px disabled:cursor-not-allowed disabled:opacity-60"
     >
       <div>
         <span className="flex h-7 w-7 items-center justify-center rounded-lg border border-border bg-white">
@@ -327,7 +468,7 @@ function SourceCard({
         <p className="mt-3.5 text-sm font-medium text-text-primary">{name}</p>
         <p className="mt-1 text-xs leading-[1.5] text-text-subtle">{sub}</p>
       </div>
-      <p className={`mt-2.5 font-mono text-[10px] tracking-[0.04em] ${tagAccent ? 'text-accent' : 'text-accent'}`}>
+      <p className="mt-2.5 font-mono text-[10px] tracking-[0.04em] text-accent">
         {loading ? 'WORKING\u2026' : tag}
       </p>
     </button>
