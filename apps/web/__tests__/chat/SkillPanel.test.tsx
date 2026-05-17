@@ -127,6 +127,50 @@ describe('SkillPanel', () => {
     expect(screen.getByRole('heading', { name: /partial refunds/i })).toBeInTheDocument();
   });
 
+  it('opens the export dialog before saving the zip when Download is clicked', async () => {
+    let resolveExport!: (response: Response) => void;
+    const exportResponse = new Promise<Response>((resolve) => {
+      resolveExport = resolve;
+    });
+    const fetchImpl = vi.fn(() => exportResponse);
+    const mutate = vi.fn(async () => ({
+      ...FIXTURE_DRAFT,
+      explainer: 'Use this skill when answering refund-policy questions.',
+    }));
+    const anchorClick = HTMLAnchorElement.prototype.click as unknown as ReturnType<typeof vi.fn>;
+    mockSWR.mockReturnValue({
+      data: { draft: FIXTURE_DRAFT },
+      error: null,
+      isLoading: false,
+      mutate,
+    });
+
+    render(
+      <SkillPanel
+        draftId="refund-policy"
+        onClose={() => {}}
+        fetchImpl={fetchImpl as unknown as typeof fetch}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: /^download$/i }));
+
+    await waitFor(() =>
+      expect(screen.getByTestId('export-status')).toHaveTextContent('signing_in_progress'),
+    );
+    expect(fetchImpl).toHaveBeenCalledWith('/api/workspaces/ws-1/skills/refund-policy', {
+      method: 'POST',
+      headers: expect.any(Object),
+    });
+    expect(anchorClick).not.toHaveBeenCalled();
+
+    resolveExport(new Response('zip', { status: 200 }));
+
+    await waitFor(() => expect(anchorClick).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(screen.getByTestId('export-status')).toHaveTextContent('signed'));
+    expect(screen.getByText('Use this skill when answering refund-policy questions.')).toBeInTheDocument();
+  });
+
   it('shows stale changelog copy with a Re-export CTA', () => {
     const staleDraft = {
       ...FIXTURE_DRAFT,
