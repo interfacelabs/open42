@@ -525,6 +525,47 @@ describeDb('skills routes', () => {
       });
     });
 
+    it('stores a null explainer fallback and still signs when explainer generation fails', async () => {
+      mocks.generateSkillExplainer.mockRejectedValueOnce(new Error('explainer_down'));
+      const { workspaceId, sessionId } = await makeOwnerWorkspace('test-agent');
+      const minted = await request(buildApp())
+        .post(skillsPath(workspaceId))
+        .set('User-Agent', 'test-agent')
+        .set('Cookie', `open42_session=${sessionId}`)
+        .send(mintPayload('Draft'));
+      expect(minted.status).toBe(201);
+      const skillId = minted.body.draft.id as string;
+
+      const res = await request(buildApp())
+        .post(skillPath(workspaceId, skillId))
+        .set('User-Agent', 'test-agent')
+        .set('Cookie', `open42_session=${sessionId}`)
+        .buffer(true)
+        .parse(binaryParser);
+
+      expect(res.status).toBe(200);
+      const zip = new AdmZip(zipResponseBuffer(res));
+      const skillMd = zip.readAsText('sample-skill/SKILL.md');
+      const signature = zip.readAsText('sample-skill/SKILL.md.sig').trim();
+      expect(skillMd).not.toContain('explainer:');
+
+      const [version] = await dbMod.db
+        .select()
+        .from(dbMod.schema.skillVersions)
+        .where(eq(dbMod.schema.skillVersions.skillId, skillId));
+      expect(version?.frontmatter).toMatchObject({ explainer: null });
+
+      const keyRes = await request(buildApp()).get(`/workspaces/${workspaceId}/signing-key.pub`);
+      expect(keyRes.status).toBe(200);
+      await expect(
+        verifyExportedSkillSignatureWithWebCrypto({
+          markdown: skillMd,
+          signatureBase64: signature,
+          publicKeyPem: keyRes.text,
+        }),
+      ).resolves.toBe(true);
+    });
+
     it('creates a refreshed version before exporting a stale skill', async () => {
       const { workspaceId, sessionId } = await makeOwnerWorkspace('test-agent');
       const minted = await request(buildApp())
