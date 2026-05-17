@@ -187,6 +187,36 @@ describeDb('chat skill mode', () => {
     expect(res.text).toContain('"type":"done"');
   });
 
+  it('appends a fallback citation marker when a provider omits one', async () => {
+    const { workspaceId, sessionId } = await makeOwnerWorkspace('chat-agent');
+    mocks.resolveLlmKey.mockResolvedValue({
+      apiKey: 'sk-ant-real',
+      source: 'tenant',
+      model: null,
+    });
+    mocks.createChatProvider.mockImplementation((provider: 'anthropic' | 'openai') => ({
+      provider,
+      async *sendStreamingChat() {
+        yield { text: 'The provided context does not contain that policy.' };
+      },
+    }));
+
+    const res = await request(buildApp())
+      .post('/api/chat')
+      .set('User-Agent', 'chat-agent')
+      .set('Cookie', `open42_session=${sessionId}`)
+      .send({
+        query: 'What is the office dog policy?',
+        messages: [],
+        workspace_id: workspaceId,
+      });
+
+    expect(res.status).toBe(200);
+    expect(res.text).toContain('The provided context does not contain that policy.');
+    expect(res.text).toContain('"text":" [1]"');
+    expect(res.text).toContain('"type":"done"');
+  });
+
   it('rejects invalid prior message roles before querying gbrain', async () => {
     const { workspaceId, sessionId } = await makeOwnerWorkspace('chat-agent');
 
