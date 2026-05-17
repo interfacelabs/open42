@@ -11,6 +11,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 
 import '../../env.js';
 import { requireMembership as realRequireMembership } from '../../middleware/require-membership.js';
+import { resetShareLinkRateLimitForTest } from '../../skills/share-link.js';
 
 /**
  * Route-level coverage for the wide-Skillify endpoints. DB-backed: skipped
@@ -117,6 +118,7 @@ describeDb('skills routes', () => {
   });
 
   beforeEach(() => {
+    resetShareLinkRateLimitForTest();
     mocks.resolveLlmKey.mockReset();
     mocks.generateSkill.mockReset();
     mocks.generateSkillExplainer.mockReset();
@@ -143,6 +145,7 @@ describeDb('skills routes', () => {
   });
 
   afterEach(async () => {
+    resetShareLinkRateLimitForTest();
     for (const workspaceId of workspaceIds.splice(0)) {
       await dbMod.db
         .delete(dbMod.schema.skills)
@@ -641,6 +644,34 @@ describeDb('skills routes', () => {
         .where(eq(dbMod.schema.skillShareLinks.id, shareRows[0]!.id));
       const expired = await request(buildApp()).get(new URL(share.body.url).pathname);
       expect(expired.status).toBe(404);
+    });
+
+    it('rate-limits share link minting after 10 mints per workspace minute', async () => {
+      const { workspaceId, sessionId } = await makeOwnerWorkspace('test-agent');
+      const minted = await request(buildApp())
+        .post(skillsPath(workspaceId))
+        .set('User-Agent', 'test-agent')
+        .set('Cookie', `open42_session=${sessionId}`)
+        .send(mintPayload('Draft'));
+      expect(minted.status).toBe(201);
+      const skillId = minted.body.draft.id as string;
+
+      for (let i = 0; i < 10; i += 1) {
+        const share = await request(buildApp())
+          .post(`${skillPath(workspaceId, skillId)}/share`)
+          .set('User-Agent', 'test-agent')
+          .set('Cookie', `open42_session=${sessionId}`);
+        expect(share.status).toBe(200);
+      }
+
+      const limited = await request(buildApp())
+        .post(`${skillPath(workspaceId, skillId)}/share`)
+        .set('User-Agent', 'test-agent')
+        .set('Cookie', `open42_session=${sessionId}`);
+
+      expect(limited.status).toBe(429);
+      expect(limited.headers['retry-after']).toEqual(expect.any(String));
+      expect(limited.body).toEqual({ error: 'share_link_rate_limited' });
     });
 
     it('creates a refreshed version before minting a share link for a stale skill', async () => {
