@@ -19,4 +19,8 @@ export interface SkillDraftResponse {
     text: string;
     cites?: string;
   }>;
+  staleness?: {
+    changelog: string;
+    detectedAt: string;
+  } | null;
 }
