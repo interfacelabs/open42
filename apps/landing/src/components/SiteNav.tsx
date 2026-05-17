@@ -1,7 +1,6 @@
 import Link from 'next/link';
-import { NAV_LINKS } from '@/lib/content';
+import { NAV_LINKS, OPEN42_REPO_URL } from '@/lib/content';
 import { Wordmark } from '@/components/Wordmark';
-import { ComingSoonLink } from '@/components/ComingSoonLink';
 
 export function SiteNav() {
   return (
@@ -22,9 +21,17 @@ export function SiteNav() {
               </li>
             ))}
             <li>
-              <ComingSoonLink className="font-mono text-[14px] text-ink-soft transition-colors hover:text-ink">
-                GitHub
-              </ComingSoonLink>
+              <Link
+                href={OPEN42_REPO_URL}
+                target="_blank"
+                rel="noreferrer"
+                className="inline-flex items-center gap-1.5 font-mono text-[14px] text-ink-soft transition-colors hover:text-ink"
+              >
+                <span>GitHub</span>
+                <span className="rounded-full border border-line bg-surface px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-wider text-muted-ink">
+                  Beta
+                </span>
+              </Link>
             </li>
           </ul>
 

@@ -1,5 +1,11 @@
 # Open42
 
+> [!WARNING]
+> Open42 is still a work in progress and is currently in beta. Some
+> functionality may be incomplete, unstable, or broken while the project is
+> being built. If you run into an issue or need help, email
+> [support@open42.ai](mailto:support@open42.ai).
+
 Open42 is a self-hostable Company Brain on top of
 [gbrain](https://github.com/garrytan/gbrain). It owns the product shell:
 auth, tenancy, chat, connectors, skills, metadata, and deployment. gbrain is an
@@ -15,8 +21,11 @@ Community self-host is the default edition. Cloud-only code lives in
 | `community` | Yes | Single workspace, BYOK, optional Composio, no Stripe or Fly runtime code |
 | `cloud` | No | Hosted Open42 billing, Stripe webhooks, Fly tenant provisioning |
 
-The root repo is MIT licensed. `packages/cloud/` has its own commercial,
-source-available license.
+The root repo is source-available under the Open42 Community License: you can
+self-host Open42, including in production for your own organization, but you
+cannot offer Open42 or substantially similar Open42 functionality as a hosted or
+managed cloud service to third parties without a commercial license.
+`packages/cloud/` has its own commercial, source-available license.
 
 ## Repo Layout
 

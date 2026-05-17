@@ -24,6 +24,9 @@ import { colors, fonts } from '@/utils/theme';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'SkillDetail'>;
 
+const MAX_RENDERED_MARKDOWN_CHARS = 24_000;
+const MAX_RENDERED_MARKDOWN_LINES = 600;
+
 export function SkillDetailScreen({ route, navigation }: Props) {
   const workspaceId = useAuthStore((state) => state.currentWorkspaceId);
   const workspaceName = useAuthStore((state) => state.current?.workspace?.name ?? null);
@@ -45,6 +48,7 @@ export function SkillDetailScreen({ route, navigation }: Props) {
     apiFetcher
   );
   const draft = data?.draft;
+  const markdownPreview = useMemo(() => (draft ? boundedMarkdownBody(draft.body) : null), [draft]);
   const receipt = useMemo(() => {
     if (!draft) return null;
     return `Signed by ${workspaceName ?? 'Workspace'} · ${draft.cites.length} sources · ${
@@ -154,7 +158,16 @@ export function SkillDetailScreen({ route, navigation }: Props) {
               ))}
             </View>
           </Card>
-          <Markdown style={markdownStyles}>{draft.body}</Markdown>
+          {markdownPreview?.truncated ? (
+            <Card style={{ marginBottom: 14 }}>
+              <StatusBadge label="preview" tone="warning" />
+              <AppText variant="muted" tone="body" style={{ marginTop: 8 }}>
+                This skill body is large, so mobile is showing a bounded preview. Open the signed
+                bundle to inspect the full artifact.
+              </AppText>
+            </Card>
+          ) : null}
+          <Markdown style={markdownStyles}>{markdownPreview?.body ?? ''}</Markdown>
         </>
       ) : (
         <Card>
@@ -284,6 +297,21 @@ function InstallInstructions({
       </Button>
     </View>
   );
+}
+
+function boundedMarkdownBody(value: string): { body: string; truncated: boolean } {
+  const cappedByChars = value.slice(0, MAX_RENDERED_MARKDOWN_CHARS);
+  const lines = cappedByChars.split('\n');
+  const cappedByLines = lines.slice(0, MAX_RENDERED_MARKDOWN_LINES).join('\n').trimEnd();
+  const truncated =
+    value.length > MAX_RENDERED_MARKDOWN_CHARS || lines.length > MAX_RENDERED_MARKDOWN_LINES;
+
+  if (!truncated) return { body: value, truncated: false };
+
+  return {
+    body: `${cappedByLines}\n\n_Additional content hidden on mobile to keep the preview responsive._`,
+    truncated: true,
+  };
 }
 
 const markdownStyles = {

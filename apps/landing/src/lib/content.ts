@@ -178,7 +178,7 @@ export const GBRAIN = {
   ],
   card: {
     repo: 'garrytan/gbrain',
-    license: 'MIT · open source',
+    license: 'gbrain MIT · open source',
     tagline: 'Your AI agent is smart but forgetful. gbrain gives it a brain.',
     facts: [
       { label: 'Author', value: 'Garry Tan · President & CEO, Y Combinator' },
@@ -254,13 +254,15 @@ export const FAQ = {
   ],
 };
 
+export const OPEN42_REPO_URL = 'https://github.com/interfacelabs/open42';
+
 export const CTA = {
   heading: 'Give your AI the company memory it keeps pretending to have.',
   subhead:
     "Open42 Cloud is in private beta. Request access and we'll help you set up the first private company brain.",
   secondary: {
     label: 'GitHub',
-    href: 'https://github.com/interfacelabs/open42',
+    href: OPEN42_REPO_URL,
   },
 };
 
@@ -279,7 +281,7 @@ export const FOOTER = {
     {
       title: 'Source',
       links: [
-        { label: 'GitHub', href: 'https://github.com/interfacelabs/open42' },
+        { label: 'GitHub', href: OPEN42_REPO_URL },
         { label: 'Docs', href: '#docs' },
         { label: 'Status', href: '#status' },
         { label: 'License', href: '#license' },

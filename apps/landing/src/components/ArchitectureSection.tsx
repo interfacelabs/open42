@@ -126,7 +126,7 @@ function GbrainCallout() {
           <span className="text-ink">P@5 49.1</span> — beats vector-only RAG by
           +31
         </span>
-        <span>MIT · 34 skills · MCP with OAuth 2.1</span>
+        <span>gbrain MIT · 34 skills · MCP with OAuth 2.1</span>
         <Link
           href={GBRAIN.card.cta.href}
           className="mt-1 inline-flex items-center gap-1.5 self-start text-ink transition-opacity hover:opacity-70 md:self-end"

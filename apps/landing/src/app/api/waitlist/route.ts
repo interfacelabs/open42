@@ -23,11 +23,11 @@ type WaitlistBody = {
 const rateLimitBuckets = new Map<string, RateLimitBucket>();
 
 export async function POST(request: NextRequest) {
-  const rateLimit = checkRateLimit(getClientKey(request));
-  if (!rateLimit.ok) {
+  const clientRateLimit = checkRateLimit(`client:${getClientKey(request)}`);
+  if (!clientRateLimit.ok) {
     return NextResponse.json(
       { error: 'too_many_requests' },
-      { status: 429, headers: { 'Retry-After': String(rateLimit.retryAfterSeconds) } },
+      { status: 429, headers: { 'Retry-After': String(clientRateLimit.retryAfterSeconds) } },
     );
   }
 
@@ -41,6 +41,13 @@ export async function POST(request: NextRequest) {
   const email = normalizeEmail(body.email);
   if (!email) {
     return NextResponse.json({ error: 'email_invalid' }, { status: 400 });
+  }
+  const emailRateLimit = checkRateLimit(`email:${email}`);
+  if (!emailRateLimit.ok) {
+    return NextResponse.json(
+      { error: 'too_many_requests' },
+      { status: 429, headers: { 'Retry-After': String(emailRateLimit.retryAfterSeconds) } },
+    );
   }
 
   const apiKey = process.env.RESEND_API_KEY;
@@ -75,13 +82,25 @@ function normalizeSource(value: unknown): string {
 }
 
 function getClientKey(request: NextRequest): string {
-  const forwardedFor = request.headers.get('x-forwarded-for')?.split(',')[0]?.trim();
-  return (
-    forwardedFor ||
-    request.headers.get('x-real-ip') ||
-    request.headers.get('cf-connecting-ip') ||
-    'unknown'
-  );
+  const trustedIp = firstHeader(request, ['cf-connecting-ip', 'true-client-ip', 'x-real-ip']);
+  if (trustedIp) return `ip:${trustedIp}`;
+
+  const forwardedFor = request.headers
+    .get('x-forwarded-for')
+    ?.split(',')
+    .map((value) => value.trim())
+    .find(Boolean);
+  if (forwardedFor) return `xff:${forwardedFor}`;
+
+  return 'unknown';
+}
+
+function firstHeader(request: NextRequest, names: string[]): string | null {
+  for (const name of names) {
+    const value = request.headers.get(name)?.trim();
+    if (value) return value;
+  }
+  return null;
 }
 
 function checkRateLimit(key: string): { ok: true } | { ok: false; retryAfterSeconds: number } {

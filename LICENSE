@@ -1,0 +1,71 @@
+Open42 Community License
+Version 1.0
+
+Copyright (c) Open42
+
+This license governs use of the Open42 software in this repository, except for
+files or directories that contain their own license notice. In particular,
+packages/cloud/ is governed by its own license.
+
+By using, copying, modifying, or distributing the Software, you agree to this
+license.
+
+1. License Grant
+
+Subject to this license, Open42 grants you a non-exclusive, royalty-free,
+worldwide license to use, copy, modify, create derivative works of, distribute,
+and make available the Software for:
+
+- personal use;
+- internal business use;
+- self-hosted production use for your own organization; and
+- professional services work where you install, configure, maintain, or operate
+  a dedicated deployment for one customer, provided that customer is the only
+  end user of that deployment.
+
+2. Hosted Service Restriction
+
+You may not provide the Software, a modified version of the Software, or any
+service that exposes a substantial part of the Software's functionality to third
+parties as a hosted, managed, SaaS, PaaS, service bureau, outsourcing, or cloud
+service without a separate commercial license from Open42.
+
+For clarity, this restriction does not prevent you from running Open42 on cloud
+infrastructure for your own permitted self-hosted use.
+
+3. Additional Restrictions
+
+You may not:
+
+- remove or obscure copyright, license, or other proprietary notices;
+- use Open42 trademarks, logos, or brand names except to describe the Software
+  accurately and in good faith;
+- misrepresent modified versions as official Open42 releases; or
+- circumvent license keys, feature flags, rate limits, or other technical
+  controls included with the Software.
+
+4. Contributions
+
+Unless you state otherwise in writing, any contribution you submit to Open42 is
+licensed under this license and may also be used by Open42 under any other
+license.
+
+5. Third-Party Software
+
+Third-party software, dependencies, and generated notices are governed by their
+own license terms. This license does not change those terms.
+
+6. Termination
+
+If you violate this license, your rights under it terminate automatically. If
+you cure the violation within 30 days after becoming aware of it, your rights
+are reinstated. Repeated or intentional violations are not automatically
+reinstated.
+
+7. Disclaimer
+
+THE SOFTWARE IS PROVIDED "AS IS" AND WITHOUT WARRANTIES OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR
+PURPOSE, TITLE, AND NON-INFRINGEMENT. OPEN42 WILL NOT BE LIABLE FOR ANY DAMAGES
+ARISING OUT OF OR RELATED TO THE SOFTWARE OR THIS LICENSE, TO THE MAXIMUM
+EXTENT PERMITTED BY LAW.

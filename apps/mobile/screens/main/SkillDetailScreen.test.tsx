@@ -22,6 +22,10 @@ const skillsState = {
   }),
 };
 
+const swrState = vi.hoisted(() => ({
+  draftBody: '# Refund policy',
+}));
+
 vi.mock('@/store/auth', () => {
   const useAuthStore = Object.assign(
     (selector: (state: typeof authState) => unknown) => selector(authState),
@@ -43,7 +47,7 @@ vi.mock('swr', () => ({
         id: 'skill-1',
         name: 'refund-policy',
         version: '1.0.0',
-        body: '# Refund policy',
+        body: swrState.draftBody,
         cites: [{ index: 1, slug: 'refund-policy' }],
         revisions: [],
         staleness: null,
@@ -67,6 +71,7 @@ vi.mock('@/utils/api', async () => {
 beforeEach(() => {
   vi.clearAllMocks();
   vi.useRealTimers();
+  swrState.draftBody = '# Refund policy';
   skillsState.shareLinks = {};
   vi.spyOn(Share, 'share').mockResolvedValue({ action: Share.sharedAction });
   useAuthStore.setState({
@@ -92,6 +97,25 @@ beforeEach(() => {
       providerKeys: { anthropicChat: true, openaiEmbed: true },
     },
   });
+});
+
+it('renders a bounded preview for large skill markdown bodies', () => {
+  swrState.draftBody = `${'A'.repeat(25_000)}\nSHOULD_NOT_RENDER`;
+  const tree = render(
+    <SkillDetailScreen
+      navigation={{ navigate: vi.fn(), goBack: vi.fn() } as any}
+      route={{
+        key: 'SkillDetail',
+        name: 'SkillDetail',
+        params: { skillId: 'skill-1', skillName: 'refund-policy' },
+      }}
+    />
+  );
+  const content = textContent(tree.root);
+
+  expect(content).toContain('showing a bounded preview');
+  expect(content).toContain('Additional content hidden on mobile');
+  expect(content).not.toContain('SHOULD_NOT_RENDER');
 });
 
 afterEach(() => {

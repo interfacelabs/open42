@@ -1,10 +1,7 @@
-import Link from "next/link";
-import { FOOTER } from "@/lib/content";
-import { Wordmark } from "@/components/Wordmark";
-import { XSocial, LinkedInIcon } from "@/components/icons";
-import { ComingSoonLink } from "@/components/ComingSoonLink";
-
-const OPEN42_REPO_URL = "https://github.com/interfacelabs/open42";
+import Link from 'next/link';
+import { FOOTER, OPEN42_REPO_URL } from '@/lib/content';
+import { Wordmark } from '@/components/Wordmark';
+import { XSocial, LinkedInIcon } from '@/components/icons';
 
 export function SiteFooter() {
   return (
@@ -17,12 +14,18 @@ export function SiteFooter() {
               {FOOTER.tagline}
             </p>
             <div className="mt-6 flex items-center gap-4 text-ink">
-              <ComingSoonLink
-                ariaLabel="GitHub"
-                className="font-mono text-[13px] text-ink-soft transition-opacity hover:opacity-70"
+              <Link
+                href={OPEN42_REPO_URL}
+                target="_blank"
+                rel="noreferrer"
+                aria-label="GitHub repository"
+                className="inline-flex items-center gap-1.5 font-mono text-[13px] text-ink-soft transition-opacity hover:opacity-70"
               >
-                GitHub
-              </ComingSoonLink>
+                <span>GitHub</span>
+                <span className="rounded-full border border-line bg-surface px-1.5 py-0.5 font-mono text-[9px] uppercase tracking-wider text-muted-ink">
+                  Beta
+                </span>
+              </Link>
               <Link
                 href="#x"
                 aria-label="X (Twitter)"
@@ -49,9 +52,17 @@ export function SiteFooter() {
                 {col.links.map((link) => (
                   <li key={link.label}>
                     {link.href === OPEN42_REPO_URL ? (
-                      <ComingSoonLink className="font-mono text-[14px] text-ink transition-opacity hover:opacity-70">
-                        {link.label}
-                      </ComingSoonLink>
+                      <Link
+                        href={link.href}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="inline-flex items-center gap-1.5 font-mono text-[14px] text-ink transition-opacity hover:opacity-70"
+                      >
+                        <span>{link.label}</span>
+                        <span className="rounded-full border border-line bg-surface px-1.5 py-0.5 font-mono text-[9px] uppercase tracking-wider text-muted-ink">
+                          Beta
+                        </span>
+                      </Link>
                     ) : (
                       <Link
                         href={link.href}
@@ -68,9 +79,7 @@ export function SiteFooter() {
         </div>
 
         <div className="mt-16 flex flex-col items-start justify-between gap-3 border-t border-line pt-6 md:flex-row md:items-center">
-          <p className="font-mono text-[12px] text-muted-ink">
-            {FOOTER.copyright}
-          </p>
+          <p className="font-mono text-[12px] text-muted-ink">{FOOTER.copyright}</p>
           <div className="flex items-center gap-2 font-mono text-[12px] text-muted-ink">
             <span className="inline-block h-2 w-2 rounded-full bg-positive" />
             {FOOTER.status}

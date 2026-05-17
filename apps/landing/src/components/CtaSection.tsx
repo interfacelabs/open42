@@ -1,5 +1,5 @@
+import Link from 'next/link';
 import { CTA } from '@/lib/content';
-import { ComingSoonLink } from '@/components/ComingSoonLink';
 import { EmailCaptureForm } from '@/components/EmailCaptureForm';
 
 export function CtaSection() {
@@ -29,9 +29,17 @@ export function CtaSection() {
             </div>
 
             <div className="mt-5 flex flex-wrap items-center justify-center gap-3">
-              <ComingSoonLink className="inline-flex h-[42px] items-center gap-2 rounded-lg bg-[#1f1f1f] px-4 font-mono text-[14px] text-white transition-opacity hover:opacity-90">
-                {CTA.secondary.label}
-              </ComingSoonLink>
+              <Link
+                href={CTA.secondary.href}
+                target="_blank"
+                rel="noreferrer"
+                className="inline-flex h-[42px] items-center gap-2 rounded-lg bg-[#1f1f1f] px-4 font-mono text-[14px] text-white transition-opacity hover:opacity-90"
+              >
+                <span>{CTA.secondary.label}</span>
+                <span className="rounded-full border border-white/10 bg-white/[0.06] px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-wider text-white/60">
+                  Beta
+                </span>
+              </Link>
             </div>
           </div>
         </div>
