@@ -10,7 +10,7 @@ vi.mock('swr', async () => {
 });
 
 import useSWR from 'swr';
-import { SkillPanel } from '@/components/SkillPanel';
+import { exportStalenessForReceipt, SkillPanel } from '@/components/SkillPanel';
 import type { SkillDraft } from '@/lib/skill-types';
 import { __resetWorkspaceStoreForTests, useWorkspaceStore } from '@/lib/workspaces/store';
 
@@ -41,8 +41,7 @@ const FIXTURE_DRAFT: SkillDraft = {
       cites: '[1]',
     },
   ],
-  body:
-    '# Refund Policy\n\n## Annual plans\n\nPro-rated refund within 30 days.\n\n## Partial refunds\n\nPro-rata calculation.\n\n## Enterprise\n\nMSA may override.',
+  body: '# Refund Policy\n\n## Annual plans\n\nPro-rated refund within 30 days.\n\n## Partial refunds\n\nPro-rata calculation.\n\n## Enterprise\n\nMSA may override.',
 };
 
 describe('SkillPanel', () => {
@@ -71,9 +70,7 @@ describe('SkillPanel', () => {
   });
 
   it('renders nothing when draftId is null', () => {
-    const { container } = render(
-      <SkillPanel draftId={null} onClose={() => {}} />,
-    );
+    const { container } = render(<SkillPanel draftId={null} onClose={() => {}} />);
     expect(container).toBeEmptyDOMElement();
   });
 
@@ -85,24 +82,16 @@ describe('SkillPanel', () => {
 
   it('shows the revision log + composer + footer', () => {
     render(<SkillPanel draftId="refund-policy" onClose={() => {}} />);
-    expect(
-      screen.getByText('Draft a skill from this thread.'),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByText('Added. Pulled from policy v3 §2.3.'),
-    ).toBeInTheDocument();
+    expect(screen.getByText('Draft a skill from this thread.')).toBeInTheDocument();
+    expect(screen.getByText('Added. Pulled from policy v3 §2.3.')).toBeInTheDocument();
     expect(screen.getByPlaceholderText(/ask for a change/i)).toBeInTheDocument();
     expect(screen.getByText(/3 sources · v0\.1\.2/i)).toBeInTheDocument();
   });
 
   it('renders the markdown body as the preview', () => {
     render(<SkillPanel draftId="refund-policy" onClose={() => {}} />);
-    expect(
-      screen.getByRole('heading', { name: /refund policy/i }),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByRole('heading', { name: /partial refunds/i }),
-    ).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: /refund policy/i })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: /partial refunds/i })).toBeInTheDocument();
   });
 
   it('shows stale changelog copy with a Re-export CTA', () => {
@@ -126,7 +115,29 @@ describe('SkillPanel', () => {
 
     render(<SkillPanel draftId="refund-policy" onClose={() => {}} />);
 
-    expect(screen.getByText('Refund policy changed since this skill was exported.')).toBeInTheDocument();
+    expect(
+      screen.getByText('Refund policy changed since this skill was exported.'),
+    ).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /re-export/i })).toBeInTheDocument();
+  });
+
+  it('uses the refreshed draft to decide whether the export receipt is stale', () => {
+    const staleDraft: SkillDraft = {
+      ...FIXTURE_DRAFT,
+      staleness: {
+        changelog: 'Refund policy changed since this skill was exported.',
+        detectedAt: '2026-05-17T00:00:00.000Z',
+      },
+    };
+    const freshAfterExport: SkillDraft = {
+      ...staleDraft,
+      staleness: null,
+      explainer: 'Use this skill when answering refund-policy questions.',
+    };
+
+    expect(exportStalenessForReceipt(staleDraft)).toEqual({
+      changelog: 'Refund policy changed since this skill was exported.',
+    });
+    expect(exportStalenessForReceipt(staleDraft, freshAfterExport)).toBeNull();
   });
 });
