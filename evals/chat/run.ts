@@ -2,7 +2,7 @@ import { readFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { gradeChatAnswer, type ChatEvalQuestion } from './grader.js';
+import { gradeChatAnswerWithOptionalJudge, type ChatEvalQuestion } from './grader.js';
 
 interface NormalizedMessage {
   role: 'user' | 'assistant';
@@ -37,7 +37,10 @@ async function main() {
       messages.push({ role: 'assistant', text: answer });
       finalAnswer = answer;
     }
-    const grade = gradeChatAnswer(question, { id: question.id, answer: finalAnswer });
+    const grade = await gradeChatAnswerWithOptionalJudge(question, {
+      id: question.id,
+      answer: finalAnswer,
+    });
     results.push({ ...grade, answer: finalAnswer });
   }
 
