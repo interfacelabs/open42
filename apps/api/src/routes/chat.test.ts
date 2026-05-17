@@ -13,6 +13,7 @@ const describeDb = RUN_DB_TESTS ? describe : describe.skip;
 const mocks = vi.hoisted(() => ({
   resolveLlmKey: vi.fn(),
   query: vi.fn(),
+  createChatProvider: vi.fn(),
 }));
 
 vi.mock('../auth/llm-keys.js', async () => {
@@ -28,6 +29,12 @@ vi.mock('../gbrain/client.js', async () => {
     }
   }
   return { ...actual, GbrainClient: MockGbrainClient };
+});
+
+vi.mock('./chat-providers.js', async () => {
+  const actual =
+    await vi.importActual<typeof import('./chat-providers.js')>('./chat-providers.js');
+  return { ...actual, createChatProvider: mocks.createChatProvider };
 });
 
 describeDb('chat skill mode', () => {
@@ -46,6 +53,7 @@ describeDb('chat skill mode', () => {
     resetWorkspaceChatBudgetForTest();
     mocks.resolveLlmKey.mockReset();
     mocks.query.mockReset();
+    mocks.createChatProvider.mockReset();
     mocks.resolveLlmKey.mockResolvedValue({
       apiKey: 'sk-ant-...',
       source: 'tenant',
@@ -61,6 +69,12 @@ describeDb('chat skill mode', () => {
         },
       ],
     });
+    mocks.createChatProvider.mockImplementation((provider: 'anthropic' | 'openai') => ({
+      provider,
+      async *sendStreamingChat() {
+        yield { text: `provider:${provider} [1]` };
+      },
+    }));
     restoreInputLimit();
   });
 
@@ -139,7 +153,7 @@ describeDb('chat skill mode', () => {
       chatProvider: 'openai',
     });
     mocks.resolveLlmKey.mockResolvedValue({
-      apiKey: 'sk-...',
+      apiKey: 'sk-openai-real',
       source: 'tenant',
       model: 'gpt-test',
     });
@@ -168,6 +182,8 @@ describeDb('chat skill mode', () => {
       limit: 8,
       detail: 'chunks',
     });
+    expect(mocks.createChatProvider).toHaveBeenCalledWith('openai');
+    expect(res.text).toContain('provider:openai [1]');
     expect(res.text).toContain('"type":"done"');
   });
 
