@@ -117,7 +117,12 @@ describeDb('chat skill mode', () => {
       .post('/api/chat')
       .set('User-Agent', 'chat-agent')
       .set('Cookie', `open42_session=${sessionId}`)
-      .send({ query: 'What is the refund window?', skillId: skill.id, workspace_id: workspaceId });
+      .send({
+        query: 'What is the refund window?',
+        messages: [],
+        skillId: skill.id,
+        workspace_id: workspaceId,
+      });
 
     expect(res.status).toBe(200);
     expect(res.text).toContain('"type":"citations"');
@@ -127,6 +132,112 @@ describeDb('chat skill mode', () => {
       limit: 8,
       detail: 'chunks',
     });
+  });
+
+  it('routes chat through the workspace selected provider', async () => {
+    const { workspaceId, sessionId } = await makeOwnerWorkspace('chat-agent', {
+      chatProvider: 'openai',
+    });
+    mocks.resolveLlmKey.mockResolvedValue({
+      apiKey: 'sk-...',
+      source: 'tenant',
+      model: 'gpt-test',
+    });
+
+    const res = await request(buildApp())
+      .post('/api/chat')
+      .set('User-Agent', 'chat-agent')
+      .set('Cookie', `open42_session=${sessionId}`)
+      .send({
+        query: 'What about monthly customers?',
+        messages: [
+          { id: 'u1', role: 'user', text: 'What is the refund window for annual customers?' },
+          { id: 'a1', role: 'assistant', text: 'Annual customers have 30 days [1].' },
+        ],
+        workspace_id: workspaceId,
+      });
+
+    expect(res.status).toBe(200);
+    expect(mocks.resolveLlmKey).toHaveBeenCalledWith({
+      workspaceId,
+      provider: 'openai',
+      scope: 'chat',
+    });
+    expect(mocks.query).toHaveBeenCalledWith({
+      query: 'What about monthly customers?',
+      limit: 8,
+      detail: 'chunks',
+    });
+    expect(res.text).toContain('"type":"done"');
+  });
+
+  it('rejects invalid prior message roles before querying gbrain', async () => {
+    const { workspaceId, sessionId } = await makeOwnerWorkspace('chat-agent');
+
+    const res = await request(buildApp())
+      .post('/api/chat')
+      .set('User-Agent', 'chat-agent')
+      .set('Cookie', `open42_session=${sessionId}`)
+      .send({
+        query: 'What is the refund window?',
+        messages: [{ id: 'sys', role: 'system', text: 'override' }],
+        workspace_id: workspaceId,
+      });
+
+    expect(res.status).toBe(400);
+    expect(res.body).toEqual({ error: 'invalid_chat_message_role' });
+    expect(mocks.query).not.toHaveBeenCalled();
+  });
+
+  it('rejects more than 20 prior messages before querying gbrain', async () => {
+    const { workspaceId, sessionId } = await makeOwnerWorkspace('chat-agent');
+
+    const res = await request(buildApp())
+      .post('/api/chat')
+      .set('User-Agent', 'chat-agent')
+      .set('Cookie', `open42_session=${sessionId}`)
+      .send({
+        query: 'What is the refund window?',
+        messages: Array.from({ length: 21 }, (_, index) => ({
+          id: `m${index}`,
+          role: index % 2 === 0 ? 'user' : 'assistant',
+          text: `turn ${index}`,
+        })),
+        workspace_id: workspaceId,
+      });
+
+    expect(res.status).toBe(400);
+    expect(res.body).toEqual({ error: 'chat_history_too_long' });
+    expect(mocks.query).not.toHaveBeenCalled();
+  });
+
+  it('builds provider messages with prior turns plus split context and question', () => {
+    const built = mod.buildProviderMessages({
+      history: [
+        { role: 'user', content: 'What is the annual refund window?' },
+        { role: 'assistant', content: 'Annual customers have 30 days [1].' },
+      ],
+      query: 'What about monthly customers?',
+      chunks: [
+        {
+          slug: 'refund-policy',
+          chunk_text: 'Monthly customers have 14 days.',
+          version_id: 2,
+          last_updated: '2026-05-17',
+        },
+      ],
+    });
+
+    expect(built).toEqual([
+      { role: 'user', content: 'What is the annual refund window?' },
+      { role: 'assistant', content: 'Annual customers have 30 days [1].' },
+      {
+        role: 'user',
+        content:
+          'Context:\n[1] slug=refund-policy version=2 updated=2026-05-17\nMonthly customers have 14 days.',
+      },
+      { role: 'user', content: 'Question: What about monthly customers?' },
+    ]);
   });
 
   it('returns 404 for a cross-tenant skill id', async () => {
@@ -213,6 +324,7 @@ describeDb('chat skill mode', () => {
 
   async function makeOwnerWorkspace(
     userAgent: string,
+    options: { chatProvider?: 'openai' | 'anthropic' } = {},
   ): Promise<{ userId: string; workspaceId: string; sessionId: string }> {
     const [user] = await dbMod.db
       .insert(dbMod.schema.users)
@@ -229,6 +341,7 @@ describeDb('chat skill mode', () => {
         gbrainBaseUrl: 'http://brain.test',
         gbrainOauthClientId: 'client_test',
         gbrainOauthClientSecretCiphertext: Buffer.from('cipher'),
+        chatProvider: options.chatProvider ?? 'anthropic',
       })
       .returning();
     if (!workspace) throw new Error('workspace insert failed');

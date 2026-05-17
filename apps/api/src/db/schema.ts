@@ -109,6 +109,7 @@ export const workspaces = pgTable(
     gbrainMcpProxyEnabled: boolean('gbrain_mcp_proxy_enabled').notNull().default(false),
     proxyTokenHash: bytea('proxy_token_hash'),
     gbrainVersion: text('gbrain_version').notNull(),
+    chatProvider: llmProviderEnum('chat_provider').notNull().default('anthropic'),
     status: workspaceStatusEnum('status').notNull().default('provisioning'),
     lastError: text('last_error'),
     lastErrorDetail: text('last_error_detail'),
