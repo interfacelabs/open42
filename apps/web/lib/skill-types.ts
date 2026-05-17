@@ -32,4 +32,8 @@ export interface SkillDraft {
   revisions: SkillRevision[];
   /** True if there are unsaved revisions ahead of `version`. */
   unsaved?: boolean;
+  staleness?: {
+    changelog: string;
+    detectedAt: string;
+  } | null;
 }

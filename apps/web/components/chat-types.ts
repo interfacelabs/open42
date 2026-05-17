@@ -11,4 +11,6 @@ export interface ChatMessage {
   role: 'user' | 'assistant' | 'system';
   text: string;
   citations?: Citation[];
+  error?: string;
+  retryQuery?: string;
 }
