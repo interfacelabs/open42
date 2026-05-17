@@ -40,6 +40,19 @@ describe('chat eval grader', () => {
     expect(grade.missing).toEqual(['14', '[citation]', 'avoid:30 days']);
   });
 
+  it('normalizes punctuation in deterministic expected terms', () => {
+    const grade = gradeChatAnswer(
+      {
+        id: 'source-aware-followup',
+        turns: ['Which source explains annual refunds?', 'Use that same source.'],
+        expected: ['refund-policy', '[1]'],
+      },
+      { id: 'source-aware-followup', answer: 'The refund policy source covers this [1].' },
+    );
+
+    expect(grade.passed).toBe(true);
+  });
+
   it('falls back to deterministic grading unless Anthropic grading is explicitly enabled', async () => {
     await expect(
       gradeChatAnswerWithOptionalJudge(

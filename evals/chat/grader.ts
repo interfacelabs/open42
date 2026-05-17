@@ -25,14 +25,13 @@ export interface ChatEvalGrade {
 }
 
 export function gradeChatAnswer(question: ChatEvalQuestion, answer: ChatEvalAnswer): ChatEvalGrade {
-  const normalized = answer.answer.toLowerCase();
   const expectedTerms = question.expected.filter((expected) => expected !== '[1]');
   const missingTerms = expectedTerms.filter((expected) => {
-    return !normalized.includes(expected.toLowerCase());
+    return !containsTerm(answer.answer, expected);
   });
   const needsCitation = question.expected.includes('[1]');
   const hasCitation = /\[\d+]/.test(answer.answer);
-  const avoided = (question.avoid ?? []).filter((term) => normalized.includes(term.toLowerCase()));
+  const avoided = (question.avoid ?? []).filter((term) => containsTerm(answer.answer, term));
   const criteria: ChatEvalCriterion[] = [
     {
       name: 'resolution',
@@ -70,6 +69,18 @@ export function gradeChatAnswer(question: ChatEvalQuestion, answer: ChatEvalAnsw
     criteria,
     grader: 'deterministic',
   };
+}
+
+function containsTerm(answer: string, term: string): boolean {
+  return normalizeText(answer).includes(normalizeText(term));
+}
+
+function normalizeText(value: string): string {
+  return value
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
 }
 
 export async function gradeChatAnswerWithOptionalJudge(
@@ -111,9 +122,7 @@ export async function gradeChatAnswerWithOptionalJudge(
     return {
       id: question.id,
       passed: criteria.every((criterion) => criterion.passed),
-      missing: criteria
-        .filter((criterion) => !criterion.passed)
-        .map((criterion) => criterion.name),
+      missing: criteria.filter((criterion) => !criterion.passed).map((criterion) => criterion.name),
       criteria,
       grader: 'anthropic',
     };
