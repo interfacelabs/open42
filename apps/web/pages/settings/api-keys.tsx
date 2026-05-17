@@ -4,6 +4,13 @@ import { FormEvent, useEffect, useMemo, useState } from 'react';
 import { Trash2 } from 'lucide-react';
 import useSWR from 'swr';
 
+import type {
+  LlmProvider as Provider,
+  LlmScope as Scope,
+  WorkspaceCredentialEntry as CredentialEntry,
+  WorkspaceCredentialsPayload as CredentialsPayload,
+} from '@open42/shared-types';
+
 import { AppShell } from '@/components/AppShell';
 import { PageHeader } from '@/components/PageHeader';
 import { SettingsNav } from '@/components/SettingsNav';
@@ -11,20 +18,6 @@ import { Button } from '@/components/ui/button';
 import { csrfHeaders } from '@/lib/csrf';
 import { cn } from '@/lib/utils';
 import { useWorkspaceStore } from '@/lib/workspaces/store';
-
-type Provider = 'openai' | 'anthropic';
-type Scope = 'chat' | 'embed';
-
-interface CredentialEntry {
-  provider: Provider;
-  scope: Scope;
-  model?: string | null;
-  createdAt: string;
-}
-
-interface CredentialsPayload {
-  credentials: CredentialEntry[];
-}
 
 const fetcher = async (url: string): Promise<CredentialsPayload> => {
   const res = await fetch(url);

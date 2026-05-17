@@ -67,6 +67,7 @@
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.32.1",
+    "@open42/shared-types": "*",
     "@sinclair/typebox": "0.34.49",
     "@supabase/supabase-js": "^2.105.3",
     "@types/adm-zip": "^0.5.8",
