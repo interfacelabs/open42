@@ -24,8 +24,7 @@ export const WAITLIST = {
   cta: 'Request access',
   submitting: 'Sending...',
   note: "Private beta. Drop your work email and we'll reach out before opening your workspace.",
-  success:
-    "Request ready. If your mail app opened, send the email and we'll reply from support@open42.ai.",
+  success: "Request received. We'll reply from support@open42.ai before opening your workspace.",
   invalid: 'Use a valid work email.',
   error: "Couldn't send that request. Email support@open42.ai and we'll add you.",
 };
