@@ -1,8 +1,9 @@
-import Link from "next/link";
-import Image from "next/image";
-import { HERO, PROOF } from "@/lib/content";
-import { ChevronRight, OcularLogoMark } from "@/components/icons";
-import { MarkdownAnswerCard } from "@/components/MarkdownAnswerCard";
+import Link from 'next/link';
+import Image from 'next/image';
+import { HERO, PROOF } from '@/lib/content';
+import { ChevronRight, OcularLogoMark } from '@/components/icons';
+import { MarkdownAnswerCard } from '@/components/MarkdownAnswerCard';
+import { EmailCaptureForm } from '@/components/EmailCaptureForm';
 
 export function HeroSection() {
   return (
@@ -12,9 +13,7 @@ export function HeroSection() {
       <div className="relative page-frame mx-auto w-full max-w-[1320px] px-6 pt-[80px] pb-20">
         <div className="inline-flex items-center gap-2 rounded-md border border-line bg-surface/80 px-2.5 py-1.5 backdrop-blur-sm">
           <OcularLogoMark className="h-3.5 w-3.5 text-muted-ink" />
-          <span className="font-mono text-[14px] leading-none text-muted-ink">
-            {HERO.eyebrow}
-          </span>
+          <span className="font-mono text-[14px] leading-none text-muted-ink">{HERO.eyebrow}</span>
         </div>
 
         <h1 className="mt-6 max-w-[920px] font-sans text-[44px] font-medium leading-[1.0] tracking-[-0.035em] text-ink md:text-[72px] md:leading-[0.95]">
@@ -25,13 +24,11 @@ export function HeroSection() {
           {HERO.subhead}
         </p>
 
-        <div className="mt-8 flex flex-wrap items-center gap-3">
-          <Link
-            href={HERO.primaryCta.href}
-            className="inline-flex h-[40px] items-center rounded-lg bg-ink px-4 font-mono text-[14px] text-white transition-opacity hover:opacity-90"
-          >
-            {HERO.primaryCta.label}
-          </Link>
+        <div id="request-access" className="mt-8 max-w-[560px] scroll-mt-28">
+          <EmailCaptureForm />
+        </div>
+
+        <div className="mt-3 flex flex-wrap items-center gap-3">
           <Link
             href={HERO.secondaryCta.href}
             className="inline-flex h-[40px] items-center gap-1.5 rounded-lg border border-line bg-surface/80 px-4 font-mono text-[14px] text-ink backdrop-blur-sm transition-colors hover:bg-page"
@@ -47,16 +44,11 @@ export function HeroSection() {
 
         <ul className="relative mt-20 grid grid-cols-1 gap-6 md:grid-cols-3">
           {PROOF.map((item) => (
-            <li
-              key={item.label}
-              className="flex flex-col gap-1 border-t border-line pt-4"
-            >
+            <li key={item.label} className="flex flex-col gap-1 border-t border-line pt-4">
               <span className="font-mono text-[12px] uppercase tracking-wider text-muted-ink">
                 {item.label}
               </span>
-              <span className="font-sans text-[16px] leading-[22px] text-ink">
-                {item.value}
-              </span>
+              <span className="font-sans text-[16px] leading-[22px] text-ink">{item.value}</span>
             </li>
           ))}
         </ul>

@@ -6,61 +6,65 @@
 // version + freshness). Honest when it doesn't know. Yours to keep.
 
 export const NAV_LINKS = [
-  { label: "How it works", href: "#how" },
-  { label: "Architecture", href: "#architecture" },
-  { label: "Pricing", href: "#pricing" },
+  { label: 'How it works', href: '#how' },
+  { label: 'Architecture', href: '#architecture' },
 ];
 
-export const GITHUB_URL = "https://github.com/interfacelabs/open42";
-const OPEN42_APP_URL =
-  process.env.NEXT_PUBLIC_OPEN42_APP_URL ?? "https://app.open42.ai";
-export const SIGN_IN_URL = `${OPEN42_APP_URL.replace(/\/$/, "")}/sign_in`;
-
 export const HERO = {
-  eyebrow: "Open42 · built on gbrain",
-  heading:
-    "The AI that knows your company — and turns answers into tools your team can reuse.",
+  eyebrow: 'Open42 · built on gbrain',
+  heading: 'The AI that knows your company — and turns answers into tools your team can reuse.',
   subhead:
     "Connect your docs, chats, and email. Open42 becomes your team's shared brain — answering with citations, and turning any answer into a one-click Skill anyone can run again.",
-  primaryCta: { label: "Start free", href: SIGN_IN_URL },
-  secondaryCta: { label: "See how it works", href: "#how" },
+  secondaryCta: { label: 'See how it works', href: '#how' },
+};
+
+export const WAITLIST = {
+  label: 'Request beta access',
+  placeholder: 'you@company.com',
+  cta: 'Request access',
+  submitting: 'Sending...',
+  note: "Private beta. Drop your work email and we'll reach out before opening your workspace.",
+  success:
+    "Request ready. If your mail app opened, send the email and we'll reply from support@open42.ai.",
+  invalid: 'Use a valid work email.',
+  error: "Couldn't send that request. Email support@open42.ai and we'll add you.",
 };
 
 // Three pills directly under the hero. Each is a load-bearing claim that the
 // rest of the page has to back up.
 export const PROOF = [
   {
-    label: "Receipts",
-    value: "Every answer cites its source, version, and date.",
+    label: 'Receipts',
+    value: 'Every answer cites its source, version, and date.',
   },
   {
-    label: "Honest",
+    label: 'Honest',
     value: "Admits when it doesn't know. Flags stale sources.",
   },
   {
-    label: "Yours",
-    value: "Self-host or cloud. One private brain per workspace.",
+    label: 'Yours',
+    value: 'Self-host or cloud. One private brain per workspace.',
   },
 ];
 
 // Three steps. This is the "what actually happens" arc — concrete, sequential,
 // each step finishes in something real.
 export const PROCESS = {
-  eyebrow: "[ How it works ]",
-  heading: "Connect, ask, and turn the answer into a Skill.",
+  eyebrow: '[ How it works ]',
+  heading: 'Connect, ask, and turn the answer into a Skill.',
   steps: [
     {
-      title: "Connect your knowledge",
+      title: 'Connect your knowledge',
       description:
         "Notion, Drive, Slack, Gmail, GitHub, Linear — plug in the tools you already use. Each workspace gets its own private brain, on its own database. Never mixed with anyone else's.",
     },
     {
-      title: "Ask, and get receipts",
+      title: 'Ask, and get receipts',
       description:
         "Every answer shows where it came from — the source, the version, the date. Click a citation to jump to the exact line. When Open42 doesn't know, it says so.",
     },
     {
-      title: "Save it as a Skill",
+      title: 'Save it as a Skill',
       description:
         "Save any useful answer as a Skill — a reusable mini-app. Ask once ('summarize this week's customer calls'), then anyone on your team can run it again with one click.",
     },
@@ -71,37 +75,37 @@ export const PROCESS = {
 // inline HTML mock; no marketing screenshots.
 export const FEATURES = {
   eyebrow: "[ What's inside ]",
-  heading: "A brain that answers — and turns those answers into tools.",
+  heading: 'A brain that answers — and turns those answers into tools.',
   subhead:
-    "Open42 connects your knowledge to your team. It cites sources, flags stale info, and turns any answer into a Skill anyone can run again.",
+    'Open42 connects your knowledge to your team. It cites sources, flags stale info, and turns any answer into a Skill anyone can run again.',
   cards: [
     {
-      id: "receipts",
-      title: "Receipts on every answer.",
+      id: 'receipts',
+      title: 'Receipts on every answer.',
       description:
-        "Source, version, and date on every line. No claim without a citation. You can always trace an answer back.",
-      span: "wide",
+        'Source, version, and date on every line. No claim without a citation. You can always trace an answer back.',
+      span: 'wide',
     },
     {
-      id: "skills",
-      title: "Skills, not just chat.",
+      id: 'skills',
+      title: 'Skills, not just chat.',
       description:
-        "Turn any answer into a one-click, reusable mini-app the whole team can run. Versioned. Shareable.",
-      span: "narrow",
+        'Turn any answer into a one-click, reusable mini-app the whole team can run. Versioned. Shareable.',
+      span: 'narrow',
     },
     {
-      id: "honest",
+      id: 'honest',
       title: "Honest when it doesn't know.",
       description:
-        "\"I don't have that in your brain.\" Stale sources get flagged. No confident wrong answers.",
-      span: "narrow",
+        '"I don\'t have that in your brain." Stale sources get flagged. No confident wrong answers.',
+      span: 'narrow',
     },
     {
-      id: "isolated",
-      title: "Your brain, fully isolated.",
+      id: 'isolated',
+      title: 'Your brain, fully isolated.',
       description:
         "One workspace, one private brain, one database. Cloud or self-hosted. Your data is never mixed with anyone else's.",
-      span: "wide",
+      span: 'wide',
     },
   ],
 };
@@ -109,40 +113,40 @@ export const FEATURES = {
 // Connector strip. Reads as: "we plug into the tools you already pay for."
 // Center pill is Open42 itself.
 export const INTEGRATION = {
-  eyebrow: "[ Connect ]",
-  heading: "Connect the tools your team already uses.",
+  eyebrow: '[ Connect ]',
+  heading: 'Connect the tools your team already uses.',
   subhead:
-    "Open42 pulls content from the tools your team already lives in. Every citation points back to the exact line in the original tool, so you can verify any answer in one click.",
+    'Open42 pulls content from the tools your team already lives in. Every citation points back to the exact line in the original tool, so you can verify any answer in one click.',
   connectors: [
-    "Notion",
-    "Drive",
-    "Slack",
-    "Gmail",
-    "GitHub",
-    "Linear",
-    "Open42",
-    "Confluence",
-    "Hubspot",
-    "Intercom",
-    "Zendesk",
-    "Dropbox",
-    "Figma",
+    'Notion',
+    'Drive',
+    'Slack',
+    'Gmail',
+    'GitHub',
+    'Linear',
+    'Open42',
+    'Confluence',
+    'Hubspot',
+    'Intercom',
+    'Zendesk',
+    'Dropbox',
+    'Figma',
   ],
 };
 
 // Architecture band. Shows the two-boundary model from the README so
 // technical readers can map it to their own infra.
 export const ARCHITECTURE = {
-  eyebrow: "[ Architecture ]",
-  heading: "Two boundaries. One brain per workspace.",
+  eyebrow: '[ Architecture ]',
+  heading: 'Two boundaries. One brain per workspace.',
   subhead:
-    "Open42 handles users and metadata. gbrain runs the brain itself. Each workspace gets its own private brain on its own machine — no shared storage between workspaces.",
+    'Open42 handles users and metadata. gbrain runs the brain itself. Each workspace gets its own private brain on its own machine — no shared storage between workspaces.',
   nodes: [
-    { title: "User auth", detail: "Magic-link sign-in. Open42 holds the server session." },
-    { title: "Open42 API", detail: "Sessions, connectors, chat routing, Skills." },
-    { title: "Metadata DB", detail: "Users, workspaces, and encrypted secrets." },
-    { title: "gbrain runtime", detail: "Private brain per workspace, with scoped OAuth access." },
-    { title: "Workspace DB", detail: "Pages, chunks, and embeddings. Isolated per workspace." },
+    { title: 'User auth', detail: 'Magic-link sign-in. Open42 holds the server session.' },
+    { title: 'Open42 API', detail: 'Sessions, connectors, chat routing, Skills.' },
+    { title: 'Metadata DB', detail: 'Users, workspaces, and encrypted secrets.' },
+    { title: 'gbrain runtime', detail: 'Private brain per workspace, with scoped OAuth access.' },
+    { title: 'Workspace DB', detail: 'Pages, chunks, and embeddings. Isolated per workspace.' },
   ],
 };
 
@@ -151,214 +155,146 @@ export const ARCHITECTURE = {
 // Every claim on the right-hand fact card maps to something in the public
 // gbrain README — no invented numbers.
 export const GBRAIN = {
-  eyebrow: "[ Built on gbrain ]",
+  eyebrow: '[ Built on gbrain ]',
   heading: "We didn't reinvent the brain. We made it run for teams.",
   subhead:
     "gbrain is the open-source agent brain Garry Tan built to run his own daily work. It's fast, honest, and battle-tested on a real 17,000-page personal brain. Open42 takes that runtime and makes it something a team can actually run.",
   layers: [
     {
-      title: "Per-workspace runtime",
-      body:
-        "Every workspace gets its own private gbrain instance, on its own machine and database. No shared retrieval layer between workspaces — ever.",
+      title: 'Per-workspace runtime',
+      body: 'Every workspace gets its own private gbrain instance, on its own machine and database. No shared retrieval layer between workspaces — ever.',
     },
     {
-      title: "Team auth, billing, and a real UI",
-      body:
-        "Magic-link sign-in, role-based access, workspace billing, and a UI that isn't a terminal. The pieces gbrain doesn't ship — because it was built for one operator, not a team.",
+      title: 'Team auth, billing, and a real UI',
+      body: "Magic-link sign-in, role-based access, workspace billing, and a UI that isn't a terminal. The pieces gbrain doesn't ship — because it was built for one operator, not a team.",
     },
     {
-      title: "Connectors out of the box",
-      body:
-        "Composio-managed integrations for Notion, Drive, Slack, Gmail, GitHub, Linear, and more — pre-wired into your workspace brain with per-workspace OAuth.",
+      title: 'Connectors out of the box',
+      body: 'Composio-managed integrations for Notion, Drive, Slack, Gmail, GitHub, Linear, and more — pre-wired into your workspace brain with per-workspace OAuth.',
     },
     {
-      title: "Pinned and swappable",
-      body:
-        "We run gbrain pinned at a verified version. You can fork it, swap in your own build, or run a different runtime entirely — the rest of Open42 keeps working.",
+      title: 'Pinned and swappable',
+      body: 'We run gbrain pinned at a verified version. You can fork it, swap in your own build, or run a different runtime entirely — the rest of Open42 keeps working.',
     },
   ],
   card: {
-    repo: "garrytan/gbrain",
-    license: "MIT · open source",
-    tagline:
-      "Your AI agent is smart but forgetful. gbrain gives it a brain.",
+    repo: 'garrytan/gbrain',
+    license: 'MIT · open source',
+    tagline: 'Your AI agent is smart but forgetful. gbrain gives it a brain.',
     facts: [
-      { label: "Author", value: "Garry Tan · President & CEO, Y Combinator" },
-      { label: "Powers", value: "OpenClaw and Hermes — real agents in production" },
-      { label: "Scale", value: "17,888 pages · 4,383 people · 723 companies" },
-      { label: "Retrieval", value: "BrainBench P@5 49.1 — beats vector-only RAG by +31 points" },
-      { label: "Surface", value: "MCP server with OAuth 2.1 · 34 skills · 30+ tools" },
+      { label: 'Author', value: 'Garry Tan · President & CEO, Y Combinator' },
+      { label: 'Powers', value: 'OpenClaw and Hermes — real agents in production' },
+      { label: 'Scale', value: '17,888 pages · 4,383 people · 723 companies' },
+      { label: 'Retrieval', value: 'BrainBench P@5 49.1 — beats vector-only RAG by +31 points' },
+      { label: 'Surface', value: 'MCP server with OAuth 2.1 · 34 skills · 30+ tools' },
     ],
     cta: {
-      label: "Read the gbrain README",
-      href: "https://github.com/garrytan/gbrain",
+      label: 'Read the gbrain README',
+      href: 'https://github.com/garrytan/gbrain',
     },
   },
-};
-
-export const PRICING = {
-  eyebrow: "[ Pricing ]",
-  heading: "Run it on us, or run it yourself.",
-  subhead:
-    "Same product, two ways to run it. Self-host the open-source code on your own machines. Or let us run it — one private brain per workspace, billed per user.",
-  plans: [
-    {
-      name: "Open source",
-      price: "$0",
-      period: "",
-      description: "Self-host the whole stack. Bring your own API keys.",
-      cta: "View on GitHub",
-      href: "https://github.com/interfacelabs/open42",
-      featured: false,
-      features: [
-        "Unlimited workspaces on your machines",
-        "Bring your own Anthropic or OpenAI key",
-        "All Skills, citations, and connectors included",
-        "gbrain runtime pinned to a verified version",
-      ],
-    },
-    {
-      name: "Cloud",
-      price: "$29",
-      period: "/user/mo",
-      description: "We run it. One private brain per workspace.",
-      cta: "Start free",
-      href: SIGN_IN_URL,
-      featured: true,
-      features: [
-        "Private brain runtime per workspace",
-        "Connectors managed for you",
-        "Magic-link sign-in, billed per workspace",
-        "Bring your own API key (optional)",
-      ],
-    },
-    {
-      name: "Enterprise",
-      price: "Custom",
-      period: "",
-      description: "Private cloud, SSO, audit logs, dedicated support.",
-      cta: "Talk to us",
-      href: "mailto:support@open42.ai",
-      featured: false,
-      features: [
-        "Private cloud or on-prem deployment",
-        "SSO/SAML, audit logs, and data-loss hooks",
-        "Custom connectors and Skill review",
-        "SLA with a named engineer",
-      ],
-    },
-  ],
 };
 
 // Replaces the testimonials band. We don't have customer quotes yet — and
 // inventing them would directly contradict the page's own pitch. So we show
 // the engineering principles the product is built on instead.
 export const PRINCIPLES = {
-  eyebrow: "[ Principles ]",
-  heading: "Trust is the product.",
+  eyebrow: '[ Principles ]',
+  heading: 'Trust is the product.',
   subhead:
-    "Built for teams who need answers they can defend, not demos they can show. These are the rules we hold the product to.",
+    'Built for teams who need answers they can defend, not demos they can show. These are the rules we hold the product to.',
   items: [
     {
-      title: "Receipts beat vibes.",
-      body:
-        "If we can't cite the source, version, and date of a claim, we don't make the claim. Every answer is inspectable.",
+      title: 'Receipts beat vibes.',
+      body: "If we can't cite the source, version, and date of a claim, we don't make the claim. Every answer is inspectable.",
     },
     {
-      title: "Skills beat chat.",
-      body:
-        "A chat that disappears is a chat you'll have to run again. Any answer worth keeping becomes a reusable tool the team can run again.",
+      title: 'Skills beat chat.',
+      body: "A chat that disappears is a chat you'll have to run again. Any answer worth keeping becomes a reusable tool the team can run again.",
     },
     {
-      title: "Honesty beats coverage.",
-      body:
-        "\"I don't have that in your brain\" is a feature. A confident wrong answer is the worst possible failure.",
+      title: 'Honesty beats coverage.',
+      body: '"I don\'t have that in your brain" is a feature. A confident wrong answer is the worst possible failure.',
     },
     {
-      title: "One brain per workspace.",
-      body:
-        "One workspace, one private brain, one database. There's no shared layer to leak from. Cross-workspace leakage is impossible by design.",
+      title: 'One brain per workspace.',
+      body: "One workspace, one private brain, one database. There's no shared layer to leak from. Cross-workspace leakage is impossible by design.",
     },
     {
-      title: "Calm beats spectacle.",
-      body:
-        "No spinners as theater. No flashy gradients. The interface stays out of the way so the answer can be the moment.",
+      title: 'Calm beats spectacle.',
+      body: 'No spinners as theater. No flashy gradients. The interface stays out of the way so the answer can be the moment.',
     },
     {
-      title: "Yours to keep.",
-      body:
-        "Self-hostable end to end. Bring your own API keys. The whole stack runs on your infrastructure whenever you want it to.",
+      title: 'Yours to keep.',
+      body: 'Self-hostable end to end. Bring your own API keys. The whole stack runs on your infrastructure whenever you want it to.',
     },
   ],
 };
 
 export const FAQ = {
-  eyebrow: "[ FAQ ]",
-  heading: "Common questions, clear answers.",
-  subhead:
-    "How the brain stays accurate, where your data lives, and what a Skill actually is.",
+  eyebrow: '[ FAQ ]',
+  heading: 'Common questions, clear answers.',
+  subhead: 'How the brain stays accurate, where your data lives, and what a Skill actually is.',
   items: [
     {
-      q: "What is a Skill?",
+      q: 'What is a Skill?',
       a: "A Skill is a saved answer. Ask once — 'summarize this week's customer calls' or 'draft the weekly investor update' — and Open42 saves the steps as a reusable mini-app. Anyone on your team can run it again in one click. Skills are versioned, so each run uses the latest sources, not a stale snapshot.",
     },
     {
-      q: "What stops it from hallucinating?",
+      q: 'What stops it from hallucinating?',
       a: "Open42 only answers from your workspace brain. When the answer isn't in there, it says so — 'I don't have anything about this in your brain' — instead of guessing. Every claim links back to the exact source line, with the version and date it came from.",
     },
     {
-      q: "Where does my data live?",
+      q: 'Where does my data live?',
       a: "Each workspace gets its own brain — a private runtime with its own database. On Open42 Cloud, that's a dedicated machine with its own volume. Self-hosted, it's a Docker container with its own volume. There is no shared storage between workspaces, ever.",
     },
     {
-      q: "Do my API keys ever leave my control?",
+      q: 'Do my API keys ever leave my control?',
       a: "No. Your workspace brain never sees your real Anthropic or OpenAI key. It calls a proxy with a proxy token, and the proxy swaps in the real key on the way out — yours if you brought one, otherwise ours. The brain itself can't read or leak your keys.",
     },
   ],
 };
 
 export const CTA = {
-  heading: "Give your AI the company memory it keeps pretending to have.",
+  heading: 'Give your AI the company memory it keeps pretending to have.',
   subhead:
-    "Connect your docs in five minutes. Ask the first question. Save the first Skill. From there, your team's brain only gets sharper.",
-  primary: { label: "Start free", href: SIGN_IN_URL },
+    "Open42 Cloud is in private beta. Request access and we'll help you set up the first private company brain.",
   secondary: {
-    label: "View on GitHub",
-    href: "https://github.com/interfacelabs/open42",
+    label: 'GitHub',
+    href: 'https://github.com/interfacelabs/open42',
   },
 };
 
 export const FOOTER = {
   tagline:
-    "Self-hostable Company Brain. Built on gbrain. Answers with receipts. Skills your team builds together.",
+    'Self-hostable Company Brain. Built on gbrain. Answers with receipts. Skills your team builds together.',
   columns: [
     {
-      title: "Product",
+      title: 'Product',
       links: [
-        { label: "Skills", href: "#skills" },
-        { label: "How it works", href: "#how" },
-        { label: "Architecture", href: "#architecture" },
-        { label: "Pricing", href: "#pricing" },
+        { label: 'Skills', href: '#skills' },
+        { label: 'How it works', href: '#how' },
+        { label: 'Architecture', href: '#architecture' },
       ],
     },
     {
-      title: "Source",
+      title: 'Source',
       links: [
-        { label: "GitHub", href: "https://github.com/interfacelabs/open42" },
-        { label: "Docs", href: "#docs" },
-        { label: "Status", href: "#status" },
-        { label: "License", href: "#license" },
+        { label: 'GitHub', href: 'https://github.com/interfacelabs/open42' },
+        { label: 'Docs', href: '#docs' },
+        { label: 'Status', href: '#status' },
+        { label: 'License', href: '#license' },
       ],
     },
     {
-      title: "Company",
+      title: 'Company',
       links: [
-        { label: "About us", href: "/about" },
-        { label: "Terms of Service", href: "/terms" },
-        { label: "Privacy Policy", href: "/privacy" },
+        { label: 'About us', href: '/about' },
+        { label: 'Terms of Service', href: '/terms' },
+        { label: 'Privacy Policy', href: '/privacy' },
       ],
     },
   ],
-  copyright: "© 2026 Open42. Built in the open.",
-  status: "All systems operational",
+  copyright: '© 2026 Open42. Built in the open.',
+  status: 'All systems operational',
 };

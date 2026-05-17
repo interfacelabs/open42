@@ -1,7 +1,6 @@
-import Link from "next/link";
-import { CTA } from "@/lib/content";
-import { ChevronRight } from "@/components/icons";
-import { ComingSoonLink } from "@/components/ComingSoonLink";
+import { CTA } from '@/lib/content';
+import { ComingSoonLink } from '@/components/ComingSoonLink';
+import { EmailCaptureForm } from '@/components/EmailCaptureForm';
 
 export function CtaSection() {
   return (
@@ -25,14 +24,11 @@ export function CtaSection() {
               {CTA.subhead}
             </p>
 
-            <div className="mt-8 flex flex-wrap items-center justify-center gap-3">
-              <Link
-                href={CTA.primary.href}
-                className="inline-flex h-[42px] items-center gap-1.5 rounded-lg bg-white px-4 font-mono text-[14px] text-ink transition-opacity hover:opacity-90"
-              >
-                {CTA.primary.label}
-                <ChevronRight className="h-3.5 w-3.5" />
-              </Link>
+            <div className="mx-auto mt-8 max-w-[560px] text-left">
+              <EmailCaptureForm variant="dark" />
+            </div>
+
+            <div className="mt-5 flex flex-wrap items-center justify-center gap-3">
               <ComingSoonLink className="inline-flex h-[42px] items-center gap-2 rounded-lg bg-[#1f1f1f] px-4 font-mono text-[14px] text-white transition-opacity hover:opacity-90">
                 {CTA.secondary.label}
               </ComingSoonLink>
@@ -46,10 +42,10 @@ export function CtaSection() {
 
 function ReceiptTokens() {
   const tokens = [
-    { label: "[1] refund-policy.md", left: "8%", top: "22%" },
-    { label: "[2] sales-exceptions.md", left: "72%", top: "18%" },
-    { label: "Save as Skill →", left: "12%", top: "70%" },
-    { label: "version 14", left: "78%", top: "72%" },
+    { label: '[1] refund-policy.md', left: '8%', top: '22%' },
+    { label: '[2] sales-exceptions.md', left: '72%', top: '18%' },
+    { label: 'Save as Skill →', left: '12%', top: '70%' },
+    { label: 'version 14', left: '78%', top: '72%' },
   ];
   return (
     <div className="pointer-events-none absolute inset-0">
