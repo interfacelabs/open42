@@ -108,6 +108,21 @@ describe('PostExportDialog', () => {
     expect(screen.queryByRole('button', { name: /download/i })).not.toBeInTheDocument();
   });
 
+  it('uses the locked responsive dialog shell', () => {
+    renderDialog({ receipt: signedReceipt });
+
+    const dialog = screen.getByRole('dialog');
+    expect(dialog).toHaveClass('inset-x-0');
+    expect(dialog).toHaveClass('bottom-0');
+    expect(dialog).toHaveClass('rounded-t-lg');
+    expect(dialog).toHaveClass('sm:left-1/2');
+    expect(dialog).toHaveClass('sm:top-1/2');
+    expect(dialog).toHaveClass('sm:bottom-auto');
+    expect(dialog).toHaveClass('sm:-translate-x-1/2');
+    expect(dialog).toHaveClass('sm:-translate-y-1/2');
+    expect(dialog).toHaveClass('sm:max-w-[520px]');
+  });
+
   it('shows signing progress, explainer failure, and stale-at-export copy', () => {
     renderDialog({
       receipt: {
