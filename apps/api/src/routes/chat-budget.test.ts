@@ -1,6 +1,10 @@
 import { afterEach, describe, expect, it } from 'vitest';
 
-import { checkWorkspaceChatBudget, resetWorkspaceChatBudgetForTest } from './chat-budget.js';
+import {
+  checkWorkspaceChatBudget,
+  countTokensInMessages,
+  resetWorkspaceChatBudgetForTest,
+} from './chat-budget.js';
 
 describe('checkWorkspaceChatBudget', () => {
   afterEach(() => {
@@ -37,5 +41,15 @@ describe('checkWorkspaceChatBudget', () => {
     expect(checkWorkspaceChatBudget({ workspaceId: 'w1', inputChars: 10, env, now }).ok).toBe(true);
     time += 60_001;
     expect(checkWorkspaceChatBudget({ workspaceId: 'w1', inputChars: 10, env, now }).ok).toBe(true);
+  });
+
+  it('counts approximate tokens across normalized messages', () => {
+    expect(
+      countTokensInMessages([
+        { content: 'abcd' },
+        { content: 'abcde' },
+        { content: '   ' },
+      ]),
+    ).toBe(3);
   });
 });

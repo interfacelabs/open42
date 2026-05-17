@@ -32,6 +32,10 @@
       "types": "./dist/gbrain/public-proxy.d.ts",
       "default": "./dist/gbrain/public-proxy.js"
     },
+    "./integrations/resend": {
+      "types": "./dist/integrations/resend.d.ts",
+      "default": "./dist/integrations/resend.js"
+    },
     "./middleware/error-sanitize": {
       "types": "./dist/middleware/error-sanitize.d.ts",
       "default": "./dist/middleware/error-sanitize.js"

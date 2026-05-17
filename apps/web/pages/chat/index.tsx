@@ -16,8 +16,9 @@ import { Sidebar } from '@/components/Sidebar';
 import { SkillPanel } from '@/components/SkillPanel';
 import { SlashMenu } from '@/components/SlashMenu';
 import { Transcript } from '@/components/Transcript';
-import { fetcher } from '@/lib/api';
+import { fetcher, type FetchError } from '@/lib/api';
 import { csrfHeaders } from '@/lib/csrf';
+import { buildChatRequestHistory } from '@/lib/chat-history';
 import type { SkillDraft } from '@/lib/skill-types';
 import { useWorkspaceStore } from '@/lib/workspaces/store';
 import { recoverFromTenant403 } from '@/lib/workspaces/with-recovery';
@@ -71,13 +72,20 @@ export default function ChatPage() {
   // Connections — the chat surface is useless without at least one source.
   // If the workspace has none, we replace the transcript with a calm CTA
   // that pushes the user toward /settings/connections/add.
-  const { data: workspaceData } = useSWR<ChatWorkspacePayload>(
-    '/api/workspaces/current',
-    fetcher,
-  );
+  const { data: workspaceData, error: workspaceError } = useSWR<
+    ChatWorkspacePayload,
+    FetchError
+  >('/api/workspaces/current', fetcher);
   const hasNoSources =
-    workspaceData !== undefined &&
-    (workspaceData.connections ?? []).length === 0;
+    workspaceData !== undefined && (workspaceData.connections ?? []).length === 0;
+
+  useEffect(() => {
+    if (workspaceError?.status === 401) void router.replace('/sign_in');
+  }, [router, workspaceError]);
+
+  useEffect(() => {
+    if (workspaceData && !workspaceData.workspace) void router.replace('/onboard');
+  }, [router, workspaceData]);
 
   // Hydrate input from ?q= when the user lands here from the home ask-first
   // prompt. Strip the query param so a refresh doesn't re-prefill.
@@ -110,14 +118,29 @@ export default function ChatPage() {
       return;
     }
 
+    await sendQuery(query);
+  }
+
+  async function sendQuery(query: string, retryAssistantId?: string) {
+    const requestHistory = buildChatRequestHistory(messages, retryAssistantId);
     const userMessage: ChatMessage = { id: crypto.randomUUID(), role: 'user', text: query };
-    const assistantId = crypto.randomUUID();
+    const assistantId = retryAssistantId ?? crypto.randomUUID();
     currentAssistantId.current = assistantId;
-    setMessages((current) => [
-      ...current,
-      userMessage,
-      { id: assistantId, role: 'assistant', text: '', citations: [] },
-    ]);
+    if (retryAssistantId) {
+      setMessages((current) =>
+        current.map((message) =>
+          message.id === retryAssistantId
+            ? { ...message, text: '', citations: [], error: undefined, retryQuery: undefined }
+            : message,
+        ),
+      );
+    } else {
+      setMessages((current) => [
+        ...current,
+        userMessage,
+        { id: assistantId, role: 'assistant', text: '', citations: [], retryQuery: query },
+      ]);
+    }
     setInput('');
     setThinking(true);
 
@@ -126,6 +149,7 @@ export default function ChatPage() {
       headers: { 'Content-Type': 'application/json', ...csrfHeaders() },
       body: JSON.stringify({
         query,
+        messages: requestHistory,
         workspace_id: workspaceId,
         ...(activeSkillId ? { skillId: activeSkillId } : {}),
       }),
@@ -140,7 +164,7 @@ export default function ChatPage() {
       setMessages((current) =>
         current.map((message) =>
           message.id === assistantId
-            ? { ...message, text: 'Recovering workspace…' }
+            ? { ...message, text: 'Recovering workspace...', error: undefined }
             : message,
         ),
       );
@@ -158,7 +182,7 @@ export default function ChatPage() {
       setMessages((current) =>
         current.map((message) =>
           message.id === assistantId
-            ? { ...message, text: 'The brain is not ready to answer yet.' }
+            ? { ...message, text: '', error: 'chat_provider_error', retryQuery: query }
             : message,
         ),
       );
@@ -193,40 +217,38 @@ export default function ChatPage() {
     if (event.type === 'token') {
       setMessages((current) =>
         current.map((message) =>
-          message.id === assistantId ? { ...message, text: message.text + event.text } : message,
+          message.id === assistantId
+            ? {
+                ...message,
+                text: message.text + event.text,
+                error: undefined,
+              }
+            : message,
+        ),
+      );
+      setThinking(false);
+    }
+    if (event.type === 'error') {
+      setMessages((current) =>
+        current.map((message) =>
+          message.id === assistantId
+            ? {
+                ...message,
+                text: '',
+                error: typeof event.error === 'string' ? event.error : 'chat_provider_error',
+                retryQuery: message.retryQuery,
+              }
+            : message,
         ),
       );
       setThinking(false);
     }
   }
 
-  async function downloadSkill(draft: SkillDraft) {
-    setSkillError(null);
-    if (!workspaceId) {
-      setSkillError('no_active_workspace');
-      return;
-    }
-    const response = await fetch(
-      `/api/workspaces/${encodeURIComponent(workspaceId)}/skills/${encodeURIComponent(draft.id)}`,
-      {
-        method: 'POST',
-        headers: csrfHeaders(),
-      },
-    );
-    if (!response.ok) {
-      const payload = (await response.json().catch(() => ({}))) as {
-        error?: string;
-      };
-      setSkillError(payload.error ?? 'skill_export_failed');
-      return;
-    }
-    const blob = await response.blob();
-    const url = URL.createObjectURL(blob);
-    const anchor = document.createElement('a');
-    anchor.href = url;
-    anchor.download = `${draft.name}-skill.zip`;
-    anchor.click();
-    URL.revokeObjectURL(url);
+  function retryAssistantMessage(messageId: string) {
+    const message = messages.find((item) => item.id === messageId);
+    if (!message?.retryQuery || thinking) return;
+    void sendQuery(message.retryQuery, messageId);
   }
 
   async function skillifyThread() {
@@ -238,6 +260,8 @@ export default function ChatPage() {
     }
     const threadCitations = latestCitations.map((c) => ({
       slug: c.slug,
+      excerpt: c.excerpt,
+      versionId: c.version_id ?? undefined,
       lastUpdated: c.last_updated ?? undefined,
     }));
 
@@ -249,14 +273,11 @@ export default function ChatPage() {
       return;
     }
     try {
-      const response = await fetch(
-        `/api/workspaces/${encodeURIComponent(workspaceId)}/skills`,
-        {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', ...csrfHeaders() },
-          body: JSON.stringify({ intent, threadCitations }),
-        },
-      );
+      const response = await fetch(`/api/workspaces/${encodeURIComponent(workspaceId)}/skills`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...csrfHeaders() },
+        body: JSON.stringify({ intent, threadCitations }),
+      });
       const payload = (await response.json().catch(() => ({}))) as {
         draft?: SkillDraft;
         error?: string;
@@ -320,6 +341,7 @@ export default function ChatPage() {
                     thinking={thinking}
                     activeCitationIndex={activeCitationIndex}
                     onActivateCitation={setActiveCitationIndex}
+                    onRetry={retryAssistantMessage}
                   />
                   {!thinking && latestCitations.length > 0 ? (
                     <button
@@ -344,12 +366,7 @@ export default function ChatPage() {
 
           {showNoSourcesEmpty ? null : (
             <div className="shrink-0">
-              <Composer
-                input={input}
-                onChange={setInput}
-                onSubmit={submit}
-                disabled={thinking}
-              />
+              <Composer input={input} onChange={setInput} onSubmit={submit} disabled={thinking} />
             </div>
           )}
         </main>
@@ -358,11 +375,7 @@ export default function ChatPage() {
           activeIndex={activeCitationIndex}
           onActivate={setActiveCitationIndex}
         />
-        <SkillPanel
-          draftId={skillDraftId}
-          onClose={() => setSkillDraftId(null)}
-          onDownload={(draft) => void downloadSkill(draft)}
-        />
+        <SkillPanel draftId={skillDraftId} onClose={() => setSkillDraftId(null)} />
         <QuickSwitcher />
       </div>
     </>
@@ -443,9 +456,7 @@ function Composer({
 function EmptyPrompt() {
   return (
     <div className="flex flex-col items-center pt-8 text-center">
-      <p className="font-mono text-[10.5px] uppercase tracking-[0.08em] text-text-faint">
-        ASK
-      </p>
+      <p className="font-mono text-[10.5px] uppercase tracking-[0.08em] text-text-faint">ASK</p>
       <h1 className="mt-3 text-[36px] font-medium leading-[1.05] tracking-[-0.025em] text-text-primary md:text-[42px]">
         Ask the <span className="font-serif font-normal italic">brain.</span>
       </h1>
@@ -464,8 +475,8 @@ function NoSourcesEmpty() {
         The brain needs something to read.
       </h2>
       <p className="mt-2 max-w-[44ch] text-[13.5px] leading-relaxed text-text-subtle">
-        Connect Notion, Drive, or upload a zip first — then come back and the
-        brain can answer with <span className="font-serif italic">citations.</span>
+        Connect Notion, Drive, or upload a zip first — then come back and the brain can answer with{' '}
+        <span className="font-serif italic">citations.</span>
       </p>
       <Link href="/settings/connections/add" className="btn-primary mt-6">
         Connect a source

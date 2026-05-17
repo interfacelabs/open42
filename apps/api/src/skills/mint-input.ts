@@ -1,8 +1,11 @@
 const MAX_INTENT_CHARS = 2_000;
 const MAX_CITATIONS = 32;
+export const MAX_CITATION_EXCERPT_CHARS = 2_000;
 
 export interface MintThreadCitationInput {
   slug: string;
+  excerpt?: string;
+  versionId?: string;
   lastUpdated?: string;
 }
 
@@ -41,9 +44,18 @@ export function parseMintInput(raw: unknown): ParseResult {
       const c = item as Record<string, unknown>;
       const slug = typeof c.slug === 'string' ? c.slug.trim() : '';
       if (!slug) return { ok: false, error: 'citation_slug_required' };
+      const excerpt = typeof c.excerpt === 'string' ? c.excerpt.trim() : '';
+      const versionId =
+        typeof c.versionId === 'string'
+          ? c.versionId.trim()
+          : typeof c.versionId === 'number'
+            ? String(c.versionId)
+            : '';
       const lastUpdated = typeof c.lastUpdated === 'string' ? c.lastUpdated.trim() : '';
       threadCitations.push({
         slug,
+        excerpt: excerpt ? excerpt.slice(0, MAX_CITATION_EXCERPT_CHARS) : undefined,
+        versionId: versionId || undefined,
         lastUpdated: lastUpdated || undefined,
       });
     }
@@ -56,7 +68,13 @@ export function estimateInputChars(input: MintInput): number {
   return (
     input.intent.length +
     input.threadCitations.reduce(
-      (sum, c) => sum + c.slug.length + (c.lastUpdated?.length ?? 0) + 16,
+      (sum, c) =>
+        sum +
+        c.slug.length +
+        (c.excerpt?.length ?? 0) +
+        (c.versionId?.length ?? 0) +
+        (c.lastUpdated?.length ?? 0) +
+        16,
       0,
     )
   );

@@ -3,7 +3,7 @@
 import { useState, type FormEvent } from 'react';
 import { WAITLIST } from '@/lib/content';
 
-const WAITLIST_ENDPOINT = process.env.NEXT_PUBLIC_OPEN42_WAITLIST_URL ?? '/api/waitlist';
+const WAITLIST_ENDPOINT = process.env.NEXT_PUBLIC_OPEN42_WAITLIST_URL ?? '';
 
 type Props = {
   variant?: 'light' | 'dark';
@@ -28,8 +28,10 @@ export function EmailCaptureForm({ variant = 'light', className = '' }: Props) {
     setStatus('submitting');
     setError('');
 
+    const endpoint = resolveWaitlistEndpoint();
+
     try {
-      const response = await fetch(WAITLIST_ENDPOINT, {
+      const response = await fetch(endpoint, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email: normalizedEmail, source: 'landing' }),
@@ -99,4 +101,14 @@ export function EmailCaptureForm({ variant = 'light', className = '' }: Props) {
       </p>
     </form>
   );
+}
+
+function resolveWaitlistEndpoint(): string {
+  if (WAITLIST_ENDPOINT) return WAITLIST_ENDPOINT;
+  if (typeof window === 'undefined') return '';
+  const hostname = window.location.hostname.toLowerCase();
+  if (hostname === 'open42.ai' || hostname === 'www.open42.ai') {
+    return 'https://api.open42.ai/waitlist';
+  }
+  return '/api/waitlist';
 }

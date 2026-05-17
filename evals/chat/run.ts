@@ -1,0 +1,161 @@
+import { readFile } from 'node:fs/promises';
+import { dirname, join } from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+
+import { gradeChatAnswerWithOptionalJudge, type ChatEvalQuestion } from './grader.js';
+
+interface NormalizedMessage {
+  role: 'user' | 'assistant';
+  text: string;
+}
+
+interface ChatEvalTurnAnswer {
+  text: string;
+  citations: Array<{ slug?: string | null }>;
+}
+
+const here = dirname(fileURLToPath(import.meta.url));
+
+export interface ChatEvalConfig {
+  apiUrl: string;
+  workspaceId: string;
+  cookie: string;
+  csrf?: string;
+  userAgent?: string;
+}
+
+export interface ChatEvalSummary {
+  suite: 'chat-multi-turn';
+  passed: number;
+  total: number;
+  passThreshold: number;
+  failures: Array<Record<string, unknown>>;
+  results: Array<Record<string, unknown>>;
+}
+
+async function main() {
+  const summary = await runChatEval({
+    apiUrl: requiredEnv('OPEN42_CHAT_EVAL_API_URL'),
+    workspaceId: requiredEnv('OPEN42_CHAT_EVAL_WORKSPACE_ID'),
+    cookie: requiredEnv('OPEN42_CHAT_EVAL_COOKIE'),
+    csrf: process.env.OPEN42_CHAT_EVAL_CSRF ?? '',
+    userAgent: process.env.OPEN42_CHAT_EVAL_USER_AGENT ?? '',
+  });
+  console.log(JSON.stringify(summary, null, 2));
+  if (summary.passed < summary.passThreshold) process.exitCode = 1;
+}
+
+export async function runChatEval(config: ChatEvalConfig): Promise<ChatEvalSummary> {
+  const apiUrl = config.apiUrl.replace(/\/+$/, '');
+  const questions = JSON.parse(
+    await readFile(join(here, 'questions.json'), 'utf8'),
+  ) as ChatEvalQuestion[];
+  const results = [];
+
+  for (const question of questions) {
+    const messages: NormalizedMessage[] = [];
+    let finalAnswer = '';
+    let finalCitations: Array<{ slug?: string | null }> = [];
+    for (const turn of question.turns) {
+      const answer = await ask({
+        apiUrl,
+        cookie: config.cookie,
+        csrf: config.csrf ?? '',
+        workspaceId: config.workspaceId,
+        query: turn,
+        messages,
+        userAgent: config.userAgent,
+      });
+      messages.push({ role: 'user', text: turn });
+      messages.push({ role: 'assistant', text: answer.text });
+      finalAnswer = answer.text;
+      finalCitations = answer.citations;
+    }
+    const grade = await gradeChatAnswerWithOptionalJudge(question, {
+      id: question.id,
+      answer: finalAnswer,
+      citations: finalCitations,
+    });
+    results.push({ ...grade, answer: finalAnswer });
+  }
+
+  const passed = results.filter((result) => result.passed).length;
+  return {
+    suite: 'chat-multi-turn',
+    passed,
+    total: results.length,
+    passThreshold: 4,
+    failures: results.filter((result) => !result.passed),
+    results,
+  };
+}
+
+async function ask(input: {
+  apiUrl: string;
+  cookie: string;
+  csrf: string;
+  workspaceId: string;
+  query: string;
+  messages: NormalizedMessage[];
+  userAgent?: string;
+}): Promise<ChatEvalTurnAnswer> {
+  const response = await fetch(`${input.apiUrl}/chat`, {
+    method: 'POST',
+    headers: {
+      Cookie: input.cookie,
+      'Content-Type': 'application/json',
+      ...(input.csrf ? { 'X-CSRF-Token': input.csrf } : {}),
+      ...(input.userAgent ? { 'User-Agent': input.userAgent } : {}),
+    },
+    body: JSON.stringify({
+      workspace_id: input.workspaceId,
+      query: input.query,
+      messages: input.messages,
+    }),
+  });
+  if (!response.ok || !response.body) {
+    throw new Error(`chat eval request failed: ${response.status}`);
+  }
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+  let text = '';
+  let citations: Array<{ slug?: string | null }> = [];
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    const lines = buffer.split('\n');
+    buffer = lines.pop() ?? '';
+    for (const line of lines) {
+      if (!line.trim()) continue;
+      const event = JSON.parse(line) as { type?: string; text?: string; error?: string };
+      if (event.type === 'token' && event.text) text += event.text;
+      if (
+        event.type === 'citations' &&
+        Array.isArray((event as { citations?: unknown }).citations)
+      ) {
+        citations = ((event as { citations?: Array<{ slug?: unknown }> }).citations ?? []).map(
+          (citation) => ({
+            slug: typeof citation.slug === 'string' ? citation.slug : null,
+          }),
+        );
+      }
+      if (event.type === 'error') throw new Error(event.error ?? 'chat_eval_stream_error');
+    }
+  }
+  return { text, citations };
+}
+
+function requiredEnv(name: string): string {
+  const value = process.env[name]?.trim();
+  if (!value) {
+    throw new Error(`${name} is required for chat evals`);
+  }
+  return value;
+}
+
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  void main();
+}

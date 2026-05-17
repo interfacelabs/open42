@@ -1,5 +1,6 @@
 import { memo } from 'react';
 import { motion } from 'motion/react';
+import { RotateCcw } from 'lucide-react';
 
 import type { ChatMessage, Citation } from './chat-types';
 import { CitationChip } from './CitationChip';
@@ -10,6 +11,7 @@ interface TranscriptProps {
   thinking: boolean;
   activeCitationIndex: number | null;
   onActivateCitation: (index: number) => void;
+  onRetry?: (messageId: string) => void;
 }
 
 /**
@@ -28,6 +30,7 @@ export function Transcript({
   thinking,
   activeCitationIndex,
   onActivateCitation,
+  onRetry,
 }: TranscriptProps) {
   return (
     <div className="flex flex-col gap-6">
@@ -37,6 +40,7 @@ export function Transcript({
           message={message}
           activeCitationIndex={activeCitationIndex}
           onActivateCitation={onActivateCitation}
+          onRetry={onRetry}
         />
       ))}
       {thinking ? (
@@ -52,10 +56,12 @@ const TranscriptRow = memo(function TranscriptRow({
   message,
   activeCitationIndex,
   onActivateCitation,
+  onRetry,
 }: {
   message: ChatMessage;
   activeCitationIndex: number | null;
   onActivateCitation: (index: number) => void;
+  onRetry?: (messageId: string) => void;
 }) {
   if (message.role === 'user') {
     return (
@@ -91,11 +97,27 @@ const TranscriptRow = memo(function TranscriptRow({
       className="flex justify-start"
     >
       <div className="max-w-[600px] whitespace-pre-wrap text-[14.5px] leading-[1.75] tracking-[-0.005em] text-text-body">
-        {renderWithCitations(
-          message.text,
-          message.citations ?? [],
-          activeCitationIndex,
-          onActivateCitation,
+        {message.error ? (
+          <div className="inline-flex items-center gap-2 rounded-full border border-border bg-white px-3 py-1.5 text-[12px] text-text-subtle">
+            <span>{humanizeChatError(message.error)}</span>
+            {message.retryQuery && onRetry ? (
+              <button
+                type="button"
+                onClick={() => onRetry(message.id)}
+                className="inline-flex items-center gap-1 font-medium text-accent"
+              >
+                <RotateCcw size={12} strokeWidth={1.5} />
+                Retry
+              </button>
+            ) : null}
+          </div>
+        ) : (
+          renderWithCitations(
+            message.text,
+            message.citations ?? [],
+            activeCitationIndex,
+            onActivateCitation,
+          )
         )}
       </div>
     </motion.div>
@@ -112,9 +134,7 @@ function renderWithCitations(
   return parts.map((part, index) => {
     const match = part.match(/^\[(\d+)]$/);
     if (!match) return <span key={`${part}-${index}`}>{part}</span>;
-    const citation = citations.find(
-      (item) => item.index === Number(match[1]),
-    );
+    const citation = citations.find((item) => item.index === Number(match[1]));
     return citation ? (
       <CitationChip
         key={`${part}-${index}`}
@@ -126,4 +146,19 @@ function renderWithCitations(
       <span key={`${part}-${index}`}>{part}</span>
     );
   });
+}
+
+function humanizeChatError(code: string): string {
+  switch (code) {
+    case 'chat_provider_error':
+    case 'provider_request_failed':
+    case 'provider_stream_failed':
+      return 'The model could not finish that answer.';
+    case 'chat_body_too_large':
+      return 'That thread is too large to send.';
+    case 'upstream_key_unconfigured':
+      return 'No model key is configured.';
+    default:
+      return 'The brain could not answer.';
+  }
 }

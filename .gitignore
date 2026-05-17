@@ -148,6 +148,7 @@ playwright/.cache/
 eval/results/
 eval/cache/
 eval/*.local.json
+.open42-skill-bundles/
 
 # =====================================================================
 # Editor / OS
