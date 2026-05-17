@@ -3,9 +3,12 @@ import { describe, expect, it } from 'vitest';
 import {
   canonicalizeSkillMarkdown,
   generateWorkspaceSigningMaterial,
+  getOrCreateWorkspaceSigningKey,
   signCanonicalSkillMarkdown,
   verifyCanonicalSkillMarkdownSignature,
+  WORKSPACE_SIGNING_KEY_PURPOSE,
 } from './signing.js';
+import type { GetOrCreateSigningKeyDeps } from './signing.js';
 
 describe('skill signing', () => {
   it('normalizes markdown before signing', () => {
@@ -41,5 +44,94 @@ describe('skill signing', () => {
         publicKeyPem: keys.publicKey,
       }),
     ).toBe(false);
+  });
+
+  it('stores workspace private keys through envelope encryption with the signing purpose', async () => {
+    let encryptedPrivateKey = '';
+    let inserted:
+      | {
+          workspaceId: string;
+          publicKey: string;
+          privateKeyCiphertext: Buffer;
+        }
+      | undefined;
+    let encryptedFor:
+      | {
+          workspaceId?: string;
+          purpose?: string;
+        }
+      | undefined;
+    let decryptedFor:
+      | {
+          workspaceId?: string;
+          purpose?: string;
+        }
+      | undefined;
+
+    const rows = () =>
+      inserted
+        ? [
+            {
+              publicKey: inserted.publicKey,
+              privateKeyCiphertext: inserted.privateKeyCiphertext,
+            },
+          ]
+        : [];
+    const db = {
+      select: () => ({
+        from: () => ({
+          where: () => ({
+            limit: async () => rows(),
+          }),
+        }),
+      }),
+      insert: () => ({
+        values: async (row: {
+          workspaceId: string;
+          publicKey: string;
+          privateKeyCiphertext: Buffer;
+        }) => {
+          inserted = row;
+        },
+      }),
+    } as unknown as NonNullable<GetOrCreateSigningKeyDeps['db']>;
+
+    const first = await getOrCreateWorkspaceSigningKey('workspace-1', {
+      db,
+      encrypt: (value, options) => {
+        encryptedPrivateKey = value;
+        encryptedFor = options;
+        return Buffer.from('ciphertext');
+      },
+      decrypt: (value, options) => {
+        expect(value).toEqual(Buffer.from('ciphertext'));
+        decryptedFor = options;
+        return encryptedPrivateKey;
+      },
+    });
+    const second = await getOrCreateWorkspaceSigningKey('workspace-1', {
+      db,
+      encrypt: () => {
+        throw new Error('existing signing keys must not be re-encrypted');
+      },
+      decrypt: (value, options) => {
+        expect(value).toEqual(Buffer.from('ciphertext'));
+        decryptedFor = options;
+        return encryptedPrivateKey;
+      },
+    });
+
+    expect(first.privateKey).toContain('BEGIN PRIVATE KEY');
+    expect(inserted?.privateKeyCiphertext).toEqual(Buffer.from('ciphertext'));
+    expect(inserted?.privateKeyCiphertext.toString('utf8')).not.toContain('BEGIN PRIVATE KEY');
+    expect(encryptedFor).toEqual({
+      workspaceId: 'workspace-1',
+      purpose: WORKSPACE_SIGNING_KEY_PURPOSE,
+    });
+    expect(decryptedFor).toEqual({
+      workspaceId: 'workspace-1',
+      purpose: WORKSPACE_SIGNING_KEY_PURPOSE,
+    });
+    expect(second).toEqual(first);
   });
 });
