@@ -298,6 +298,7 @@ function PanelBody({
       </div>
 
       <PostExportDialog
+        key={`${draft.id}:${exportReceipt.version}:${exportDialogOpen ? 'open' : 'closed'}`}
         open={exportDialogOpen}
         onOpenChange={setExportDialogOpen}
         draft={draft}
