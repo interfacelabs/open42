@@ -4,15 +4,28 @@ import pg from 'pg';
 
 import * as schema from './schema.js';
 
-if (!process.env.DATABASE_URL) {
+type DbClient = ReturnType<typeof drizzle>;
+
+const databaseUrl = process.env.DATABASE_URL;
+
+if (!databaseUrl && process.env.NODE_ENV !== 'test') {
   throw new Error('DATABASE_URL is required (see .env.example)');
 }
 
-const pool = new pg.Pool({
-  connectionString: process.env.DATABASE_URL,
-  max: 10,
-  idleTimeoutMillis: 30_000,
-});
+const pool = databaseUrl
+  ? new pg.Pool({
+      connectionString: databaseUrl,
+      max: 10,
+      idleTimeoutMillis: 30_000,
+    })
+  : null;
 
-export const db = drizzle({ client: pool });
+const missingDatabaseUrl = (): DbClient =>
+  new Proxy({} as DbClient, {
+    get() {
+      throw new Error('DATABASE_URL is required (see .env.example)');
+    },
+  });
+
+export const db = pool ? drizzle({ client: pool }) : missingDatabaseUrl();
 export { schema };

@@ -46,7 +46,25 @@ describe('PostExportDialog', () => {
     }
   });
 
-  it('defaults to openclaw and restores the persisted install target', () => {
+  it('renders the locked target order while defaulting to openclaw', () => {
+    const openclaw = SKILL_TARGETS.find((target) => target.id === 'openclaw')!;
+
+    renderDialog({ receipt: signedReceipt });
+
+    const tabLabels = screen
+      .getAllByRole('button')
+      .map((button) => button.textContent?.trim())
+      .filter((label): label is string =>
+        SKILL_TARGETS.some((target) => target.label === label),
+      );
+
+    expect(tabLabels).toEqual(['Claude Code', 'openclaw', 'hermes']);
+    expect(
+      screen.getByText(skillInstallDestination(openclaw, draft.name)),
+    ).toBeInTheDocument();
+  });
+
+  it('restores the persisted install target', () => {
     const openclaw = SKILL_TARGETS.find((target) => target.id === 'openclaw')!;
     const claudeCode = SKILL_TARGETS.find((target) => target.id === 'claude-code')!;
     const first = renderDialog({ receipt: signedReceipt });
@@ -77,15 +95,49 @@ describe('PostExportDialog', () => {
 
     expect(screen.getByText('Refund Policy Skill exported')).toBeInTheDocument();
     expect(screen.getByText('Signed by Acme Corp')).toBeInTheDocument();
+    expect(screen.getByText('all fresh')).toBeInTheDocument();
     expect(
       screen.getByText(/Use this skill when answering refund-policy questions/i),
     ).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: 'Install in' })).toBeInTheDocument();
+    expect(document.body.querySelector('ol')).toHaveClass('list-decimal');
     expect(
       screen.getByRole('link', { name: /connect an mcp-compatible agent instead/i }),
     ).toHaveAttribute('href', '/settings/mcp');
     expect(screen.getByText(/Share links expire in 24 hours/i)).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /download/i })).not.toBeInTheDocument();
+  });
+
+  it('uses the locked responsive dialog shell', () => {
+    renderDialog({ receipt: signedReceipt });
+
+    const dialog = screen.getByRole('dialog');
+    expect(dialog).toHaveClass('inset-x-0');
+    expect(dialog).toHaveClass('bottom-0');
+    expect(dialog).toHaveClass('rounded-t-lg');
+    expect(dialog).toHaveClass('sm:left-1/2');
+    expect(dialog).toHaveClass('sm:top-1/2');
+    expect(dialog).toHaveClass('sm:bottom-auto');
+    expect(dialog).toHaveClass('sm:-translate-x-1/2');
+    expect(dialog).toHaveClass('sm:-translate-y-1/2');
+    expect(dialog).toHaveClass('sm:max-w-[520px]');
+  });
+
+  it('keeps the locked design-system affordances', () => {
+    renderDialog({ receipt: signedReceipt });
+
+    const receiptStrip = screen.getByText('Signed by Acme Corp').parentElement;
+    expect(receiptStrip).toHaveClass('text-text-subtle');
+    expect(receiptStrip).not.toHaveClass('text-text-faint');
+
+    const shareButton = screen.getByRole('button', { name: /generate share link/i });
+    expect(shareButton).toHaveClass('bg-white');
+    expect(shareButton).toHaveClass('border-border');
+    expect(shareButton).not.toHaveClass('bg-accent');
+
+    expect(screen.getByRole('heading', { name: /skill exported/i })).toHaveClass('font-medium');
+    expect(screen.getByRole('heading', { name: 'Install in' })).toHaveClass('font-medium');
+    expect(screen.getByText('Generated from').parentElement).toHaveClass('font-medium');
   });
 
   it('shows signing progress, explainer failure, and stale-at-export copy', () => {
@@ -106,6 +158,7 @@ describe('PostExportDialog', () => {
   it('renders explainer pending and signing failure states', () => {
     const { rerender } = render(
       <PostExportDialog
+        key="refund-policy:0.1.2:open"
         open
         onOpenChange={() => undefined}
         draft={draft}
@@ -166,6 +219,54 @@ describe('PostExportDialog', () => {
 
     expect(await screen.findByRole('button', { name: /share link expired/i })).toBeInTheDocument();
     expect(screen.getByText('https://api.open42.ai/shared/expired.zip')).toBeInTheDocument();
+  });
+
+  it('resets minted share state when the dialog is reopened for a new export context', async () => {
+    const { rerender } = render(
+      <PostExportDialog
+        open
+        onOpenChange={() => undefined}
+        draft={draft}
+        receipt={signedReceipt}
+        onMintShare={async () => ({
+          url: 'https://api.open42.ai/shared/token.zip',
+          expiresAt: new Date(Date.now() + 60_000).toISOString(),
+        })}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: /generate share link/i }));
+    expect(await screen.findByText('https://api.open42.ai/shared/token.zip')).toBeInTheDocument();
+
+    rerender(
+      <PostExportDialog
+        key="refund-policy:0.1.2:closed"
+        open={false}
+        onOpenChange={() => undefined}
+        draft={draft}
+        receipt={signedReceipt}
+        onMintShare={async () => ({
+          url: 'https://api.open42.ai/shared/token.zip',
+          expiresAt: new Date(Date.now() + 60_000).toISOString(),
+        })}
+      />,
+    );
+    rerender(
+      <PostExportDialog
+        key="refund-policy:0.1.3:open"
+        open
+        onOpenChange={() => undefined}
+        draft={draft}
+        receipt={{ ...signedReceipt, version: '0.1.3' }}
+        onMintShare={async () => ({
+          url: 'https://api.open42.ai/shared/token.zip',
+          expiresAt: new Date(Date.now() + 60_000).toISOString(),
+        })}
+      />,
+    );
+
+    expect(screen.queryByText('https://api.open42.ai/shared/token.zip')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /generate share link/i })).toBeInTheDocument();
   });
 });
 

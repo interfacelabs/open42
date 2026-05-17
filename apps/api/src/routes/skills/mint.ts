@@ -14,7 +14,11 @@ import {
   parseMintInput,
   type MintThreadCitationInput,
 } from '../../skills/mint-input.js';
-import { captureSkillCitationProvenance } from '../../skills/provenance.js';
+import {
+  captureSkillCitationProvenance,
+  citedTextSha256,
+  latestVersionIdFromChunks,
+} from '../../skills/provenance.js';
 import { mintShareLink } from '../../skills/share-link.js';
 import {
   canonicalizeSkillMarkdown,
@@ -233,18 +237,24 @@ skillsRouter.post('/:skillId', async (req, res, next) => {
       return;
     }
 
+    const exportVersion = await refreshStaleVersionForExport({
+      skill: fetched.skill,
+      version: fetched.version,
+      userId: session.userId,
+    });
+
     await logSkillExport({
       workspaceId: workspace.id,
       userId: session.userId,
       skillId: fetched.skill.id,
-      version: fetched.version,
+      version: exportVersion,
     });
 
     const prepared = await prepareSignedSkillBundle({
       workspace,
       userId: session.userId,
       skill: fetched.skill,
-      version: fetched.version,
+      version: exportVersion,
     });
     res.setHeader('Content-Type', 'application/zip');
     res.setHeader('Content-Disposition', `attachment; filename="${fetched.skill.name}-skill.zip"`);
@@ -279,11 +289,17 @@ skillsRouter.post('/:skillId/share', async (req, res, next) => {
       return;
     }
 
+    const shareVersion = await refreshStaleVersionForExport({
+      skill: fetched.skill,
+      version: fetched.version,
+      userId: session.userId,
+    });
+
     const prepared = await prepareSignedSkillBundle({
       workspace,
       userId: session.userId,
       skill: fetched.skill,
-      version: fetched.version,
+      version: shareVersion,
     });
     const link = await mintShareLink({
       workspaceId: workspace.id,
@@ -376,7 +392,7 @@ skillsRouter.post('/', async (req, res, next) => {
       workspaceId: workspace.id,
       userId: session.userId,
       generated,
-      sourceCitationSlugs: new Set(threadCitations.map((c) => c.slug)),
+      sourceCitations: threadCitations,
     });
 
     if (!persisted.ok) {
@@ -419,13 +435,14 @@ async function persistDraft(args: {
   workspaceId: string;
   userId: string;
   generated: Awaited<ReturnType<typeof generateSkill>>;
-  sourceCitationSlugs: ReadonlySet<string>;
+  sourceCitations: ThreadCitation[];
 }): Promise<PersistOk | PersistErr> {
-  const { workspaceId, userId, generated, sourceCitationSlugs } = args;
+  const { workspaceId, userId, generated, sourceCitations } = args;
   const { draft } = generated;
   const name = draft.frontmatter.name;
   const version = draft.frontmatter.version;
-  if (draft.cited_doc_slugs.some((slug) => !sourceCitationSlugs.has(slug))) {
+  const sourceCitationBySlug = new Map(sourceCitations.map((citation) => [citation.slug, citation]));
+  if (draft.cited_doc_slugs.some((slug) => !sourceCitationBySlug.has(slug))) {
     return {
       ok: false,
       status: 422,
@@ -461,6 +478,24 @@ async function persistDraft(args: {
           status: 500,
           error: 'skill_version_insert_failed',
         };
+      }
+
+      const provenanceRows = draft.cited_doc_slugs.flatMap((slug, idx) => {
+        const citation = sourceCitationBySlug.get(slug);
+        if (!citation?.excerpt) return [];
+        return [
+          {
+            skillVersionId: version_.id,
+            citationIndex: idx + 1,
+            slug,
+            versionId: citation.versionId ?? null,
+            citedText: citation.excerpt,
+            citedTextSha256: citedTextSha256(citation.excerpt),
+          },
+        ];
+      });
+      if (provenanceRows.length > 0) {
+        await tx.insert(schema.skillCitationProvenance).values(provenanceRows);
       }
 
       const citeChips =
@@ -598,6 +633,23 @@ async function persistRevision(args: {
         };
       }
 
+      const previousProvenance = await tx
+        .select()
+        .from(schema.skillCitationProvenance)
+        .where(eq(schema.skillCitationProvenance.skillVersionId, previousVersion.id));
+      if (previousProvenance.length > 0) {
+        await tx.insert(schema.skillCitationProvenance).values(
+          previousProvenance.map((row) => ({
+            skillVersionId: version.id,
+            citationIndex: row.citationIndex,
+            slug: row.slug,
+            versionId: row.versionId,
+            citedText: row.citedText,
+            citedTextSha256: row.citedTextSha256,
+          })),
+        );
+      }
+
       await tx
         .update(schema.skills)
         .set({ updatedAt: new Date() })
@@ -644,18 +696,38 @@ async function rehydrateThreadCitations(
     const chunks = await gbrain.getChunks(citation.slug);
     if (chunks.length === 0) continue;
 
-    const excerpt = chunksToExcerpt(chunks).slice(0, remaining);
+    const excerpt = citationScopedExcerpt(citation, chunks).slice(0, remaining);
     if (!excerpt) continue;
 
     remaining -= excerpt.length;
     out.push({
       slug: citation.slug,
       excerpt,
+      versionId: citation.versionId ?? latestVersionIdFromChunks(chunks) ?? undefined,
       lastUpdated: citation.lastUpdated ?? latestChunkUpdate(chunks),
     });
   }
 
   return out;
+}
+
+function citationScopedExcerpt(
+  citation: MintThreadCitationInput,
+  chunks: GbrainCitationChunk[],
+): string {
+  const serverText = chunksToExcerpt(chunks);
+  const claimed = citation.excerpt?.trim();
+  if (claimed && containsCitedSpan(serverText, claimed)) return claimed;
+  return serverText;
+}
+
+function containsCitedSpan(serverText: string, citedSpan: string): boolean {
+  if (serverText.includes(citedSpan)) return true;
+  return normalizeCitationText(serverText).includes(normalizeCitationText(citedSpan));
+}
+
+function normalizeCitationText(value: string): string {
+  return value.replace(/\s+/g, ' ').trim();
 }
 
 function chunksToExcerpt(chunks: GbrainCitationChunk[]): string {
@@ -693,6 +765,78 @@ async function logSkillExport(args: {
     });
   } catch {
     // Audit log only — downloads should not fail if this write is unavailable.
+  }
+}
+
+async function refreshStaleVersionForExport(args: {
+  skill: LoadedVersion['skill'];
+  version: typeof schema.skillVersions.$inferSelect;
+  userId: string;
+}): Promise<typeof schema.skillVersions.$inferSelect> {
+  const stale = await loadLatestStaleness(args.version.id);
+  if (!stale) return args.version;
+
+  const frontmatter = args.version.frontmatter as Record<string, unknown>;
+  const nextVersion = bumpPatch(args.version.version);
+  const refreshedFrontmatter = {
+    ...frontmatter,
+    version: nextVersion,
+  };
+  const citedDocSlugs = normalizeCitedDocSlugs(args.version.citedDocSlugs);
+
+  try {
+    return await db.transaction(async (tx) => {
+      const [stillStale] = await tx
+        .select({ id: schema.skillStaleness.id })
+        .from(schema.skillStaleness)
+        .where(
+          and(
+            eq(schema.skillStaleness.skillVersionId, args.version.id),
+            eq(schema.skillStaleness.status, 'stale'),
+          ),
+        )
+        .limit(1);
+
+      if (!stillStale) return args.version;
+
+      const [version] = await tx
+        .insert(schema.skillVersions)
+        .values({
+          skillId: args.skill.id,
+          version: nextVersion,
+          frontmatter: refreshedFrontmatter,
+          body: args.version.body,
+          citedDocSlugs,
+          createdByUserId: args.userId,
+        })
+        .returning();
+      if (!version) throw new Error('skill_version_insert_failed');
+
+      await tx
+        .update(schema.skills)
+        .set({ updatedAt: new Date() })
+        .where(eq(schema.skills.id, args.skill.id));
+
+      const citeChips =
+        citedDocSlugs.length > 0
+          ? citedDocSlugs.map((_, idx) => `[${idx + 1}]`).join(' ')
+          : null;
+      await tx.insert(schema.skillRevisions).values({
+        skillId: args.skill.id,
+        versionId: version.id,
+        role: 'brain',
+        text: `Re-exported v${version.version} from refreshed sources.`,
+        cites: citeChips,
+      });
+
+      return version;
+    });
+  } catch (err) {
+    if (isUniqueViolation(err)) {
+      const reloaded = await loadLatestVersion(args.skill.workspaceId, args.skill.id);
+      if (reloaded) return reloaded.version;
+    }
+    throw err;
   }
 }
 
@@ -842,20 +986,7 @@ async function loadSkillDraft(workspaceId: string, id: string): Promise<SkillDra
     typeof frontmatter.explainer === 'string' && frontmatter.explainer.trim()
       ? frontmatter.explainer.trim()
       : null;
-  const [stale] = await db
-    .select({
-      changelog: schema.skillStaleness.changelog,
-      detectedAt: schema.skillStaleness.detectedAt,
-    })
-    .from(schema.skillStaleness)
-    .where(
-      and(
-        eq(schema.skillStaleness.skillVersionId, version.id),
-        eq(schema.skillStaleness.status, 'stale'),
-      ),
-    )
-    .orderBy(desc(schema.skillStaleness.detectedAt))
-    .limit(1);
+  const stale = await loadLatestStaleness(version.id);
 
   return {
     id: skill.id,
@@ -877,6 +1008,27 @@ async function loadSkillDraft(workspaceId: string, id: string): Promise<SkillDra
         }
       : null,
   };
+}
+
+async function loadLatestStaleness(skillVersionId: string): Promise<{
+  changelog: string | null;
+  detectedAt: Date;
+} | null> {
+  const [stale] = await db
+    .select({
+      changelog: schema.skillStaleness.changelog,
+      detectedAt: schema.skillStaleness.detectedAt,
+    })
+    .from(schema.skillStaleness)
+    .where(
+      and(
+        eq(schema.skillStaleness.skillVersionId, skillVersionId),
+        eq(schema.skillStaleness.status, 'stale'),
+      ),
+    )
+    .orderBy(desc(schema.skillStaleness.detectedAt))
+    .limit(1);
+  return stale ?? null;
 }
 
 interface LoadedVersion {

@@ -3,7 +3,11 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { db, schema } from '../db/client.js';
 import { citedTextSha256 } from '../skills/provenance.js';
-import { isB3Enabled } from './skill-staleness-queue.js';
+import {
+  isB3Enabled,
+  SKILL_STALENESS_QUEUE_NAME,
+  SKILL_STALENESS_SWEEP_EVERY_MS,
+} from './skill-staleness-queue.js';
 import {
   runSkillStalenessSweep,
   type SkillStalenessRepo,
@@ -21,12 +25,22 @@ const baseCandidate: StalenessCandidate = {
   previousCitedTextSha256: citedTextSha256('Annual customers have thirty days.'),
 };
 
+const RUN_DB_TESTS = !!process.env.DATABASE_URL;
+const describeDb = RUN_DB_TESTS ? describe : describe.skip;
+
 describe('isB3Enabled', () => {
   it('defaults on and accepts false-like opt-outs', () => {
     expect(isB3Enabled({} as NodeJS.ProcessEnv)).toBe(true);
     expect(isB3Enabled({ OPEN42_B3_ENABLED: 'false' } as NodeJS.ProcessEnv)).toBe(false);
     expect(isB3Enabled({ open42_b3_enabled: '0' } as NodeJS.ProcessEnv)).toBe(false);
     expect(isB3Enabled({ OPEN42_B3_ENABLED: 'true' } as NodeJS.ProcessEnv)).toBe(true);
+  });
+
+  it('runs on the dedicated b3 queue every 15-30 minutes', () => {
+    expect(SKILL_STALENESS_QUEUE_NAME).toBe('skill-staleness');
+    expect(SKILL_STALENESS_SWEEP_EVERY_MS).toBe(20 * 60 * 1000);
+    expect(SKILL_STALENESS_SWEEP_EVERY_MS).toBeGreaterThanOrEqual(15 * 60 * 1000);
+    expect(SKILL_STALENESS_SWEEP_EVERY_MS).toBeLessThanOrEqual(30 * 60 * 1000);
   });
 });
 
@@ -109,9 +123,41 @@ describe('runSkillStalenessSweep', () => {
       resolvedAt: new Date('2026-05-17T05:10:00.000Z'),
     });
   });
+
+  it('does not mark a skill stale when unrelated page text changes around the cited span', async () => {
+    const resolvedWrites: unknown[] = [];
+    const staleWrites: unknown[] = [];
+    const repo = fakeRepo([baseCandidate], { resolvedWrites, staleWrites });
+
+    const result = await runSkillStalenessSweep(
+      {},
+      {
+        repo,
+        buildGbrain: async () => ({
+          getChunks: async () => [
+            {
+              slug: 'refund-policy',
+              version_id: 2,
+              chunk_text: 'Annual customers have thirty days.\n\nUnrelated appendix changed.',
+            },
+          ],
+        }),
+        resolveLlmKey: async () => null,
+        now: () => new Date('2026-05-17T05:12:00.000Z'),
+      },
+    );
+
+    expect(result).toEqual({ checked: 1, stale: 0, resolved: 1 });
+    expect(staleWrites).toHaveLength(0);
+    expect(resolvedWrites[0]).toEqual({
+      skillVersionId: 'version-1',
+      citationIndex: 1,
+      resolvedAt: new Date('2026-05-17T05:12:00.000Z'),
+    });
+  });
 });
 
-describe('runSkillStalenessSweep default repo', () => {
+describeDb('runSkillStalenessSweep default repo', () => {
   const workspaceIds: string[] = [];
   const userIds: string[] = [];
 

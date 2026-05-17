@@ -16,8 +16,9 @@ import { Sidebar } from '@/components/Sidebar';
 import { SkillPanel } from '@/components/SkillPanel';
 import { SlashMenu } from '@/components/SlashMenu';
 import { Transcript } from '@/components/Transcript';
-import { fetcher } from '@/lib/api';
+import { fetcher, type FetchError } from '@/lib/api';
 import { csrfHeaders } from '@/lib/csrf';
+import { buildChatRequestHistory } from '@/lib/chat-history';
 import type { SkillDraft } from '@/lib/skill-types';
 import { useWorkspaceStore } from '@/lib/workspaces/store';
 import { recoverFromTenant403 } from '@/lib/workspaces/with-recovery';
@@ -71,9 +72,20 @@ export default function ChatPage() {
   // Connections — the chat surface is useless without at least one source.
   // If the workspace has none, we replace the transcript with a calm CTA
   // that pushes the user toward /settings/connections/add.
-  const { data: workspaceData } = useSWR<ChatWorkspacePayload>('/api/workspaces/current', fetcher);
+  const { data: workspaceData, error: workspaceError } = useSWR<
+    ChatWorkspacePayload,
+    FetchError
+  >('/api/workspaces/current', fetcher);
   const hasNoSources =
     workspaceData !== undefined && (workspaceData.connections ?? []).length === 0;
+
+  useEffect(() => {
+    if (workspaceError?.status === 401) void router.replace('/sign_in');
+  }, [router, workspaceError]);
+
+  useEffect(() => {
+    if (workspaceData && !workspaceData.workspace) void router.replace('/onboard');
+  }, [router, workspaceData]);
 
   // Hydrate input from ?q= when the user lands here from the home ask-first
   // prompt. Strip the query param so a refresh doesn't re-prefill.
@@ -110,19 +122,7 @@ export default function ChatPage() {
   }
 
   async function sendQuery(query: string, retryAssistantId?: string) {
-    const requestHistory = messages
-      .filter(
-        (message) =>
-          (message.role === 'user' || message.role === 'assistant') &&
-          message.id !== retryAssistantId &&
-          !message.error &&
-          message.text.trim().length > 0,
-      )
-      .slice(-20)
-      .map((message) => ({
-        role: message.role,
-        text: message.text,
-      }));
+    const requestHistory = buildChatRequestHistory(messages, retryAssistantId);
     const userMessage: ChatMessage = { id: crypto.randomUUID(), role: 'user', text: query };
     const assistantId = retryAssistantId ?? crypto.randomUUID();
     currentAssistantId.current = assistantId;
@@ -260,6 +260,8 @@ export default function ChatPage() {
     }
     const threadCitations = latestCitations.map((c) => ({
       slug: c.slug,
+      excerpt: c.excerpt,
+      versionId: c.version_id ?? undefined,
       lastUpdated: c.last_updated ?? undefined,
     }));
 

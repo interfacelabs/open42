@@ -29,6 +29,10 @@ URL-safe bearer values containing a random nonce and an HMAC-SHA256 signature
 keyed by the server secret. Open42 stores only `SHA-256(token)`, not plaintext
 tokens. Links expire after 24 hours.
 
+Shared bundles are served as zip attachments with `Cache-Control: private,
+max-age=0, no-store`. A share URL is a temporary bearer download link, not a
+permanent public listing.
+
 ## Public Key
 
 The workspace public key is available from the API at:

@@ -1,6 +1,27 @@
 import { expect, test } from '@playwright/test';
 
 test.describe('chat multi-turn request shape', () => {
+  test('redirects anonymous visitors to sign in before chat input can be used', async ({ page }) => {
+    await page.route('**/api/auth/me', (route) =>
+      route.fulfill({
+        status: 401,
+        contentType: 'application/json',
+        body: JSON.stringify({ error: 'unauthorized' }),
+      }),
+    );
+    await page.route('**/api/workspaces/current', (route) =>
+      route.fulfill({
+        status: 401,
+        contentType: 'application/json',
+        body: JSON.stringify({ error: 'unauthorized' }),
+      }),
+    );
+
+    await page.goto('/chat');
+
+    await expect(page).toHaveURL(/\/sign_in$/);
+  });
+
   test('sends prior user and assistant turns with the second chat request', async ({ page }) => {
     const requests: Array<Record<string, unknown>> = [];
 
