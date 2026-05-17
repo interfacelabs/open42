@@ -670,6 +670,9 @@ describeDb('skills routes', () => {
         .buffer(true)
         .parse(binaryParser);
       expect(bundle.status).toBe(200);
+      expect(bundle.headers['content-type']).toContain('application/zip');
+      expect(bundle.headers['cache-control']).toBe('private, max-age=0, no-store');
+      expect(bundle.headers['content-disposition']).toBe(`attachment; filename="${skillId}.zip"`);
       const zip = new AdmZip(zipResponseBuffer(bundle));
       expect(zip.readAsText('sample-skill/SKILL.md.sig')).toMatch(/\S+/);
 
