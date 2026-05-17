@@ -7,18 +7,20 @@ export interface SkillTarget {
   reloadLabel: string;
 }
 
+export const DEFAULT_SKILL_TARGET_ID: SkillTargetId = 'openclaw';
+
 export const SKILL_TARGETS: readonly SkillTarget[] = [
-  {
-    id: 'openclaw',
-    label: 'openclaw',
-    basePath: '~/.openclaw/skills/',
-    reloadLabel: 'openclaw',
-  },
   {
     id: 'claude-code',
     label: 'Claude Code',
     basePath: '~/.claude/skills/',
     reloadLabel: 'Claude Code',
+  },
+  {
+    id: 'openclaw',
+    label: 'openclaw',
+    basePath: '~/.openclaw/skills/',
+    reloadLabel: 'openclaw',
   },
   {
     id: 'hermes',
@@ -29,7 +31,11 @@ export const SKILL_TARGETS: readonly SkillTarget[] = [
 ];
 
 export function skillTargetById(id: string | null): SkillTarget {
-  return SKILL_TARGETS.find((target) => target.id === id) ?? SKILL_TARGETS[0]!;
+  return (
+    SKILL_TARGETS.find((target) => target.id === id) ??
+    SKILL_TARGETS.find((target) => target.id === DEFAULT_SKILL_TARGET_ID) ??
+    SKILL_TARGETS[0]!
+  );
 }
 
 export function skillInstallDestination(target: SkillTarget, skillName: string): string {

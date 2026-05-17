@@ -1,5 +1,5 @@
 import * as Collapsible from '@radix-ui/react-collapsible';
-import { Check, ChevronDown, Copy, ExternalLink, Link as LinkIcon } from 'lucide-react';
+import { Check, ChevronDown, ExternalLink, Link as LinkIcon } from 'lucide-react';
 import Link from 'next/link';
 import { useMemo, useState } from 'react';
 
@@ -135,7 +135,12 @@ export function PostExportDialog({
             <span aria-hidden="true">·</span>
             <span>{receipt.sourceCount} cited sources</span>
             <span aria-hidden="true">·</span>
-            <span>{receipt.staleAtExport ? receipt.staleAtExport.changelog : 'all fresh'}</span>
+            <span className="inline-flex items-center gap-1.5">
+              {receipt.staleAtExport ? null : (
+                <span className="h-1.5 w-1.5 rounded-full bg-success" aria-hidden="true" />
+              )}
+              {receipt.staleAtExport ? receipt.staleAtExport.changelog : 'all fresh'}
+            </span>
             <span aria-hidden="true">·</span>
             <span>
               v{receipt.version}{' '}
@@ -187,7 +192,7 @@ export function PostExportDialog({
                   onClick={() => void copy(installPath, 'install')}
                 />
               </div>
-              <ol className="mt-4 space-y-2 text-[14px] leading-relaxed text-text-body">
+              <ol className="mt-4 list-decimal space-y-2 pl-5 text-[14px] leading-relaxed text-text-body">
                 {installSteps.map((step) => (
                   <li key={step}>{step}</li>
                 ))}
@@ -271,9 +276,9 @@ function CopyButton({ copied, onClick }: { copied: boolean; onClick: () => void 
     <button
       type="button"
       onClick={onClick}
-      className="inline-flex shrink-0 items-center gap-1.5 text-[12px] font-medium text-text-subtle hover:text-text-primary"
+      className="inline-flex h-9 shrink-0 items-center justify-center gap-1.5 rounded-md border border-border bg-white px-3 text-[13px] font-medium text-text-primary shadow-[0_1px_2px_rgba(0,0,0,0.04)] transition-colors hover:border-border-strong"
     >
-      {copied ? <Check size={16} strokeWidth={1.5} /> : <Copy size={16} strokeWidth={1.5} />}
+      {copied ? <Check size={16} strokeWidth={1.5} /> : null}
       {copied ? 'Copied!' : 'Copy'}
     </button>
   );
