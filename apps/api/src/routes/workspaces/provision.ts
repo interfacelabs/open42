@@ -4,6 +4,10 @@ import { Router, type NextFunction, type Request, type Response } from 'express'
 import { resolveOwnerWorkspaceId } from '../../auth/membership.js';
 import { generateInviteLink as defaultGenerateInviteLink } from '../../auth/supabase.js';
 import { validateSession } from '../../auth/sessions.js';
+import {
+  OWNER_SIGNUP_NOT_ALLOWED_ERROR,
+  assertOwnerSignupAllowed,
+} from '../../auth/signup-gate.js';
 import { db, schema } from '../../db/client.js';
 import {
   OPEN42_ALLOW_MULTI_WORKSPACE,
@@ -111,9 +115,7 @@ interface WorkspaceLifecycleRepo {
    * Authorization (membership/role) is enforced by middleware *before* this
    * call — the repo trusts the caller.
    */
-  findRetryableWorkspace(
-    workspaceId: string,
-  ): Promise<{ id: string; status: string } | null>;
+  findRetryableWorkspace(workspaceId: string): Promise<{ id: string; status: string } | null>;
   /**
    * Reset a workspace to the provisioning state ahead of re-enqueue. Idempotent
    * — repeated calls are safe.
@@ -195,6 +197,10 @@ export function buildWorkspaceProvisionRouter(
         res.status(403).json({ error: 'workspace_owner_required' });
         return;
       }
+      if (err instanceof Error && err.message === OWNER_SIGNUP_NOT_ALLOWED_ERROR) {
+        res.status(403).json({ error: OWNER_SIGNUP_NOT_ALLOWED_ERROR });
+        return;
+      }
       next(err);
     }
   });
@@ -213,45 +219,45 @@ export function buildWorkspaceProvisionRouter(
     '/onboarding/retry-provision',
     retryGate,
     async (req: Request, res: Response, next: NextFunction) => {
-    try {
-      const workspaceId = req.workspace!.id;
-      const session = req.session!;
+      try {
+        const workspaceId = req.workspace!.id;
+        const session = req.session!;
 
-      const workspace = await repo.findRetryableWorkspace(workspaceId);
-      if (!workspace) {
-        // requireMembership already ruled out missing/soft-deleted workspaces
-        // for non-members; getting here would mean a race (workspace deleted
-        // mid-flight). Return 404 rather than 409 for consistency.
-        res.status(404).json({ error: 'workspace_not_found' });
-        return;
+        const workspace = await repo.findRetryableWorkspace(workspaceId);
+        if (!workspace) {
+          // requireMembership already ruled out missing/soft-deleted workspaces
+          // for non-members; getting here would mean a race (workspace deleted
+          // mid-flight). Return 404 rather than 409 for consistency.
+          res.status(404).json({ error: 'workspace_not_found' });
+          return;
+        }
+        if (workspace.status === 'ready') {
+          res.json({ ok: true, status: 'ready' });
+          return;
+        }
+
+        await repo.markWorkspaceProvisioning(workspace.id);
+
+        // Drop any prior job (terminal or active) and enqueue a fresh one. The
+        // worker resets `provisioning_started_at` on its first attempt as well
+        // — that's belt-and-suspenders for the rare race where the user clicks
+        // retry while a final retry is already mid-flight.
+        if (useInlineProvision) {
+          void safelyProvisionTenant({
+            workspaceId: workspace.id,
+            ownerUserId: session.userId,
+          });
+        } else {
+          await retryProvisionJob({
+            workspaceId: workspace.id,
+            ownerUserId: session.userId,
+          });
+        }
+
+        res.status(202).json({ ok: true, status: 'provisioning' });
+      } catch (err) {
+        next(err);
       }
-      if (workspace.status === 'ready') {
-        res.json({ ok: true, status: 'ready' });
-        return;
-      }
-
-      await repo.markWorkspaceProvisioning(workspace.id);
-
-      // Drop any prior job (terminal or active) and enqueue a fresh one. The
-      // worker resets `provisioning_started_at` on its first attempt as well
-      // — that's belt-and-suspenders for the rare race where the user clicks
-      // retry while a final retry is already mid-flight.
-      if (useInlineProvision) {
-        void safelyProvisionTenant({
-          workspaceId: workspace.id,
-          ownerUserId: session.userId,
-        });
-      } else {
-        await retryProvisionJob({
-          workspaceId: workspace.id,
-          ownerUserId: session.userId,
-        });
-      }
-
-      res.status(202).json({ ok: true, status: 'provisioning' });
-    } catch (err) {
-      next(err);
-    }
     },
   );
 
@@ -406,6 +412,8 @@ function createDrizzleWorkspaceLifecycleRepo(): WorkspaceLifecycleRepo {
           return false;
         }
 
+        assertOwnerSignupAllowed(user.email);
+
         const [workspaceCount] = await tx
           .select({ count: sql<number>`COUNT(*)::int` })
           .from(schema.workspaces)
@@ -490,10 +498,7 @@ function createDrizzleWorkspaceLifecycleRepo(): WorkspaceLifecycleRepo {
         .select({ id: schema.workspaces.id, status: schema.workspaces.status })
         .from(schema.workspaces)
         .where(
-          and(
-            eq(schema.workspaces.id, workspaceId),
-            sql`${schema.workspaces.deletedAt} IS NULL`,
-          ),
+          and(eq(schema.workspaces.id, workspaceId), sql`${schema.workspaces.deletedAt} IS NULL`),
         )
         .limit(1);
       return row ?? null;

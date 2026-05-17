@@ -25,13 +25,29 @@ describeDb('auth routes', () => {
   const userIds: string[] = [];
   const workspaceIds: string[] = [];
   const inviteIds: string[] = [];
+  const gateEnvKeys = [
+    'OPEN42_EDITION',
+    'OPEN42_ENABLE_OPEN_SIGNUPS',
+    'OPEN42_ALLOWED_EMAILS',
+    'OPEN42_ALLOWED_EMAIL_DOMAINS',
+  ] as const;
+  let gateEnvSnapshot = {} as Record<(typeof gateEnvKeys)[number], string | undefined>;
 
   beforeAll(async () => {
     mod = await import('./auth.js');
     dbMod = await import('../db/client.js');
   });
 
+  beforeEach(() => {
+    gateEnvSnapshot = snapshotGateEnv();
+    process.env.OPEN42_EDITION = 'cloud';
+    process.env.OPEN42_ENABLE_OPEN_SIGNUPS = 'true';
+    process.env.OPEN42_ALLOWED_EMAILS = '';
+    process.env.OPEN42_ALLOWED_EMAIL_DOMAINS = '';
+  });
+
   afterEach(async () => {
+    restoreGateEnv(gateEnvSnapshot);
     mocks.verifySupabaseIdentity.mockReset();
     mocks.sendSupabaseMagicLink.mockReset();
     for (const inviteId of inviteIds.splice(0)) {
@@ -59,6 +75,24 @@ describeDb('auth routes', () => {
     app.use(cookieParser());
     app.use('/auth', mod.authRouter);
     return app;
+  }
+
+  function snapshotGateEnv(): Record<(typeof gateEnvKeys)[number], string | undefined> {
+    return Object.fromEntries(gateEnvKeys.map((key) => [key, process.env[key]])) as Record<
+      (typeof gateEnvKeys)[number],
+      string | undefined
+    >;
+  }
+
+  function restoreGateEnv(snapshot: Record<(typeof gateEnvKeys)[number], string | undefined>) {
+    for (const key of gateEnvKeys) {
+      const value = snapshot[key];
+      if (value === undefined) {
+        delete process.env[key];
+      } else {
+        process.env[key] = value;
+      }
+    }
   }
 
   async function seedUser(email: string, supabaseUserId?: string) {
@@ -147,6 +181,7 @@ describeDb('auth routes', () => {
 
   describe('POST /auth/verify - invite acceptance', () => {
     it('happy path: invitee becomes member, invite marked accepted', async () => {
+      process.env.OPEN42_ENABLE_OPEN_SIGNUPS = 'false';
       const tag = `${Date.now()}-${Math.random()}`;
       const inviterEmail = `auth-invite-inviter-${tag}@open42.test`;
       const inviteeEmail = `auth-invite-invitee-${tag}@open42.test`;
@@ -250,9 +285,7 @@ describeDb('auth routes', () => {
         .select()
         .from(dbMod.schema.memberships)
         .where(eq(dbMod.schema.memberships.workspaceId, ws.id));
-      expect(memberships).toEqual([
-        expect.objectContaining({ userId: inviter.id, role: 'owner' }),
-      ]);
+      expect(memberships).toEqual([expect.objectContaining({ userId: inviter.id, role: 'owner' })]);
 
       const [stillPending] = await dbMod.db
         .select()
@@ -307,17 +340,15 @@ describeDb('auth routes', () => {
         .select()
         .from(dbMod.schema.memberships)
         .where(eq(dbMod.schema.memberships.workspaceId, inviterWs.id));
-      expect(
-        inviterMemberships.some((m) => m.userId === invitee.id && m.role === 'member'),
-      ).toBe(true);
+      expect(inviterMemberships.some((m) => m.userId === invitee.id && m.role === 'member')).toBe(
+        true,
+      );
 
       const ownMemberships = await dbMod.db
         .select()
         .from(dbMod.schema.memberships)
         .where(eq(dbMod.schema.memberships.workspaceId, inviteeOwnWs.id));
-      expect(
-        ownMemberships.some((m) => m.userId === invitee.id && m.role === 'owner'),
-      ).toBe(true);
+      expect(ownMemberships.some((m) => m.userId === invitee.id && m.role === 'owner')).toBe(true);
 
       const [refreshed] = await dbMod.db
         .select()
@@ -372,9 +403,7 @@ describeDb('auth routes', () => {
         .select()
         .from(dbMod.schema.memberships)
         .where(eq(dbMod.schema.memberships.workspaceId, ws.id));
-      expect(memberships).toEqual([
-        expect.objectContaining({ userId: inviter.id, role: 'owner' }),
-      ]);
+      expect(memberships).toEqual([expect.objectContaining({ userId: inviter.id, role: 'owner' })]);
 
       // Invite stayed pending (we don't revoke it on expiry — the row is
       // still there for the admin's records).
@@ -465,9 +494,7 @@ describeDb('auth routes', () => {
         .select()
         .from(dbMod.schema.memberships)
         .where(eq(dbMod.schema.memberships.workspaceId, ws.id));
-      expect(memberships).toEqual([
-        expect.objectContaining({ userId: inviter.id, role: 'owner' }),
-      ]);
+      expect(memberships).toEqual([expect.objectContaining({ userId: inviter.id, role: 'owner' })]);
 
       // Invite remains revoked. The route's transaction must NOT have
       // overwritten status back to 'accepted'.
@@ -519,9 +546,7 @@ describeDb('auth routes', () => {
         .select()
         .from(dbMod.schema.memberships)
         .where(eq(dbMod.schema.memberships.workspaceId, ws.id));
-      expect(memberships).toEqual([
-        expect.objectContaining({ userId: inviter.id, role: 'owner' }),
-      ]);
+      expect(memberships).toEqual([expect.objectContaining({ userId: inviter.id, role: 'owner' })]);
 
       const [invitee] = await dbMod.db
         .select()
@@ -529,6 +554,73 @@ describeDb('auth routes', () => {
         .where(eq(dbMod.schema.users.email, inviteeEmail))
         .limit(1);
       if (invitee) userIds.push(invitee.id);
+    });
+  });
+
+  describe('POST /auth/signin - cloud beta gate', () => {
+    beforeEach(() => {
+      mod.__resetSigninAttempts();
+      process.env.OPEN42_EDITION = 'cloud';
+      process.env.OPEN42_ENABLE_OPEN_SIGNUPS = 'false';
+      process.env.OPEN42_ALLOWED_EMAILS = '';
+      process.env.OPEN42_ALLOWED_EMAIL_DOMAINS = '';
+      mocks.sendSupabaseMagicLink.mockResolvedValue({
+        email: 'allowed@example.com',
+        expiresAt: new Date(Date.now() + 15 * 60 * 1000),
+      });
+    });
+
+    afterEach(() => {
+      mod.__resetSigninAttempts();
+    });
+
+    it('rejects an unknown, non-allowlisted cloud signup', async () => {
+      const res = await request(buildApp())
+        .post('/auth/signin')
+        .set('User-Agent', 'cloud-signup-gate-test')
+        .send({ email: `unknown-${Date.now()}-${Math.random()}@open42.test` });
+
+      expect(res.status).toBe(403);
+      expect(res.body).toEqual({ error: 'signin_not_allowed' });
+      expect(mocks.sendSupabaseMagicLink).not.toHaveBeenCalled();
+    });
+
+    it('allows signin for a pending invitee even when open owner signups are closed', async () => {
+      const tag = `${Date.now()}-${Math.random()}`;
+      const inviter = await seedUser(`auth-signin-inviter-${tag}@open42.test`, `sb-owner-${tag}`);
+      const ws = await seedWorkspace(inviter.id, 'Inviter ws');
+      const inviteeEmail = `auth-signin-invitee-${tag}@open42.test`;
+      await seedInvite({
+        workspaceId: ws.id,
+        email: inviteeEmail,
+        invitedByUserId: inviter.id,
+      });
+
+      const res = await request(buildApp())
+        .post('/auth/signin')
+        .set('User-Agent', 'cloud-signup-gate-test')
+        .send({ email: inviteeEmail });
+
+      expect(res.status).toBe(200);
+      expect(mocks.sendSupabaseMagicLink).toHaveBeenCalledWith(
+        expect.objectContaining({ email: inviteeEmail }),
+      );
+    });
+
+    it('allows signin for an accepted workspace member when open owner signups are closed', async () => {
+      const tag = `${Date.now()}-${Math.random()}`;
+      const member = await seedUser(`auth-signin-member-${tag}@open42.test`, `sb-member-${tag}`);
+      await seedWorkspace(member.id, 'Member ws');
+
+      const res = await request(buildApp())
+        .post('/auth/signin')
+        .set('User-Agent', 'cloud-signup-gate-test')
+        .send({ email: member.email });
+
+      expect(res.status).toBe(200);
+      expect(mocks.sendSupabaseMagicLink).toHaveBeenCalledWith(
+        expect.objectContaining({ email: member.email }),
+      );
     });
   });
 
@@ -609,9 +701,7 @@ describeDb('auth routes', () => {
 
   describe('GET /auth/me', () => {
     it('returns 401 when no session', async () => {
-      const res = await request(buildApp())
-        .get('/auth/me')
-        .set('User-Agent', 'me-route-test');
+      const res = await request(buildApp()).get('/auth/me').set('User-Agent', 'me-route-test');
 
       expect(res.status).toBe(401);
       expect(res.body.error).toBe('unauthorized');

@@ -24,6 +24,7 @@
  */
 import { and, eq, sql } from 'drizzle-orm';
 
+import { assertOwnerSignupAllowed } from '../auth/signup-gate.js';
 import { db, schema } from '../db/client.js';
 import { OPEN42_ALLOW_MULTI_WORKSPACE, OPEN42_SINGLE_WORKSPACE_ID } from '../env.js';
 import { enqueueProvisionJob as defaultEnqueueProvisionJob } from '../queue/provision-queue.js';
@@ -36,6 +37,7 @@ export interface CreateWorkspaceResult {
 
 export interface CreateWorkspaceDeps {
   enqueueProvisionJob?: typeof defaultEnqueueProvisionJob;
+  env?: NodeJS.ProcessEnv;
   /**
    * Skip queue enqueue entirely. Used by callers that want to drive
    * provisioning inline (legacy tests inject a synchronous
@@ -52,6 +54,14 @@ export async function createWorkspaceForUser(
   const enqueue = deps.enqueueProvisionJob ?? defaultEnqueueProvisionJob;
 
   const workspace = await db.transaction(async (tx) => {
+    const [owner] = await tx
+      .select({ email: schema.users.email })
+      .from(schema.users)
+      .where(eq(schema.users.id, ownerUserId))
+      .limit(1);
+    if (!owner) throw new Error('user_not_found');
+    assertOwnerSignupAllowed(owner.email, deps.env);
+
     const [countRow] = await tx
       .select({ count: sql<number>`COUNT(*)::int` })
       .from(schema.workspaces)

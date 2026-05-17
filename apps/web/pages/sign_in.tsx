@@ -269,7 +269,8 @@ export default function SignInPage() {
       return {
         quote: (
           <>
-            Six digits between you<br />
+            Six digits between you
+            <br />
             and <em>everything you&apos;ve ever written.</em>
           </>
         ),
@@ -320,76 +321,73 @@ export default function SignInPage() {
                       transition: { duration: 0.32, ease: EASE_STANDARD },
                     }}
                   >
-                      <h1 className="text-[38px] font-medium leading-[1.06] tracking-[-0.025em] text-text-primary">
-                        A brain{' '}
-                        <em className="font-newsreader font-normal italic text-text-primary">
-                          that remembers.
-                        </em>
-                      </h1>
-                      <p className="mt-3.5 max-w-[36ch] text-sm leading-body text-text-body">
-                        Sign in to the company memory you&apos;ve been building. We&apos;ll send a
-                        6-digit code.
-                      </p>
-                      <form onSubmit={submitEmail} className="mt-7" noValidate>
-                        <label
-                          htmlFor="signin-email"
-                          className="mb-2 block text-[13px] font-medium text-text-primary"
-                        >
-                          Work email
-                        </label>
-                        <input
-                          id="signin-email"
-                          type="email"
-                          autoComplete="email"
-                          inputMode="email"
-                          required
-                          value={email}
-                          onChange={(event) => setEmail(event.target.value)}
-                          aria-invalid={errorScope === 'idle' || undefined}
-                          className="h-11 w-full rounded-input border border-input bg-white px-3.5 text-sm text-text-primary outline-none transition-[border-color,box-shadow] duration-140 focus:border-accent focus:shadow-[0_0_0_4px_rgba(29,77,255,0.10)]"
-                        />
-                        <button
-                          type="submit"
-                          disabled={submitting || !email}
-                          className="mt-5 inline-flex h-11 items-center justify-center rounded-xl bg-gradient-to-b from-neutral-800 to-neutral-950 px-6 text-[15px] font-medium tracking-[-0.01em] text-white shadow-[inset_0_1px_0_rgba(255,255,255,0.18),0_1px_2px_rgba(0,0,0,0.18),0_8px_20px_rgba(0,0,0,0.12)] transition-all duration-200 hover:brightness-110 active:translate-y-px disabled:cursor-not-allowed disabled:opacity-60"
-                        >
-                          {submitting ? 'Sending…' : 'Continue →'}
-                        </button>
-                        {errorScope === 'idle' && errorMessage ? (
-                          <p
-                            role="alert"
-                            className="mt-3 text-[13px] font-medium text-destructive"
-                          >
-                            {humanizeError(errorMessage)}
-                          </p>
-                        ) : null}
-                        <p className="mt-6 text-xs leading-[1.7] text-text-subtle">
-                          Prefer a magic link?{' '}
-                          <a
-                            href="#"
-                            className="font-medium text-accent border-b border-accent/25 hover:border-accent"
-                          >
-                            We&apos;ll mail you one.
-                          </a>
-                          <br />
-                          By continuing you agree to the{' '}
-                          <a
-                            href="#"
-                            className="font-medium text-accent border-b border-accent/25 hover:border-accent"
-                          >
-                            Terms
-                          </a>{' '}
-                          and{' '}
-                          <a
-                            href="#"
-                            className="font-medium text-accent border-b border-accent/25 hover:border-accent"
-                          >
-                            Privacy
-                          </a>
-                          .
+                    <h1 className="text-[38px] font-medium leading-[1.06] tracking-[-0.025em] text-text-primary">
+                      A brain{' '}
+                      <em className="font-newsreader font-normal italic text-text-primary">
+                        that remembers.
+                      </em>
+                    </h1>
+                    <p className="mt-3.5 max-w-[36ch] text-sm leading-body text-text-body">
+                      Sign in to the company memory you&apos;ve been building. We&apos;ll send a
+                      6-digit code.
+                    </p>
+                    <form onSubmit={submitEmail} className="mt-7" noValidate>
+                      <label
+                        htmlFor="signin-email"
+                        className="mb-2 block text-[13px] font-medium text-text-primary"
+                      >
+                        Work email
+                      </label>
+                      <input
+                        id="signin-email"
+                        type="email"
+                        autoComplete="email"
+                        inputMode="email"
+                        required
+                        value={email}
+                        onChange={(event) => setEmail(event.target.value)}
+                        aria-invalid={errorScope === 'idle' || undefined}
+                        className="h-11 w-full rounded-input border border-input bg-white px-3.5 text-sm text-text-primary outline-none transition-[border-color,box-shadow] duration-140 focus:border-accent focus:shadow-[0_0_0_4px_rgba(29,77,255,0.10)]"
+                      />
+                      <button
+                        type="submit"
+                        disabled={submitting || !email}
+                        className="mt-5 inline-flex h-11 items-center justify-center rounded-xl bg-gradient-to-b from-neutral-800 to-neutral-950 px-6 text-[15px] font-medium tracking-[-0.01em] text-white shadow-[inset_0_1px_0_rgba(255,255,255,0.18),0_1px_2px_rgba(0,0,0,0.18),0_8px_20px_rgba(0,0,0,0.12)] transition-all duration-200 hover:brightness-110 active:translate-y-px disabled:cursor-not-allowed disabled:opacity-60"
+                      >
+                        {submitting ? 'Sending…' : 'Continue →'}
+                      </button>
+                      {errorScope === 'idle' && errorMessage ? (
+                        <p role="alert" className="mt-3 text-[13px] font-medium text-destructive">
+                          {humanizeError(errorMessage)}
                         </p>
-                      </form>
-                    </motion.div>
+                      ) : null}
+                      <p className="mt-6 text-xs leading-[1.7] text-text-subtle">
+                        Prefer a magic link?{' '}
+                        <a
+                          href="#"
+                          className="font-medium text-accent border-b border-accent/25 hover:border-accent"
+                        >
+                          We&apos;ll mail you one.
+                        </a>
+                        <br />
+                        By continuing you agree to the{' '}
+                        <a
+                          href="#"
+                          className="font-medium text-accent border-b border-accent/25 hover:border-accent"
+                        >
+                          Terms
+                        </a>{' '}
+                        and{' '}
+                        <a
+                          href="#"
+                          className="font-medium text-accent border-b border-accent/25 hover:border-accent"
+                        >
+                          Privacy
+                        </a>
+                        .
+                      </p>
+                    </form>
+                  </motion.div>
                 ) : (
                   <motion.div
                     key="sent"
@@ -400,88 +398,81 @@ export default function SignInPage() {
                       transition: { duration: 0.32, ease: EASE_STANDARD },
                     }}
                   >
-                      <h1 className="text-[38px] font-medium leading-[1.06] tracking-[-0.025em] text-text-primary">
-                        Enter{' '}
-                        <em className="font-newsreader font-normal italic text-text-primary">
-                          the code.
-                        </em>
-                      </h1>
-                      <p className="mt-3.5 max-w-[36ch] text-sm leading-body text-text-body">
-                        We sent a 6-digit code to{' '}
-                        <span className="font-medium text-text-primary">{email}</span>. Type it
-                        here.
+                    <h1 className="text-[38px] font-medium leading-[1.06] tracking-[-0.025em] text-text-primary">
+                      Enter{' '}
+                      <em className="font-newsreader font-normal italic text-text-primary">
+                        the code.
+                      </em>
+                    </h1>
+                    <p className="mt-3.5 max-w-[36ch] text-sm leading-body text-text-body">
+                      We sent a 6-digit code to{' '}
+                      <span className="font-medium text-text-primary">{email}</span>. Type it here.
+                    </p>
+                    <div
+                      className="mt-7 flex gap-2.5"
+                      role="group"
+                      aria-label="6-digit verification code"
+                    >
+                      {code.map((digit, index) => (
+                        <input
+                          key={index}
+                          ref={(el) => {
+                            codeRefs.current[index] = el;
+                          }}
+                          type="text"
+                          inputMode="numeric"
+                          pattern="[0-9]"
+                          maxLength={1}
+                          autoComplete={index === 0 ? 'one-time-code' : 'off'}
+                          aria-label={`digit ${index + 1} of 6`}
+                          value={digit}
+                          disabled={verifying}
+                          onChange={handleDigitChange(index)}
+                          onKeyDown={handleDigitKeyDown(index)}
+                          onPaste={index === 0 ? handlePaste : undefined}
+                          onFocus={(event) => event.target.select()}
+                          className="h-16 w-14 rounded-xl border border-input bg-white text-center font-mono text-[26px] font-medium text-text-primary outline-none transition-[border-color,box-shadow] duration-140 focus:border-accent focus:shadow-[0_0_0_4px_rgba(29,77,255,0.12)] disabled:opacity-60"
+                        />
+                      ))}
+                    </div>
+                    {verifying ? (
+                      <p aria-live="polite" className="mt-4 font-mono text-xs text-text-subtle">
+                        Checking your code…
                       </p>
-                      <div
-                        className="mt-7 flex gap-2.5"
-                        role="group"
-                        aria-label="6-digit verification code"
+                    ) : null}
+                    {errorScope === 'sent' && errorMessage ? (
+                      <p role="alert" className="mt-4 text-[13px] font-medium text-destructive">
+                        {humanizeError(errorMessage)}
+                      </p>
+                    ) : null}
+                    <p className="mt-7 text-xs leading-[1.7] text-text-subtle">
+                      Didn&apos;t get it?{' '}
+                      <button
+                        type="button"
+                        onClick={resendCode}
+                        disabled={resendIn > 0 || submitting}
+                        className="bg-transparent border-0 p-0 text-text-subtle underline underline-offset-[3px] hover:text-text-primary disabled:cursor-not-allowed disabled:no-underline disabled:hover:text-text-subtle"
                       >
-                        {code.map((digit, index) => (
-                          <input
-                            key={index}
-                            ref={(el) => {
-                              codeRefs.current[index] = el;
-                            }}
-                            type="text"
-                            inputMode="numeric"
-                            pattern="[0-9]"
-                            maxLength={1}
-                            autoComplete={index === 0 ? 'one-time-code' : 'off'}
-                            aria-label={`digit ${index + 1} of 6`}
-                            value={digit}
-                            disabled={verifying}
-                            onChange={handleDigitChange(index)}
-                            onKeyDown={handleDigitKeyDown(index)}
-                            onPaste={index === 0 ? handlePaste : undefined}
-                            onFocus={(event) => event.target.select()}
-                            className="h-16 w-14 rounded-xl border border-input bg-white text-center font-mono text-[26px] font-medium text-text-primary outline-none transition-[border-color,box-shadow] duration-140 focus:border-accent focus:shadow-[0_0_0_4px_rgba(29,77,255,0.12)] disabled:opacity-60"
-                          />
-                        ))}
-                      </div>
-                      {verifying ? (
-                        <p
-                          aria-live="polite"
-                          className="mt-4 font-mono text-xs text-text-subtle"
-                        >
-                          Checking your code…
-                        </p>
-                      ) : null}
-                      {errorScope === 'sent' && errorMessage ? (
-                        <p
-                          role="alert"
-                          className="mt-4 text-[13px] font-medium text-destructive"
-                        >
-                          {humanizeError(errorMessage)}
-                        </p>
-                      ) : null}
-                      <p className="mt-7 text-xs leading-[1.7] text-text-subtle">
-                        Didn&apos;t get it?{' '}
-                        <button
-                          type="button"
-                          onClick={resendCode}
-                          disabled={resendIn > 0 || submitting}
-                          className="bg-transparent border-0 p-0 text-text-subtle underline underline-offset-[3px] hover:text-text-primary disabled:cursor-not-allowed disabled:no-underline disabled:hover:text-text-subtle"
-                        >
-                          {resendIn > 0 ? `Resend in ${resendIn}s` : 'Resend code'}
-                        </button>
-                        &nbsp;·&nbsp;
-                        <button
-                          type="button"
-                          onClick={editEmail}
-                          className="bg-transparent border-0 p-0 text-text-subtle underline underline-offset-[3px] hover:text-text-primary"
-                        >
-                          Wrong email
-                        </button>
-                        <br />
-                        Or{' '}
-                        <a
-                          href="#"
-                          className="font-medium text-accent border-b border-accent/25 hover:border-accent"
-                        >
-                          click the link in your email
-                        </a>{' '}
-                        instead.
-                      </p>
+                        {resendIn > 0 ? `Resend in ${resendIn}s` : 'Resend code'}
+                      </button>
+                      &nbsp;·&nbsp;
+                      <button
+                        type="button"
+                        onClick={editEmail}
+                        className="bg-transparent border-0 p-0 text-text-subtle underline underline-offset-[3px] hover:text-text-primary"
+                      >
+                        Wrong email
+                      </button>
+                      <br />
+                      Or{' '}
+                      <a
+                        href="#"
+                        className="font-medium text-accent border-b border-accent/25 hover:border-accent"
+                      >
+                        click the link in your email
+                      </a>{' '}
+                      instead.
+                    </p>
                   </motion.div>
                 )}
               </div>
@@ -503,6 +494,8 @@ function humanizeError(code: string): string {
   switch (code) {
     case 'signin_rate_limited':
       return 'Too many attempts. Try again in a moment.';
+    case 'signin_not_allowed':
+      return 'This email is not authorized for the private beta yet. Use your invite link if you were invited.';
     case 'verify_failed':
     case 'invalid_code':
       return 'That code didn\u2019t match. Try again or resend.';

@@ -4,12 +4,11 @@ import pino from 'pino';
 
 import { type MembershipRole } from '../../auth/membership.js';
 import { readSession } from '../../auth/session-helpers.js';
+import { OWNER_SIGNUP_NOT_ALLOWED_ERROR } from '../../auth/signup-gate.js';
 import { db, schema } from '../../db/client.js';
 import { OPEN42_ALLOW_MULTI_WORKSPACE } from '../../env.js';
 import { requireMembership } from '../../middleware/require-membership.js';
-import {
-  createWorkspaceForUser as defaultCreateWorkspaceForUser,
-} from '../../workspaces/create.js';
+import { createWorkspaceForUser as defaultCreateWorkspaceForUser } from '../../workspaces/create.js';
 
 const logger = pino({
   name: 'routes/workspaces/index-router',
@@ -54,10 +53,7 @@ export interface IndexRouterRepo {
    */
   findWorkspace(
     workspaceId: string,
-  ): Promise<
-    | { id: string; name: string; status: 'provisioning' | 'ready' | 'failed' }
-    | null
-  >;
+  ): Promise<{ id: string; name: string; status: 'provisioning' | 'ready' | 'failed' } | null>;
   countActiveWorkspaces?(): Promise<number>;
 }
 
@@ -79,10 +75,7 @@ function defaultRepo(): IndexRouterRepo {
         .from(schema.memberships)
         .innerJoin(schema.workspaces, eq(schema.workspaces.id, schema.memberships.workspaceId))
         .where(
-          and(
-            eq(schema.memberships.userId, userId),
-            sql`${schema.workspaces.deletedAt} IS NULL`,
-          ),
+          and(eq(schema.memberships.userId, userId), sql`${schema.workspaces.deletedAt} IS NULL`),
         )
         .orderBy(
           sql`CASE WHEN ${schema.memberships.role} = 'owner' THEN 0 ELSE 1 END`,
@@ -110,10 +103,7 @@ function defaultRepo(): IndexRouterRepo {
         })
         .from(schema.workspaces)
         .where(
-          and(
-            eq(schema.workspaces.id, workspaceId),
-            sql`${schema.workspaces.deletedAt} IS NULL`,
-          ),
+          and(eq(schema.workspaces.id, workspaceId), sql`${schema.workspaces.deletedAt} IS NULL`),
         )
         .limit(1);
       if (!row) return null;
@@ -189,12 +179,13 @@ export function buildWorkspaceIndexRouter(deps: IndexRouterDeps = {}) {
         return;
       }
       const workspace = await createWorkspaceForUser(session.userId, name);
-      logger.info(
-        { workspace_id: workspace.id, user_id: session.userId },
-        'workspace_created',
-      );
+      logger.info({ workspace_id: workspace.id, user_id: session.userId }, 'workspace_created');
       res.status(201).json({ workspace });
     } catch (err) {
+      if (err instanceof Error && err.message === OWNER_SIGNUP_NOT_ALLOWED_ERROR) {
+        res.status(403).json({ error: OWNER_SIGNUP_NOT_ALLOWED_ERROR });
+        return;
+      }
       next(err);
     }
   });
@@ -220,10 +211,7 @@ export function buildWorkspaceIndexRouter(deps: IndexRouterDeps = {}) {
         }
 
         await repo.setCurrentWorkspace(session.userId, wsId);
-        logger.info(
-          { workspace_id: wsId, user_id: session.userId },
-          'workspace_switched',
-        );
+        logger.info({ workspace_id: wsId, user_id: session.userId }, 'workspace_switched');
         res.json({ ok: true, workspace });
       } catch (err) {
         next(err);
