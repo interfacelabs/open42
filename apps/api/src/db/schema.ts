@@ -109,6 +109,7 @@ export const workspaces = pgTable(
     gbrainMcpProxyEnabled: boolean('gbrain_mcp_proxy_enabled').notNull().default(false),
     proxyTokenHash: bytea('proxy_token_hash'),
     gbrainVersion: text('gbrain_version').notNull(),
+    chatProvider: llmProviderEnum('chat_provider').notNull().default('anthropic'),
     status: workspaceStatusEnum('status').notNull().default('provisioning'),
     lastError: text('last_error'),
     lastErrorDetail: text('last_error_detail'),
@@ -552,6 +553,122 @@ export const skillVersions = pgTable(
   }),
 );
 
+// =====================================================================
+// skill_citation_provenance
+//
+// Per-version snapshots of the cited text Open42 used when minting a skill.
+// Stores cited excerpts only, never whole gbrain pages. b3 freshness compares
+// these hashes against newly fetched cited spans.
+// =====================================================================
+
+export const skillCitationProvenance = pgTable(
+  'skill_citation_provenance',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    skillVersionId: uuid('skill_version_id')
+      .notNull()
+      .references(() => skillVersions.id, { onDelete: 'cascade' }),
+    citationIndex: integer('citation_index').notNull(),
+    slug: text('slug').notNull(),
+    versionId: text('version_id'),
+    citedText: text('cited_text').notNull(),
+    citedTextSha256: text('cited_text_sha256').notNull(),
+    capturedAt: timestamp('captured_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    versionCitationUniq: uniqueIndex('skill_citation_provenance_version_citation_uniq').on(
+      t.skillVersionId,
+      t.citationIndex,
+    ),
+    slugIdx: index('skill_citation_provenance_slug_idx').on(t.slug),
+  }),
+);
+
+// =====================================================================
+// skill_staleness
+//
+// b3 hash-of-cited-spans signal. One row per stale cited span, with the d5
+// changelog cached on the record so the UI never regenerates it on read.
+// =====================================================================
+
+export const skillStaleness = pgTable(
+  'skill_staleness',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    workspaceId: uuid('workspace_id')
+      .notNull()
+      .references(() => workspaces.id, { onDelete: 'cascade' }),
+    skillId: uuid('skill_id')
+      .notNull()
+      .references(() => skills.id, { onDelete: 'cascade' }),
+    skillVersionId: uuid('skill_version_id')
+      .notNull()
+      .references(() => skillVersions.id, { onDelete: 'cascade' }),
+    citationIndex: integer('citation_index').notNull(),
+    slug: text('slug').notNull(),
+    previousVersionId: text('previous_version_id'),
+    latestVersionId: text('latest_version_id'),
+    previousCitedTextSha256: text('previous_cited_text_sha256').notNull(),
+    latestCitedTextSha256: text('latest_cited_text_sha256').notNull(),
+    changelog: text('changelog'),
+    status: text('status').notNull().default('stale'),
+    detectedAt: timestamp('detected_at', { withTimezone: true }).notNull().defaultNow(),
+    resolvedAt: timestamp('resolved_at', { withTimezone: true }),
+  },
+  (t) => ({
+    skillVersionCitationUniq: uniqueIndex('skill_staleness_version_citation_uniq')
+      .on(t.skillVersionId, t.citationIndex)
+      .where(sql`${t.status} = 'stale'`),
+    workspaceStatusIdx: index('skill_staleness_workspace_status_idx').on(
+      t.workspaceId,
+      t.status,
+    ),
+    slugIdx: index('skill_staleness_slug_idx').on(t.workspaceId, t.slug),
+    statusCheck: check('skill_staleness_status_check', sql`${t.status} IN ('stale', 'resolved')`),
+  }),
+);
+
+// =====================================================================
+// skill_share_links
+//
+// Ephemeral bearer URLs for signed skill bundles. The opaque token itself is
+// never stored, only SHA-256(token). Links expire after 24h and can be minted
+// repeatedly.
+// =====================================================================
+
+export const skillShareLinks = pgTable(
+  'skill_share_links',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    workspaceId: uuid('workspace_id')
+      .notNull()
+      .references(() => workspaces.id, { onDelete: 'cascade' }),
+    skillId: uuid('skill_id')
+      .notNull()
+      .references(() => skills.id, { onDelete: 'cascade' }),
+    skillVersionId: uuid('skill_version_id')
+      .notNull()
+      .references(() => skillVersions.id, { onDelete: 'cascade' }),
+    createdByUserId: uuid('created_by_user_id').references(() => users.id, {
+      onDelete: 'set null',
+    }),
+    tokenHash: bytea('token_hash').notNull(),
+    storageKey: text('storage_key').notNull(),
+    expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    lastUsedAt: timestamp('last_used_at', { withTimezone: true }),
+    revokedAt: timestamp('revoked_at', { withTimezone: true }),
+  },
+  (t) => ({
+    tokenHashUniq: uniqueIndex('skill_share_links_token_hash_uniq').on(t.tokenHash),
+    workspaceCreatedIdx: index('skill_share_links_workspace_created_idx').on(
+      t.workspaceId,
+      t.createdAt,
+    ),
+    expiresIdx: index('skill_share_links_expires_idx').on(t.expiresAt),
+  }),
+);
+
 export const skillRevisions = pgTable(
   'skill_revisions',
   {
@@ -642,6 +759,22 @@ export const workspaceCredentials = pgTable(
 );
 
 // =====================================================================
+// workspace_signing_keys
+//
+// Ed25519 signing identity per workspace. Private key is encrypted with
+// envelope purpose `workspace_signing_key`. No key rotation in P1.
+// =====================================================================
+
+export const workspaceSigningKeys = pgTable('workspace_signing_keys', {
+  workspaceId: uuid('workspace_id')
+    .primaryKey()
+    .references(() => workspaces.id, { onDelete: 'cascade' }),
+  publicKey: text('public_key').notNull(),
+  privateKeyCiphertext: bytea('private_key_ciphertext').notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+});
+
+// =====================================================================
 // Inferred types — re-export for use elsewhere in the API.
 // =====================================================================
 
@@ -660,6 +793,12 @@ export type Skill = typeof skills.$inferSelect;
 export type NewSkill = typeof skills.$inferInsert;
 export type SkillVersion = typeof skillVersions.$inferSelect;
 export type NewSkillVersion = typeof skillVersions.$inferInsert;
+export type SkillCitationProvenance = typeof skillCitationProvenance.$inferSelect;
+export type NewSkillCitationProvenance = typeof skillCitationProvenance.$inferInsert;
+export type SkillStaleness = typeof skillStaleness.$inferSelect;
+export type NewSkillStaleness = typeof skillStaleness.$inferInsert;
+export type SkillShareLink = typeof skillShareLinks.$inferSelect;
+export type NewSkillShareLink = typeof skillShareLinks.$inferInsert;
 export type SkillRevision = typeof skillRevisions.$inferSelect;
 export type NewSkillRevision = typeof skillRevisions.$inferInsert;
 export type Connection = typeof connections.$inferSelect;
@@ -678,3 +817,5 @@ export type WorkspaceMcpAccessToken = typeof workspaceMcpAccessTokens.$inferSele
 export type NewWorkspaceMcpAccessToken = typeof workspaceMcpAccessTokens.$inferInsert;
 export type WorkspaceCredential = typeof workspaceCredentials.$inferSelect;
 export type NewWorkspaceCredential = typeof workspaceCredentials.$inferInsert;
+export type WorkspaceSigningKey = typeof workspaceSigningKeys.$inferSelect;
+export type NewWorkspaceSigningKey = typeof workspaceSigningKeys.$inferInsert;

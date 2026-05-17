@@ -36,7 +36,8 @@ describe('parseMintInput', () => {
       threadCitations: [
         {
           slug: '  refund-policy-2024  ',
-          excerpt: 'browser supplied text is ignored',
+          excerpt: ' browser supplied text is verified later ',
+          versionId: 3,
           lastUpdated: ' 2026-04-01 ',
         },
         { slug: 'billing-faq', excerpt: 'ignored' },
@@ -46,10 +47,22 @@ describe('parseMintInput', () => {
     if (out.ok) {
       expect(out.threadCitations).toHaveLength(2);
       expect(out.threadCitations[0]?.slug).toBe('refund-policy-2024');
+      expect(out.threadCitations[0]?.excerpt).toBe('browser supplied text is verified later');
+      expect(out.threadCitations[0]?.versionId).toBe('3');
       expect(out.threadCitations[0]?.lastUpdated).toBe('2026-04-01');
-      expect(out.threadCitations[0]).not.toHaveProperty('excerpt');
+      expect(out.threadCitations[1]?.excerpt).toBe('ignored');
       expect(out.threadCitations[1]?.lastUpdated).toBeUndefined();
     }
+  });
+
+  it('caps citation excerpt length', () => {
+    const out = parseMintInput({
+      intent: 'Draft something',
+      threadCitations: [{ slug: 'refund-policy-2024', excerpt: 'x'.repeat(2_500) }],
+    });
+
+    expect(out.ok).toBe(true);
+    if (out.ok) expect(out.threadCitations[0]?.excerpt).toHaveLength(2_000);
   });
 
   it('accepts citations without excerpts but rejects missing slugs', () => {
@@ -81,9 +94,12 @@ describe('estimateInputChars', () => {
   it('rolls intent + citation slug + excerpt + per-citation overhead', () => {
     const chars = estimateInputChars({
       intent: 'hello',
-      threadCitations: [{ slug: 'a', lastUpdated: '2026' }, { slug: 'cc' }],
+      threadCitations: [
+        { slug: 'a', excerpt: 'bbbb', versionId: '3', lastUpdated: '2026' },
+        { slug: 'cc' },
+      ],
     });
-    // 5 + (1 + 4 + 16) + (2 + 0 + 16)
-    expect(chars).toBe(5 + 21 + 18);
+    // 5 + (1 + 4 + 1 + 4 + 16) + (2 + 0 + 0 + 0 + 16)
+    expect(chars).toBe(5 + 26 + 18);
   });
 });

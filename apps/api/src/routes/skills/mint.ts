@@ -5,13 +5,26 @@ import { Router } from 'express';
 import { resolveLlmKey } from '../../auth/llm-keys.js';
 import { isUuid } from '../../auth/uuid.js';
 import { db, schema } from '../../db/client.js';
+import { API_PUBLIC_URL } from '../../env.js';
 import { GbrainCitationChunk, GbrainClient } from '../../gbrain/client.js';
+import { generateSkillExplainer } from '../../skills/explainer.js';
 import { bumpPatch, generateSkill, type ThreadCitation } from '../../skills/generate.js';
 import {
   estimateInputChars,
   parseMintInput,
   type MintThreadCitationInput,
 } from '../../skills/mint-input.js';
+import {
+  captureSkillCitationProvenance,
+  citedTextSha256,
+  latestVersionIdFromChunks,
+} from '../../skills/provenance.js';
+import { mintShareLink } from '../../skills/share-link.js';
+import {
+  canonicalizeSkillMarkdown,
+  getOrCreateWorkspaceSigningKey,
+  signCanonicalSkillMarkdown,
+} from '../../skills/signing.js';
 import type { SkillDraftResponse } from '../../skills/contract.js';
 import { checkWorkspaceChatBudget } from '../chat-budget.js';
 
@@ -224,18 +237,91 @@ skillsRouter.post('/:skillId', async (req, res, next) => {
       return;
     }
 
+    const exportVersion = await refreshStaleVersionForExport({
+      skill: fetched.skill,
+      version: fetched.version,
+      userId: session.userId,
+    });
+
     await logSkillExport({
       workspaceId: workspace.id,
       userId: session.userId,
       skillId: fetched.skill.id,
-      version: fetched.version,
+      version: exportVersion,
     });
 
-    const zip = buildSkillZip(fetched.skill.name, fetched.version);
+    const prepared = await prepareSignedSkillBundle({
+      workspace,
+      userId: session.userId,
+      skill: fetched.skill,
+      version: exportVersion,
+    });
     res.setHeader('Content-Type', 'application/zip');
     res.setHeader('Content-Disposition', `attachment; filename="${fetched.skill.name}-skill.zip"`);
-    res.send(zip);
+    res.send(prepared.zip);
   } catch (err) {
+    next(err);
+  }
+});
+
+skillsRouter.post('/:skillId/share', async (req, res, next) => {
+  try {
+    const session = req.session!;
+    const workspace = await loadWorkspaceRuntime(req.workspace!.id);
+    if (!workspace) {
+      res.status(409).json({ error: 'workspace_not_ready' });
+      return;
+    }
+
+    const id = req.params.skillId;
+    if (!id) {
+      res.status(400).json({ error: 'missing_id' });
+      return;
+    }
+    if (!isUuid(id)) {
+      res.status(404).json({ error: 'skill_not_found' });
+      return;
+    }
+
+    const fetched = await loadLatestVersion(workspace.id, id);
+    if (!fetched) {
+      res.status(404).json({ error: 'skill_not_found' });
+      return;
+    }
+
+    const shareVersion = await refreshStaleVersionForExport({
+      skill: fetched.skill,
+      version: fetched.version,
+      userId: session.userId,
+    });
+
+    const prepared = await prepareSignedSkillBundle({
+      workspace,
+      userId: session.userId,
+      skill: fetched.skill,
+      version: shareVersion,
+    });
+    const link = await mintShareLink({
+      workspaceId: workspace.id,
+      skillId: fetched.skill.id,
+      skillVersionId: prepared.version.id,
+      createdByUserId: session.userId,
+      bundle: prepared.zip,
+      publicBaseUrl: API_PUBLIC_URL,
+    });
+
+    res.json({
+      url: link.url,
+      expiresAt: link.expiresAt.toISOString(),
+      publicKeyUrl: `${API_PUBLIC_URL}/workspaces/${workspace.id}/signing-key.pub`,
+    });
+  } catch (err) {
+    if (err instanceof Error && err.message === 'share_link_rate_limited') {
+      const retryAfter = (err as Error & { retryAfter?: number }).retryAfter ?? 60;
+      res.setHeader('Retry-After', String(retryAfter));
+      res.status(429).json({ error: 'share_link_rate_limited' });
+      return;
+    }
     next(err);
   }
 });
@@ -306,7 +392,7 @@ skillsRouter.post('/', async (req, res, next) => {
       workspaceId: workspace.id,
       userId: session.userId,
       generated,
-      sourceCitationSlugs: new Set(threadCitations.map((c) => c.slug)),
+      sourceCitations: threadCitations,
     });
 
     if (!persisted.ok) {
@@ -349,13 +435,14 @@ async function persistDraft(args: {
   workspaceId: string;
   userId: string;
   generated: Awaited<ReturnType<typeof generateSkill>>;
-  sourceCitationSlugs: ReadonlySet<string>;
+  sourceCitations: ThreadCitation[];
 }): Promise<PersistOk | PersistErr> {
-  const { workspaceId, userId, generated, sourceCitationSlugs } = args;
+  const { workspaceId, userId, generated, sourceCitations } = args;
   const { draft } = generated;
   const name = draft.frontmatter.name;
   const version = draft.frontmatter.version;
-  if (draft.cited_doc_slugs.some((slug) => !sourceCitationSlugs.has(slug))) {
+  const sourceCitationBySlug = new Map(sourceCitations.map((citation) => [citation.slug, citation]));
+  if (draft.cited_doc_slugs.some((slug) => !sourceCitationBySlug.has(slug))) {
     return {
       ok: false,
       status: 422,
@@ -391,6 +478,24 @@ async function persistDraft(args: {
           status: 500,
           error: 'skill_version_insert_failed',
         };
+      }
+
+      const provenanceRows = draft.cited_doc_slugs.flatMap((slug, idx) => {
+        const citation = sourceCitationBySlug.get(slug);
+        if (!citation?.excerpt) return [];
+        return [
+          {
+            skillVersionId: version_.id,
+            citationIndex: idx + 1,
+            slug,
+            versionId: citation.versionId ?? null,
+            citedText: citation.excerpt,
+            citedTextSha256: citedTextSha256(citation.excerpt),
+          },
+        ];
+      });
+      if (provenanceRows.length > 0) {
+        await tx.insert(schema.skillCitationProvenance).values(provenanceRows);
       }
 
       const citeChips =
@@ -528,6 +633,23 @@ async function persistRevision(args: {
         };
       }
 
+      const previousProvenance = await tx
+        .select()
+        .from(schema.skillCitationProvenance)
+        .where(eq(schema.skillCitationProvenance.skillVersionId, previousVersion.id));
+      if (previousProvenance.length > 0) {
+        await tx.insert(schema.skillCitationProvenance).values(
+          previousProvenance.map((row) => ({
+            skillVersionId: version.id,
+            citationIndex: row.citationIndex,
+            slug: row.slug,
+            versionId: row.versionId,
+            citedText: row.citedText,
+            citedTextSha256: row.citedTextSha256,
+          })),
+        );
+      }
+
       await tx
         .update(schema.skills)
         .set({ updatedAt: new Date() })
@@ -574,18 +696,38 @@ async function rehydrateThreadCitations(
     const chunks = await gbrain.getChunks(citation.slug);
     if (chunks.length === 0) continue;
 
-    const excerpt = chunksToExcerpt(chunks).slice(0, remaining);
+    const excerpt = citationScopedExcerpt(citation, chunks).slice(0, remaining);
     if (!excerpt) continue;
 
     remaining -= excerpt.length;
     out.push({
       slug: citation.slug,
       excerpt,
+      versionId: citation.versionId ?? latestVersionIdFromChunks(chunks) ?? undefined,
       lastUpdated: citation.lastUpdated ?? latestChunkUpdate(chunks),
     });
   }
 
   return out;
+}
+
+function citationScopedExcerpt(
+  citation: MintThreadCitationInput,
+  chunks: GbrainCitationChunk[],
+): string {
+  const serverText = chunksToExcerpt(chunks);
+  const claimed = citation.excerpt?.trim();
+  if (claimed && containsCitedSpan(serverText, claimed)) return claimed;
+  return serverText;
+}
+
+function containsCitedSpan(serverText: string, citedSpan: string): boolean {
+  if (serverText.includes(citedSpan)) return true;
+  return normalizeCitationText(serverText).includes(normalizeCitationText(citedSpan));
+}
+
+function normalizeCitationText(value: string): string {
+  return value.replace(/\s+/g, ' ').trim();
 }
 
 function chunksToExcerpt(chunks: GbrainCitationChunk[]): string {
@@ -626,10 +768,157 @@ async function logSkillExport(args: {
   }
 }
 
+async function refreshStaleVersionForExport(args: {
+  skill: LoadedVersion['skill'];
+  version: typeof schema.skillVersions.$inferSelect;
+  userId: string;
+}): Promise<typeof schema.skillVersions.$inferSelect> {
+  const stale = await loadLatestStaleness(args.version.id);
+  if (!stale) return args.version;
+
+  const frontmatter = args.version.frontmatter as Record<string, unknown>;
+  const nextVersion = bumpPatch(args.version.version);
+  const refreshedFrontmatter = {
+    ...frontmatter,
+    version: nextVersion,
+  };
+  const citedDocSlugs = normalizeCitedDocSlugs(args.version.citedDocSlugs);
+
+  try {
+    return await db.transaction(async (tx) => {
+      const [stillStale] = await tx
+        .select({ id: schema.skillStaleness.id })
+        .from(schema.skillStaleness)
+        .where(
+          and(
+            eq(schema.skillStaleness.skillVersionId, args.version.id),
+            eq(schema.skillStaleness.status, 'stale'),
+          ),
+        )
+        .limit(1);
+
+      if (!stillStale) return args.version;
+
+      const [version] = await tx
+        .insert(schema.skillVersions)
+        .values({
+          skillId: args.skill.id,
+          version: nextVersion,
+          frontmatter: refreshedFrontmatter,
+          body: args.version.body,
+          citedDocSlugs,
+          createdByUserId: args.userId,
+        })
+        .returning();
+      if (!version) throw new Error('skill_version_insert_failed');
+
+      await tx
+        .update(schema.skills)
+        .set({ updatedAt: new Date() })
+        .where(eq(schema.skills.id, args.skill.id));
+
+      const citeChips =
+        citedDocSlugs.length > 0
+          ? citedDocSlugs.map((_, idx) => `[${idx + 1}]`).join(' ')
+          : null;
+      await tx.insert(schema.skillRevisions).values({
+        skillId: args.skill.id,
+        versionId: version.id,
+        role: 'brain',
+        text: `Re-exported v${version.version} from refreshed sources.`,
+        cites: citeChips,
+      });
+
+      return version;
+    });
+  } catch (err) {
+    if (isUniqueViolation(err)) {
+      const reloaded = await loadLatestVersion(args.skill.workspaceId, args.skill.id);
+      if (reloaded) return reloaded.version;
+    }
+    throw err;
+  }
+}
+
 function normalizeCitedDocSlugs(value: unknown): string[] {
   return Array.isArray(value)
     ? value.filter((slug): slug is string => typeof slug === 'string')
     : [];
+}
+
+type WorkspaceRuntime = NonNullable<Awaited<ReturnType<typeof loadWorkspaceRuntime>>>;
+
+interface PreparedSkillBundle {
+  version: typeof schema.skillVersions.$inferSelect;
+  zip: Buffer;
+}
+
+async function prepareSignedSkillBundle(args: {
+  workspace: WorkspaceRuntime;
+  userId: string;
+  skill: LoadedVersion['skill'];
+  version: typeof schema.skillVersions.$inferSelect;
+}): Promise<PreparedSkillBundle> {
+  const version = await materializeExplainer({
+    workspaceId: args.workspace.id,
+    skillName: args.skill.name,
+    version: args.version,
+  });
+  const gbrain = new GbrainClient(
+    {
+      workspaceId: args.workspace.id,
+      baseUrl: args.workspace.gbrainBaseUrl,
+      oauthClientId: args.workspace.gbrainOauthClientId,
+      oauthClientSecretCiphertext: args.workspace.gbrainOauthClientSecretCiphertext,
+    },
+    { callerUserId: args.userId },
+  );
+
+  await captureSkillCitationProvenance({
+    skillVersionId: version.id,
+    citedDocSlugs: normalizeCitedDocSlugs(version.citedDocSlugs),
+    gbrain,
+  });
+
+  const signingKey = await getOrCreateWorkspaceSigningKey(args.workspace.id);
+  const zip = buildSkillZip(args.skill.name, version, {
+    workspaceId: args.workspace.id,
+    privateKeyPem: signingKey.privateKey,
+  });
+  return { version, zip };
+}
+
+async function materializeExplainer(args: {
+  workspaceId: string;
+  skillName: string;
+  version: typeof schema.skillVersions.$inferSelect;
+}): Promise<typeof schema.skillVersions.$inferSelect> {
+  const frontmatter = args.version.frontmatter as Record<string, unknown>;
+  if (Object.prototype.hasOwnProperty.call(frontmatter, 'explainer')) {
+    return args.version;
+  }
+
+  const resolvedAnthropic = await resolveLlmKey({
+    workspaceId: args.workspaceId,
+    provider: 'anthropic',
+    scope: 'chat',
+  }).catch(() => null);
+  let explainer: string | null = null;
+  if (resolvedAnthropic) {
+    explainer = await generateSkillExplainer({
+      skillName: args.skillName,
+      frontmatter,
+      body: args.version.body,
+      resolvedAnthropic,
+    }).catch(() => null);
+  }
+
+  const [updated] = await db
+    .update(schema.skillVersions)
+    .set({ frontmatter: { ...frontmatter, explainer } })
+    .where(eq(schema.skillVersions.id, args.version.id))
+    .returning();
+  return updated ?? args.version;
 }
 
 /**
@@ -692,12 +981,19 @@ async function loadSkillDraft(workspaceId: string, id: string): Promise<SkillDra
   const slugs = Array.isArray(version.citedDocSlugs)
     ? (version.citedDocSlugs as unknown[]).filter((s): s is string => typeof s === 'string')
     : [];
+  const frontmatter = version.frontmatter as Record<string, unknown>;
+  const explainer =
+    typeof frontmatter.explainer === 'string' && frontmatter.explainer.trim()
+      ? frontmatter.explainer.trim()
+      : null;
+  const stale = await loadLatestStaleness(version.id);
 
   return {
     id: skill.id,
     name: skill.name,
     version: version.version,
     body: version.body,
+    explainer,
     cites: slugs.map((slug, idx) => ({ index: idx + 1, slug })),
     revisions: revisions.map((r) => ({
       id: r.id,
@@ -705,7 +1001,34 @@ async function loadSkillDraft(workspaceId: string, id: string): Promise<SkillDra
       text: r.text,
       cites: r.cites ?? undefined,
     })),
+    staleness: stale
+      ? {
+          changelog: stale.changelog ?? 'A cited source changed since this skill was exported.',
+          detectedAt: stale.detectedAt.toISOString(),
+        }
+      : null,
   };
+}
+
+async function loadLatestStaleness(skillVersionId: string): Promise<{
+  changelog: string | null;
+  detectedAt: Date;
+} | null> {
+  const [stale] = await db
+    .select({
+      changelog: schema.skillStaleness.changelog,
+      detectedAt: schema.skillStaleness.detectedAt,
+    })
+    .from(schema.skillStaleness)
+    .where(
+      and(
+        eq(schema.skillStaleness.skillVersionId, skillVersionId),
+        eq(schema.skillStaleness.status, 'stale'),
+      ),
+    )
+    .orderBy(desc(schema.skillStaleness.detectedAt))
+    .limit(1);
+  return stale ?? null;
 }
 
 interface LoadedVersion {
@@ -732,17 +1055,32 @@ async function loadLatestVersion(workspaceId: string, id: string): Promise<Loade
   return { skill, version };
 }
 
-function buildSkillZip(name: string, version: typeof schema.skillVersions.$inferSelect): Buffer {
+interface BuildSkillZipOptions {
+  workspaceId: string;
+  privateKeyPem: string;
+}
+
+function buildSkillZip(
+  name: string,
+  version: typeof schema.skillVersions.$inferSelect,
+  options: BuildSkillZipOptions,
+): Buffer {
   const zip = new AdmZip();
   const frontmatterYaml = stringifyYamlFrontmatter(version.frontmatter as Record<string, unknown>);
-  const skillMd = `---\n${frontmatterYaml}---\n\n${version.body}\n`;
+  const skillMd = canonicalizeSkillMarkdown(`---\n${frontmatterYaml}---\n\n${version.body}\n`);
+  const signature = signCanonicalSkillMarkdown(skillMd, options.privateKeyPem);
   const manifest = {
     name,
     version: version.version,
     entrypoint: 'SKILL.md',
     generated_at: version.createdAt.toISOString(),
+    signature_algorithm: 'Ed25519',
+    signed_payload: 'SHA-256(canonical SKILL.md)',
+    signed_payload_sha256: signature.payloadSha256Hex,
+    public_key_url: `${API_PUBLIC_URL}/workspaces/${options.workspaceId}/signing-key.pub`,
   };
   zip.addFile(`${name}/SKILL.md`, Buffer.from(skillMd, 'utf8'));
+  zip.addFile(`${name}/SKILL.md.sig`, Buffer.from(`${signature.signatureBase64}\n`, 'utf8'));
   zip.addFile(`${name}/frontmatter.yaml`, Buffer.from(frontmatterYaml, 'utf8'));
   zip.addFile(`${name}/manifest.json`, Buffer.from(JSON.stringify(manifest, null, 2), 'utf8'));
   return zip.toBuffer();
@@ -802,7 +1140,8 @@ async function loadWorkspaceRuntime(workspaceId: string) {
   }
   return {
     id: workspace.id,
-    gbrainBaseUrl: workspace.gbrainBaseUrl ?? formatGbrainBaseUrl(workspace.gbrainPrivateAddress ?? ''),
+    gbrainBaseUrl:
+      workspace.gbrainBaseUrl ?? formatGbrainBaseUrl(workspace.gbrainPrivateAddress ?? ''),
     gbrainOauthClientId: workspace.gbrainOauthClientId,
     gbrainOauthClientSecretCiphertext: workspace.gbrainOauthClientSecretCiphertext,
   };

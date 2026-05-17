@@ -6,6 +6,7 @@ import { requireRole as coreRequireRole } from '@open42/api/middleware/require-r
 import { registerTenantProvisioner } from '@open42/api/tenants/provision';
 import { buildWorkspaceBillingRouter } from './routes/workspaces/billing.js';
 import { buildStripeWebhookRouter } from './routes/webhooks/stripe.js';
+import { buildWaitlistRouter } from './routes/waitlist.js';
 import { recordLlmUsage, startBillingUsageRetryLoop } from './billing/usage.js';
 import { createFlyTenant } from './tenants/provision-fly.js';
 
@@ -29,6 +30,7 @@ export function mountCloudRoutes(
     requireRole: typeof coreRequireRole;
   },
 ): CloudApiHandle {
+  app.use('/waitlist', buildWaitlistRouter());
   app.use(
     '/workspaces/:id/billing',
     deps.requireRole(['owner'], { from: 'param' }, 'forbidden_owner_only'),

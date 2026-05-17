@@ -11,7 +11,8 @@ for (const file of ['.env.local', '.env']) {
 const baseURL = process.env.WEB_PUBLIC_URL ?? 'http://localhost:3000';
 
 export default defineConfig({
-  testDir: './tests/e2e',
+  testDir: '.',
+  testMatch: ['tests/e2e/**/*.spec.ts', 'apps/web/e2e/**/*.spec.ts'],
   fullyParallel: false,
   reporter: [['list']],
   use: {

@@ -12,6 +12,7 @@ export interface SkillDraftResponse {
   name: string;
   version: string;
   body: string;
+  explainer?: string | null;
   cites: Array<{ index: number; slug: string; lastUpdated?: string }>;
   revisions: Array<{
     id: string;
@@ -19,4 +20,8 @@ export interface SkillDraftResponse {
     text: string;
     cites?: string;
   }>;
+  staleness?: {
+    changelog: string;
+    detectedAt: string;
+  } | null;
 }

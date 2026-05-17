@@ -1,6 +1,11 @@
 const DEFAULT_CHAT_REQUESTS_PER_MINUTE = 20;
 const DEFAULT_CHAT_INPUT_CHARS_PER_MINUTE = 40_000;
 const CHAT_WINDOW_MS = 60_000;
+const APPROX_CHARS_PER_TOKEN = 4;
+
+export interface TokenCountMessage {
+  content: string;
+}
 
 interface ChatBudgetEntry {
   requests: number;
@@ -68,6 +73,16 @@ export function checkWorkspaceChatBudget(input: ChatBudgetInput): ChatBudgetResu
 
 export function resetWorkspaceChatBudgetForTest(): void {
   workspaceChatBudget.clear();
+}
+
+export function countTokensInMessages(messages: TokenCountMessage[]): number {
+  return messages.reduce((sum, message) => sum + approximateTokenCount(message.content), 0);
+}
+
+export function approximateTokenCount(text: string): number {
+  const normalized = text.trim();
+  if (!normalized) return 0;
+  return Math.ceil(normalized.length / APPROX_CHARS_PER_TOKEN);
 }
 
 function positiveInt(value: string | undefined, fallback: number): number {
