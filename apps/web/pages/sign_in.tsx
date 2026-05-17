@@ -12,6 +12,7 @@ import {
   useState,
 } from 'react';
 import { motion } from 'motion/react';
+import { mutate } from 'swr';
 
 import { EditorialPane } from '@/components/onboarding/EditorialPane';
 import { CardCabinet } from '@/components/onboarding/illustrations/CardCabinet';
@@ -26,6 +27,11 @@ type SignInState =
   | { status: 'error'; previous: 'idle' | 'sent'; message: string; expiresAt?: string };
 
 const RESEND_COOLDOWN_SECONDS = 30;
+const AUTH_CACHE_KEYS = ['/api/auth/me', '/api/workspaces', '/api/workspaces/current'] as const;
+
+async function clearAuthCache(): Promise<void> {
+  await Promise.all(AUTH_CACHE_KEYS.map((key) => mutate(key, undefined, { revalidate: false })));
+}
 
 export default function SignInPage() {
   const router = useRouter();
@@ -60,6 +66,7 @@ export default function SignInPage() {
         return;
       }
       const body = await response.json();
+      await clearAuthCache();
       await router.replace(body.redirectTo ?? '/onboard');
     });
     return () => {
@@ -155,6 +162,7 @@ export default function SignInPage() {
           });
           return;
         }
+        await clearAuthCache();
         await router.replace(payload.redirectTo ?? '/onboard');
       } catch (error) {
         verifiedRef.current = false;

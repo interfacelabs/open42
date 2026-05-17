@@ -3,10 +3,7 @@ import type { NextApiRequest, NextApiResponse } from 'next';
 const MUTATION_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
 const SAFE_FETCH_SITES = new Set(['same-origin', 'same-site', 'none']);
 
-export function rejectCrossSiteMutation(
-  req: NextApiRequest,
-  res: NextApiResponse,
-): boolean {
+export function rejectCrossSiteMutation(req: NextApiRequest, res: NextApiResponse): boolean {
   if (!MUTATION_METHODS.has(req.method ?? '')) return false;
 
   const origin = firstHeader(req.headers.origin);
@@ -76,8 +73,15 @@ export function forwardSetCookie(backend: Response, res: NextApiResponse): void 
   if (cookies.length > 0) {
     res.setHeader('Set-Cookie', cookies);
   } else if (fallback) {
-    res.setHeader('Set-Cookie', fallback);
+    res.setHeader('Set-Cookie', splitSetCookieHeader(fallback));
   }
+}
+
+export function splitSetCookieHeader(header: string): string[] {
+  return header
+    .split(/,\s*(?=[!#$%&'*+\-.^_`|~0-9A-Za-z]+=)/)
+    .map((cookie) => cookie.trim())
+    .filter(Boolean);
 }
 
 function allowedWebOrigins(req: NextApiRequest): Set<string> {
