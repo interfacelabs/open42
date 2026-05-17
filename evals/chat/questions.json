@@ -1,0 +1,33 @@
+[
+  {
+    "id": "refund-monthly-followup",
+    "turns": ["What is the refund window for annual customers?", "What about monthly customers?"],
+    "expected": ["monthly", "14", "[1]"]
+  },
+  {
+    "id": "enterprise-exception-followup",
+    "turns": ["What is our standard refund policy?", "Does enterprise have an exception?"],
+    "expected": ["enterprise", "MSA", "[1]"]
+  },
+  {
+    "id": "credit-after-window-followup",
+    "turns": [
+      "Can customers get refunds after the normal window?",
+      "If not, what do we offer instead?"
+    ],
+    "expected": ["credit", "after", "[1]"]
+  },
+  {
+    "id": "unsupported-followup",
+    "turns": ["What is the refund policy?", "What is the office dog policy?"],
+    "expected": ["don't have", "[1]"]
+  },
+  {
+    "id": "source-aware-followup",
+    "turns": [
+      "Which source explains annual refunds?",
+      "Use that same source to answer monthly refunds."
+    ],
+    "expected": ["refund-policy", "monthly", "[1]"]
+  }
+]

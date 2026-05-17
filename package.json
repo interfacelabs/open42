@@ -42,6 +42,7 @@
     "test:cloud": "OPEN42_EDITION=cloud npm run test",
     "test:e2e": "playwright test",
     "eval:refund-policy": "tsx eval/runners/refund-policy.ts",
+    "eval:chat": "tsx evals/chat/run.ts",
     "db:generate": "npm run db:generate -w @open42/api",
     "db:push": "npm run db:push -w @open42/api",
     "db:migrate": "npm run db:migrate -w @open42/api",

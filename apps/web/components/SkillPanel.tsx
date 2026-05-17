@@ -2,6 +2,11 @@ import { Download } from 'lucide-react';
 import { FormEvent, useState } from 'react';
 import useSWR from 'swr';
 
+import {
+  PostExportDialog,
+  type PostExportReceipt,
+  type ShareLinkResult,
+} from '@/components/PostExportDialog';
 import { SlideOver } from '@/components/SlideOver';
 import { Button } from '@/components/ui/button';
 import { fetcher, type FetchError } from '@/lib/api';
@@ -13,8 +18,6 @@ import { useWorkspaceStore } from '@/lib/workspaces/store';
 interface SkillPanelProps {
   draftId: string | null;
   onClose: () => void;
-  /** Hook for the parent to perform the actual zip download. */
-  onDownload?: (draft: SkillDraft) => void;
 }
 
 /**
@@ -25,11 +28,15 @@ interface SkillPanelProps {
  * Composer is currently local-only (revisions append to React state, no server
  * round-trip). Real drafting is wired in P6c.
  */
-export function SkillPanel({ draftId, onClose, onDownload }: SkillPanelProps) {
+export function SkillPanel({ draftId, onClose }: SkillPanelProps) {
   // The skill draft endpoint is workspace-scoped (`/workspaces/:id/skills/...`).
   // Read the workspace id from the Zustand store; SWR stays idle until both
   // draftId and workspaceId are known.
   const workspaceId = useWorkspaceStore((s) => s.currentWorkspaceId);
+  const workspaceName = useWorkspaceStore((s) => {
+    const id = s.currentWorkspaceId;
+    return s.workspaces.find((workspace) => workspace.id === id)?.name ?? null;
+  });
   const draftUrl =
     draftId && workspaceId
       ? `/api/workspaces/${encodeURIComponent(workspaceId)}/skills/${encodeURIComponent(draftId)}/draft`
@@ -58,9 +65,9 @@ export function SkillPanel({ draftId, onClose, onDownload }: SkillPanelProps) {
           key={draft.id}
           draft={draft}
           workspaceId={workspaceId}
+          workspaceName={workspaceName}
           mutateDraft={mutate}
           onClose={onClose}
-          onDownload={() => onDownload?.(draft)}
         />
       )}
     </SlideOver>
@@ -70,21 +77,31 @@ export function SkillPanel({ draftId, onClose, onDownload }: SkillPanelProps) {
 function PanelBody({
   draft,
   workspaceId,
+  workspaceName,
   mutateDraft,
   onClose,
-  onDownload,
 }: {
   draft: SkillDraft;
   workspaceId: string | null;
+  workspaceName: string | null;
   mutateDraft: () => Promise<unknown>;
   onClose: () => void;
-  onDownload: () => void;
 }) {
   // Optimistic 'you' revision shown until the POST returns the next version.
   // The brain's reply is the new revision row server-side; SWR re-pulls.
   const [pendingYou, setPendingYou] = useState<SkillRevision | null>(null);
   const [revising, setRevising] = useState(false);
   const [reviseError, setReviseError] = useState<string | null>(null);
+  const [exporting, setExporting] = useState(false);
+  const [exportDialogOpen, setExportDialogOpen] = useState(false);
+  const [exportReceipt, setExportReceipt] = useState<PostExportReceipt>({
+    status: 'signing_in_progress',
+    workspaceName,
+    sourceCount: draft.cites.length,
+    version: draft.version,
+    staleAtExport: draft.staleness ? { changelog: draft.staleness.changelog } : null,
+    explainerStatus: 'pending',
+  });
 
   async function onRevise(text: string) {
     if (!text.trim() || revising) return;
@@ -130,6 +147,76 @@ function PanelBody({
 
   const allRevisions = pendingYou ? [...draft.revisions, pendingYou] : draft.revisions;
 
+  async function startExport() {
+    if (!workspaceId || exporting) return;
+    setExporting(true);
+    setExportDialogOpen(true);
+    setExportReceipt({
+      status: 'signing_in_progress',
+      workspaceName,
+      sourceCount: draft.cites.length,
+      version: draft.version,
+      staleAtExport: draft.staleness ? { changelog: draft.staleness.changelog } : null,
+      explainerStatus: 'pending',
+    });
+    try {
+      const response = await fetch(
+        `/api/workspaces/${encodeURIComponent(workspaceId)}/skills/${encodeURIComponent(draft.id)}`,
+        {
+          method: 'POST',
+          headers: csrfHeaders(),
+        },
+      );
+      if (!response.ok) {
+        setExportReceipt((current) => ({
+          ...current,
+          status: 'sign_failed',
+          explainerStatus: 'failed',
+          error: 'skill_export_failed',
+        }));
+        return;
+      }
+      const blob = await response.blob();
+      downloadBlob(blob, `${draft.name}-skill.zip`);
+      setExportReceipt({
+        status: 'signed',
+        workspaceName,
+        sourceCount: draft.cites.length,
+        version: draft.version,
+        staleAtExport: draft.staleness ? { changelog: draft.staleness.changelog } : null,
+        explainerStatus: 'ready',
+        publicKeyUrl: `/api/workspaces/${encodeURIComponent(workspaceId)}/signing-key.pub`,
+      });
+    } catch {
+      setExportReceipt((current) => ({
+        ...current,
+        status: 'sign_failed',
+        explainerStatus: 'failed',
+        error: 'network_error',
+      }));
+    } finally {
+      setExporting(false);
+    }
+  }
+
+  async function mintShareLink(): Promise<ShareLinkResult> {
+    if (!workspaceId) throw new Error('no_active_workspace');
+    const response = await fetch(
+      `/api/workspaces/${encodeURIComponent(workspaceId)}/skills/${encodeURIComponent(draft.id)}/share`,
+      {
+        method: 'POST',
+        headers: csrfHeaders(),
+      },
+    );
+    const payload = (await response.json().catch(() => ({}))) as ShareLinkResult & {
+      error?: string;
+    };
+    if (!response.ok || !payload.url || !payload.expiresAt) {
+      throw new Error(payload.error ?? 'share_failed');
+    }
+    return payload;
+  }
+
   return (
     <>
       <div className="flex items-center justify-between border-b border-border px-5 py-3">
@@ -140,9 +227,15 @@ function PanelBody({
           <span className="font-mono text-[10.5px] text-text-faint">v{draft.version}</span>
         </div>
         <div className="flex items-center gap-3">
-          <Button size="sm" variant="primary" className="gap-1.5" onClick={onDownload}>
+          <Button
+            size="sm"
+            variant="primary"
+            className="gap-1.5"
+            disabled={exporting}
+            onClick={() => void startExport()}
+          >
             <Download size={12} strokeWidth={1.5} />
-            Download
+            {exporting ? 'Signing...' : 'Download'}
           </Button>
           <button
             type="button"
@@ -153,6 +246,22 @@ function PanelBody({
           </button>
         </div>
       </div>
+
+      {draft.staleness ? (
+        <div className="border-b border-border px-5 py-2">
+          <div className="flex items-center justify-between gap-3 border border-border px-3 py-2 text-[12px] text-text-body">
+            <span>{draft.staleness.changelog}</span>
+            <button
+              type="button"
+              onClick={() => void startExport()}
+              disabled={exporting}
+              className="shrink-0 font-medium text-accent disabled:cursor-progress disabled:text-text-faint"
+            >
+              {exporting ? 'Re-exporting...' : 'Re-export'}
+            </button>
+          </div>
+        </div>
+      ) : null}
 
       <div className="flex min-h-0 flex-1">
         <ChatColumn
@@ -174,8 +283,25 @@ function PanelBody({
           <a href="#history">history</a>
         </span>
       </div>
+
+      <PostExportDialog
+        open={exportDialogOpen}
+        onOpenChange={setExportDialogOpen}
+        draft={draft}
+        receipt={exportReceipt}
+        onMintShare={mintShareLink}
+      />
     </>
   );
+}
+
+function downloadBlob(blob: Blob, filename: string) {
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement('a');
+  anchor.href = url;
+  anchor.download = filename;
+  anchor.click();
+  URL.revokeObjectURL(url);
 }
 
 function ChatColumn({
