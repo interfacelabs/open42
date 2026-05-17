@@ -3,7 +3,11 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { db, schema } from '../db/client.js';
 import { citedTextSha256 } from '../skills/provenance.js';
-import { isB3Enabled } from './skill-staleness-queue.js';
+import {
+  isB3Enabled,
+  SKILL_STALENESS_QUEUE_NAME,
+  SKILL_STALENESS_SWEEP_EVERY_MS,
+} from './skill-staleness-queue.js';
 import {
   runSkillStalenessSweep,
   type SkillStalenessRepo,
@@ -27,6 +31,13 @@ describe('isB3Enabled', () => {
     expect(isB3Enabled({ OPEN42_B3_ENABLED: 'false' } as NodeJS.ProcessEnv)).toBe(false);
     expect(isB3Enabled({ open42_b3_enabled: '0' } as NodeJS.ProcessEnv)).toBe(false);
     expect(isB3Enabled({ OPEN42_B3_ENABLED: 'true' } as NodeJS.ProcessEnv)).toBe(true);
+  });
+
+  it('runs on the dedicated b3 queue every 15-30 minutes', () => {
+    expect(SKILL_STALENESS_QUEUE_NAME).toBe('skill-staleness');
+    expect(SKILL_STALENESS_SWEEP_EVERY_MS).toBe(20 * 60 * 1000);
+    expect(SKILL_STALENESS_SWEEP_EVERY_MS).toBeGreaterThanOrEqual(15 * 60 * 1000);
+    expect(SKILL_STALENESS_SWEEP_EVERY_MS).toBeLessThanOrEqual(30 * 60 * 1000);
   });
 });
 
