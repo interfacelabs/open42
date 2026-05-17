@@ -285,11 +285,17 @@ skillsRouter.post('/:skillId/share', async (req, res, next) => {
       return;
     }
 
+    const shareVersion = await refreshStaleVersionForExport({
+      skill: fetched.skill,
+      version: fetched.version,
+      userId: session.userId,
+    });
+
     const prepared = await prepareSignedSkillBundle({
       workspace,
       userId: session.userId,
       skill: fetched.skill,
-      version: fetched.version,
+      version: shareVersion,
     });
     const link = await mintShareLink({
       workspaceId: workspace.id,
