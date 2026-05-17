@@ -260,7 +260,19 @@ function parsePriorMessages(
     if (!content) continue;
     messages.push({ role: candidate.role, content });
   }
+  const sequenceError = validatePriorMessageSequence(messages);
+  if (sequenceError) return { ok: false, error: sequenceError };
   return { ok: true, messages };
+}
+
+function validatePriorMessageSequence(messages: NormalizedMessage[]): string | null {
+  if (messages.length === 0) return null;
+  if (messages.length % 2 !== 0) return 'invalid_chat_message_sequence';
+  for (let index = 0; index < messages.length; index += 1) {
+    const expectedRole = index % 2 === 0 ? 'user' : 'assistant';
+    if (messages[index]?.role !== expectedRole) return 'invalid_chat_message_sequence';
+  }
+  return null;
 }
 
 async function streamProviderAnswer(options: {

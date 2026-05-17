@@ -283,6 +283,45 @@ describeDb('chat skill mode', () => {
     expect(mocks.query).not.toHaveBeenCalled();
   });
 
+  it('rejects non-alternating prior message sequences before querying gbrain', async () => {
+    const { workspaceId, sessionId } = await makeOwnerWorkspace('chat-agent');
+
+    const res = await request(buildApp())
+      .post('/api/chat')
+      .set('User-Agent', 'chat-agent')
+      .set('Cookie', `open42_session=${sessionId}`)
+      .send({
+        query: 'What about monthly customers?',
+        messages: [
+          { role: 'user', text: 'What is the annual refund window?' },
+          { role: 'user', text: 'What about monthly customers?' },
+        ],
+        workspace_id: workspaceId,
+      });
+
+    expect(res.status).toBe(400);
+    expect(res.body).toEqual({ error: 'invalid_chat_message_sequence' });
+    expect(mocks.query).not.toHaveBeenCalled();
+  });
+
+  it('rejects incomplete prior turns before querying gbrain', async () => {
+    const { workspaceId, sessionId } = await makeOwnerWorkspace('chat-agent');
+
+    const res = await request(buildApp())
+      .post('/api/chat')
+      .set('User-Agent', 'chat-agent')
+      .set('Cookie', `open42_session=${sessionId}`)
+      .send({
+        query: 'What about monthly customers?',
+        messages: [{ role: 'user', text: 'What is the annual refund window?' }],
+        workspace_id: workspaceId,
+      });
+
+    expect(res.status).toBe(400);
+    expect(res.body).toEqual({ error: 'invalid_chat_message_sequence' });
+    expect(mocks.query).not.toHaveBeenCalled();
+  });
+
   it('accepts exactly 20 prior user/assistant turns', async () => {
     const { workspaceId, sessionId } = await makeOwnerWorkspace('chat-agent');
     const providerInputs: Array<{
@@ -338,7 +377,7 @@ describeDb('chat skill mode', () => {
       .set('Cookie', `open42_session=${sessionId}`)
       .send({
         query: 'What is the refund window?',
-        messages: Array.from({ length: 41 }, (_, index) => ({
+        messages: Array.from({ length: 42 }, (_, index) => ({
           id: `m${index}`,
           role: index % 2 === 0 ? 'user' : 'assistant',
           text: `turn ${index}`,
