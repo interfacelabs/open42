@@ -80,6 +80,9 @@ function containsExpected(answer: ChatEvalAnswer, term: string): boolean {
       'can not answer',
       'does not contain',
       'not contain',
+      'does not provide',
+      'not provide',
+      'no information',
     ].some((phrase) => containsTerm(answer.answer, phrase));
   }
 

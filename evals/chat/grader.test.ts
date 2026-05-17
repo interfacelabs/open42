@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { gradeChatAnswer, gradeChatAnswerWithOptionalJudge } from './grader.js';
+import { runChatEvalSelfTest } from './self-test.js';
 
 describe('chat eval grader', () => {
   it('scores resolution, source overlap, and no-regression criteria deterministically', () => {
@@ -88,6 +89,23 @@ describe('chat eval grader', () => {
     expect(grade.passed).toBe(true);
   });
 
+  it('accepts unsupported answers phrased as missing provided information', () => {
+    const grade = gradeChatAnswer(
+      {
+        id: 'unsupported-followup',
+        turns: ['What is the refund policy?', 'What is the office dog policy?'],
+        expected: ["don't have", '[1]'],
+        avoid: ['14', '30'],
+      },
+      {
+        id: 'unsupported-followup',
+        answer: 'The context does not provide any information about an office dog policy [1].',
+      },
+    );
+
+    expect(grade.passed).toBe(true);
+  });
+
   it('falls back to deterministic grading unless Anthropic grading is explicitly enabled', async () => {
     await expect(
       gradeChatAnswerWithOptionalJudge(
@@ -100,5 +118,18 @@ describe('chat eval grader', () => {
         {} as NodeJS.ProcessEnv,
       ),
     ).resolves.toMatchObject({ passed: true, grader: 'deterministic' });
+  });
+
+  it('keeps the eval fixture stable across three identical runs', async () => {
+    const summary = await runChatEvalSelfTest();
+
+    expect(summary).toMatchObject({
+      passed: true,
+      runs: 3,
+      scores: [1, 1, 1],
+      scoreVariance: 0,
+    });
+    expect(summary.docCount).toBeGreaterThanOrEqual(summary.minDocs);
+    expect(summary.docCount).toBeLessThanOrEqual(summary.maxDocs);
   });
 });
