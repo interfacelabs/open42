@@ -15,6 +15,7 @@ describe('waitlist routes', () => {
 
   it('stores normalized beta access requests without echoing the email', async () => {
     const stored: WaitlistEntryInput[] = [];
+    const notified: WaitlistEntryInput[] = [];
     const app = express();
     app.use(express.json());
     app.use(
@@ -22,6 +23,12 @@ describe('waitlist routes', () => {
         repo: {
           async upsert(input) {
             stored.push(input);
+          },
+        },
+        notifier: {
+          async notify(input) {
+            notified.push(input);
+            return { ok: true };
           },
         },
       }),
@@ -44,19 +51,55 @@ describe('waitlist routes', () => {
         ip: '203.0.113.10',
       },
     ]);
+    await vi.waitFor(() => {
+      expect(notified).toEqual(stored);
+    });
   });
 
   it('rejects invalid email addresses before storing', async () => {
     const upsert = vi.fn();
+    const notify = vi.fn();
     const app = express();
     app.use(express.json());
-    app.use(buildWaitlistRouter({ repo: { upsert } }));
+    app.use(buildWaitlistRouter({ repo: { upsert }, notifier: { notify } }));
 
     const res = await request(app).post('/').send({ email: 'not-an-email', source: 'landing' });
 
     expect(res.status).toBe(400);
     expect(res.body).toEqual({ error: 'invalid_email' });
     expect(upsert).not.toHaveBeenCalled();
+    expect(notify).not.toHaveBeenCalled();
+  });
+
+  it('keeps the beta request accepted when operator notification fails', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const app = express();
+    app.use(express.json());
+    app.use(
+      buildWaitlistRouter({
+        repo: { upsert: vi.fn(async () => undefined) },
+        notifier: {
+          async notify() {
+            return { ok: false, error: 'email_provider_not_configured' };
+          },
+        },
+      }),
+    );
+
+    const res = await request(app)
+      .post('/')
+      .set('fly-client-ip', '203.0.113.15')
+      .send({ email: 'founder@example.com', source: 'landing' });
+
+    expect(res.status).toBe(202);
+    expect(res.body).toEqual({ ok: true });
+    await vi.waitFor(() => {
+      expect(warn).toHaveBeenCalledWith(
+        '[waitlist-notification-failed]',
+        expect.objectContaining({ error: 'email_provider_not_configured' }),
+      );
+    });
+    warn.mockRestore();
   });
 
   it('rate limits repeated submissions from the same address', async () => {
