@@ -25,6 +25,9 @@ const baseCandidate: StalenessCandidate = {
   previousCitedTextSha256: citedTextSha256('Annual customers have thirty days.'),
 };
 
+const RUN_DB_TESTS = !!process.env.DATABASE_URL;
+const describeDb = RUN_DB_TESTS ? describe : describe.skip;
+
 describe('isB3Enabled', () => {
   it('defaults on and accepts false-like opt-outs', () => {
     expect(isB3Enabled({} as NodeJS.ProcessEnv)).toBe(true);
@@ -154,7 +157,7 @@ describe('runSkillStalenessSweep', () => {
   });
 });
 
-describe('runSkillStalenessSweep default repo', () => {
+describeDb('runSkillStalenessSweep default repo', () => {
   const workspaceIds: string[] = [];
   const userIds: string[] = [];
 

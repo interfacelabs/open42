@@ -3,7 +3,10 @@ import { sql } from 'drizzle-orm';
 
 import { db } from './client.js';
 
-describe('workspaces table constraints', () => {
+const RUN_DB_TESTS = !!process.env.DATABASE_URL;
+const describeDb = RUN_DB_TESTS ? describe : describe.skip;
+
+describeDb('workspaces table constraints', () => {
   it('workspaces.owner_user_id has no UNIQUE constraint but the column still exists', async () => {
     const indexes = await db.execute(sql`
       SELECT indexname FROM pg_indexes
