@@ -444,6 +444,78 @@ describeDb('skills routes', () => {
       });
     });
 
+    it('creates a refreshed version before exporting a stale skill', async () => {
+      const { workspaceId, sessionId } = await makeOwnerWorkspace('test-agent');
+      const minted = await request(buildApp())
+        .post(skillsPath(workspaceId))
+        .set('User-Agent', 'test-agent')
+        .set('Cookie', `open42_session=${sessionId}`)
+        .send(mintPayload('Draft'));
+      expect(minted.status).toBe(201);
+      const skillId = minted.body.draft.id as string;
+
+      const [initialVersion] = await dbMod.db
+        .select()
+        .from(dbMod.schema.skillVersions)
+        .where(eq(dbMod.schema.skillVersions.skillId, skillId));
+      expect(initialVersion?.version).toBe('0.1.0');
+
+      await dbMod.db.insert(dbMod.schema.skillStaleness).values({
+        workspaceId,
+        skillId,
+        skillVersionId: initialVersion!.id,
+        citationIndex: 1,
+        slug: 'refund-policy-2024',
+        previousVersionId: '3',
+        latestVersionId: '4',
+        previousCitedTextSha256: 'a'.repeat(64),
+        latestCitedTextSha256: 'b'.repeat(64),
+        changelog: 'Refund policy changed since export.',
+        status: 'stale',
+        detectedAt: new Date('2026-05-17T05:00:00.000Z'),
+      });
+
+      const res = await request(buildApp())
+        .post(skillPath(workspaceId, skillId))
+        .set('User-Agent', 'test-agent')
+        .set('Cookie', `open42_session=${sessionId}`)
+        .buffer(true)
+        .parse(binaryParser);
+
+      expect(res.status).toBe(200);
+      const zip = new AdmZip(zipResponseBuffer(res));
+      const skillMd = zip.readAsText('sample-skill/SKILL.md');
+      expect(skillMd).toContain('version: 0.1.1');
+
+      const versions = await dbMod.db
+        .select()
+        .from(dbMod.schema.skillVersions)
+        .where(eq(dbMod.schema.skillVersions.skillId, skillId));
+      expect(versions.map((version) => version.version).sort()).toEqual(['0.1.0', '0.1.1']);
+      const refreshedVersion = versions.find((version) => version.version === '0.1.1');
+      expect(refreshedVersion).toBeTruthy();
+
+      const provenance = await dbMod.db
+        .select()
+        .from(dbMod.schema.skillCitationProvenance)
+        .where(eq(dbMod.schema.skillCitationProvenance.skillVersionId, refreshedVersion!.id));
+      expect(provenance).toHaveLength(2);
+
+      const refreshedDraft = await request(buildApp())
+        .get(`${skillPath(workspaceId, skillId)}/draft`)
+        .set('User-Agent', 'test-agent')
+        .set('Cookie', `open42_session=${sessionId}`);
+      expect(refreshedDraft.status).toBe(200);
+      expect(refreshedDraft.body.draft).toMatchObject({
+        version: '0.1.1',
+        staleness: null,
+      });
+      expect(refreshedDraft.body.draft.revisions.at(-1)).toMatchObject({
+        role: 'brain',
+        text: 'Re-exported v0.1.1 from refreshed sources.',
+      });
+    });
+
     it('mints an ephemeral signed share link and serves the stored bundle', async () => {
       const { workspaceId, sessionId } = await makeOwnerWorkspace('test-agent');
       const minted = await request(buildApp())

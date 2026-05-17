@@ -233,18 +233,24 @@ skillsRouter.post('/:skillId', async (req, res, next) => {
       return;
     }
 
+    const exportVersion = await refreshStaleVersionForExport({
+      skill: fetched.skill,
+      version: fetched.version,
+      userId: session.userId,
+    });
+
     await logSkillExport({
       workspaceId: workspace.id,
       userId: session.userId,
       skillId: fetched.skill.id,
-      version: fetched.version,
+      version: exportVersion,
     });
 
     const prepared = await prepareSignedSkillBundle({
       workspace,
       userId: session.userId,
       skill: fetched.skill,
-      version: fetched.version,
+      version: exportVersion,
     });
     res.setHeader('Content-Type', 'application/zip');
     res.setHeader('Content-Disposition', `attachment; filename="${fetched.skill.name}-skill.zip"`);
@@ -696,6 +702,78 @@ async function logSkillExport(args: {
   }
 }
 
+async function refreshStaleVersionForExport(args: {
+  skill: LoadedVersion['skill'];
+  version: typeof schema.skillVersions.$inferSelect;
+  userId: string;
+}): Promise<typeof schema.skillVersions.$inferSelect> {
+  const stale = await loadLatestStaleness(args.version.id);
+  if (!stale) return args.version;
+
+  const frontmatter = args.version.frontmatter as Record<string, unknown>;
+  const nextVersion = bumpPatch(args.version.version);
+  const refreshedFrontmatter = {
+    ...frontmatter,
+    version: nextVersion,
+  };
+  const citedDocSlugs = normalizeCitedDocSlugs(args.version.citedDocSlugs);
+
+  try {
+    return await db.transaction(async (tx) => {
+      const [stillStale] = await tx
+        .select({ id: schema.skillStaleness.id })
+        .from(schema.skillStaleness)
+        .where(
+          and(
+            eq(schema.skillStaleness.skillVersionId, args.version.id),
+            eq(schema.skillStaleness.status, 'stale'),
+          ),
+        )
+        .limit(1);
+
+      if (!stillStale) return args.version;
+
+      const [version] = await tx
+        .insert(schema.skillVersions)
+        .values({
+          skillId: args.skill.id,
+          version: nextVersion,
+          frontmatter: refreshedFrontmatter,
+          body: args.version.body,
+          citedDocSlugs,
+          createdByUserId: args.userId,
+        })
+        .returning();
+      if (!version) throw new Error('skill_version_insert_failed');
+
+      await tx
+        .update(schema.skills)
+        .set({ updatedAt: new Date() })
+        .where(eq(schema.skills.id, args.skill.id));
+
+      const citeChips =
+        citedDocSlugs.length > 0
+          ? citedDocSlugs.map((_, idx) => `[${idx + 1}]`).join(' ')
+          : null;
+      await tx.insert(schema.skillRevisions).values({
+        skillId: args.skill.id,
+        versionId: version.id,
+        role: 'brain',
+        text: `Re-exported v${version.version} from refreshed sources.`,
+        cites: citeChips,
+      });
+
+      return version;
+    });
+  } catch (err) {
+    if (isUniqueViolation(err)) {
+      const reloaded = await loadLatestVersion(args.skill.workspaceId, args.skill.id);
+      if (reloaded) return reloaded.version;
+    }
+    throw err;
+  }
+}
+
 function normalizeCitedDocSlugs(value: unknown): string[] {
   return Array.isArray(value)
     ? value.filter((slug): slug is string => typeof slug === 'string')
@@ -842,20 +920,7 @@ async function loadSkillDraft(workspaceId: string, id: string): Promise<SkillDra
     typeof frontmatter.explainer === 'string' && frontmatter.explainer.trim()
       ? frontmatter.explainer.trim()
       : null;
-  const [stale] = await db
-    .select({
-      changelog: schema.skillStaleness.changelog,
-      detectedAt: schema.skillStaleness.detectedAt,
-    })
-    .from(schema.skillStaleness)
-    .where(
-      and(
-        eq(schema.skillStaleness.skillVersionId, version.id),
-        eq(schema.skillStaleness.status, 'stale'),
-      ),
-    )
-    .orderBy(desc(schema.skillStaleness.detectedAt))
-    .limit(1);
+  const stale = await loadLatestStaleness(version.id);
 
   return {
     id: skill.id,
@@ -877,6 +942,27 @@ async function loadSkillDraft(workspaceId: string, id: string): Promise<SkillDra
         }
       : null,
   };
+}
+
+async function loadLatestStaleness(skillVersionId: string): Promise<{
+  changelog: string | null;
+  detectedAt: Date;
+} | null> {
+  const [stale] = await db
+    .select({
+      changelog: schema.skillStaleness.changelog,
+      detectedAt: schema.skillStaleness.detectedAt,
+    })
+    .from(schema.skillStaleness)
+    .where(
+      and(
+        eq(schema.skillStaleness.skillVersionId, skillVersionId),
+        eq(schema.skillStaleness.status, 'stale'),
+      ),
+    )
+    .orderBy(desc(schema.skillStaleness.detectedAt))
+    .limit(1);
+  return stale ?? null;
 }
 
 interface LoadedVersion {
