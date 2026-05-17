@@ -123,6 +123,23 @@ describe('PostExportDialog', () => {
     expect(dialog).toHaveClass('sm:max-w-[520px]');
   });
 
+  it('keeps the locked design-system affordances', () => {
+    renderDialog({ receipt: signedReceipt });
+
+    const receiptStrip = screen.getByText('Signed by Acme Corp').parentElement;
+    expect(receiptStrip).toHaveClass('text-text-subtle');
+    expect(receiptStrip).not.toHaveClass('text-text-faint');
+
+    const shareButton = screen.getByRole('button', { name: /generate share link/i });
+    expect(shareButton).toHaveClass('bg-white');
+    expect(shareButton).toHaveClass('border-border');
+    expect(shareButton).not.toHaveClass('bg-accent');
+
+    expect(screen.getByRole('heading', { name: /skill exported/i })).toHaveClass('font-medium');
+    expect(screen.getByRole('heading', { name: 'Install in' })).toHaveClass('font-medium');
+    expect(screen.getByText('Generated from').parentElement).toHaveClass('font-medium');
+  });
+
   it('shows signing progress, explainer failure, and stale-at-export copy', () => {
     renderDialog({
       receipt: {
