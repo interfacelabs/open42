@@ -22,6 +22,13 @@ on each line, and has exactly one trailing newline.
 - `signed_payload_sha256`: lowercase hex SHA-256 digest
 - `public_key_url`: workspace public key endpoint
 
+## Ephemeral Share URLs
+
+Share URLs use the form `/shared/{opaque-signed-token}.zip`. Tokens are
+URL-safe bearer values containing a random nonce and an HMAC-SHA256 signature
+keyed by the server secret. Open42 stores only `SHA-256(token)`, not plaintext
+tokens. Links expire after 24 hours.
+
 ## Public Key
 
 The workspace public key is available from the API at:

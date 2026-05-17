@@ -3,10 +3,16 @@ import { Check, ChevronDown, Copy, ExternalLink, Link as LinkIcon } from 'lucide
 import Link from 'next/link';
 import { useMemo, useState } from 'react';
 
-import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog';
+import { Dialog, DialogClose, DialogContent, DialogTitle } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import type { SkillDraft } from '@/lib/skill-types';
-import { SKILL_TARGETS, skillTargetById, type SkillTargetId } from '@/lib/skill-targets';
+import {
+  SKILL_TARGETS,
+  skillInstallDestination,
+  skillTargetById,
+  skillTargetSteps,
+  type SkillTargetId,
+} from '@/lib/skill-targets';
 import { cn } from '@/lib/utils';
 
 const TARGET_STORAGE_KEY = 'open42.skillExport.installTarget';
@@ -17,6 +23,7 @@ export interface PostExportReceipt {
   sourceCount: number;
   version: string;
   publicKeyUrl?: string | null;
+  explainer?: string | null;
   explainerStatus?: 'ready' | 'pending' | 'failed';
   staleAtExport?: { changelog: string } | null;
   error?: string | null;
@@ -59,10 +66,11 @@ export function PostExportDialog({
   const [share, setShare] = useState<ShareState>({ status: 'share_unminted' });
   const selectedTarget = skillTargetById(targetId);
 
-  const installCommand = useMemo(
-    () => `unzip ${draft.name}-skill.zip -d ${selectedTarget.installPath}`,
-    [draft.name, selectedTarget.installPath],
+  const installPath = useMemo(
+    () => skillInstallDestination(selectedTarget, draft.name),
+    [draft.name, selectedTarget],
   );
+  const installSteps = useMemo(() => skillTargetSteps(selectedTarget), [selectedTarget]);
 
   function selectTarget(id: SkillTargetId) {
     setTargetId(id);
@@ -97,34 +105,51 @@ export function PostExportDialog({
   }
 
   const receiptCopy = receiptText(receipt);
+  const displayName = humanizeSkillName(draft.name);
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent>
-        <div className="max-h-[92vh] overflow-y-auto px-5 py-5 sm:px-6">
-          <div>
-            <DialogTitle className="text-[20px] font-medium leading-title tracking-tight text-text-primary">
-              Install {draft.name}
-            </DialogTitle>
-            <DialogDescription className="mt-1 text-[13px] leading-relaxed text-text-subtle">
-              The signed bundle is ready for your local agent.
-            </DialogDescription>
+      <DialogContent className="sm:max-w-[520px]" aria-describedby={undefined}>
+        <div className="max-h-[92vh] overflow-y-auto px-6 py-6">
+          <div className="relative border-b border-border pb-5">
+            <DialogClose className="absolute right-0 top-0 font-mono text-[11px] text-text-faint hover:text-text-primary">
+              esc
+            </DialogClose>
+            <div className="flex items-end justify-between gap-4 pr-9">
+              <DialogTitle className="text-[22px] font-medium leading-title tracking-tight text-text-primary">
+                {displayName} Skill exported
+              </DialogTitle>
+              <span className="shrink-0 rounded border border-border bg-panel-soft px-2 py-1 font-mono text-[11px] text-text-subtle">
+                v{receipt.version}
+              </span>
+            </div>
           </div>
 
           <div
             className={cn(
-              'mt-4 flex flex-wrap items-center gap-x-3 gap-y-1 border border-border px-3 py-2 font-mono text-[10.5px]',
+              'flex flex-wrap items-center gap-x-2 gap-y-1 border-b border-border py-4 font-mono text-[11px]',
               receipt.status === 'sign_failed' ? 'text-destructive' : 'text-text-subtle',
             )}
           >
             <span>{receiptCopy}</span>
-            <span>{receipt.sourceCount} sources</span>
+            <span aria-hidden="true">·</span>
+            <span>{receipt.sourceCount} cited sources</span>
+            <span aria-hidden="true">·</span>
             <span>{receipt.staleAtExport ? receipt.staleAtExport.changelog : 'all fresh'}</span>
-            <span>v{receipt.version} changelog</span>
+            <span aria-hidden="true">·</span>
+            <span>
+              v{receipt.version}{' '}
+              <button type="button" className="font-mono text-accent">
+                changelog
+              </button>
+            </span>
           </div>
 
           {receipt.explainerStatus === 'pending' ? (
             <p className="mt-3 text-[12px] text-text-subtle">Explainer is still being written.</p>
+          ) : null}
+          {receipt.explainerStatus === 'ready' && receipt.explainer ? (
+            <p className="mt-3 text-[13px] leading-relaxed text-text-body">{receipt.explainer}</p>
           ) : null}
           {receipt.explainerStatus === 'failed' ? (
             <p className="mt-3 text-[12px] text-text-subtle">
@@ -133,14 +158,15 @@ export function PostExportDialog({
           ) : null}
 
           <div className="mt-6">
-            <div className="flex border-b border-border">
+            <h2 className="text-[18px] font-medium leading-title text-text-primary">Install in</h2>
+            <div className="mt-4 flex border-b border-border">
               {SKILL_TARGETS.map((target) => (
                 <button
                   key={target.id}
                   type="button"
                   onClick={() => selectTarget(target.id)}
                   className={cn(
-                    'mr-5 border-b px-0 pb-2 text-[13px] font-medium text-text-subtle transition-colors',
+                    'mr-8 border-b px-0 pb-3 text-[17px] font-medium text-text-subtle transition-colors',
                     target.id === targetId
                       ? 'border-accent text-text-primary'
                       : 'border-transparent hover:text-text-primary',
@@ -154,38 +180,44 @@ export function PostExportDialog({
             <div className="py-4">
               <div className="flex items-center justify-between gap-3 border border-border bg-panel-soft px-3 py-2">
                 <code className="min-w-0 truncate font-mono text-[11px] text-text-primary">
-                  {installCommand}
+                  {installPath}
                 </code>
                 <CopyButton
                   copied={copiedKey === 'install'}
-                  onClick={() => void copy(installCommand, 'install')}
+                  onClick={() => void copy(installPath, 'install')}
                 />
               </div>
-              <ol className="mt-3 space-y-2 text-[13px] leading-relaxed text-text-body">
-                {selectedTarget.steps.map((step) => (
+              <ol className="mt-4 space-y-2 text-[14px] leading-relaxed text-text-body">
+                {installSteps.map((step) => (
                   <li key={step}>{step}</li>
                 ))}
               </ol>
             </div>
           </div>
 
-          <div className="flex flex-wrap items-center gap-3 border-t border-border pt-4">
-            <Button
-              type="button"
-              variant="secondary"
-              size="sm"
-              className="gap-1.5"
-              disabled={sharing || receipt.status !== 'signed'}
-              onClick={() => void mintShare()}
-            >
-              <LinkIcon size={14} strokeWidth={1.5} />
-              {shareButtonLabel(share, sharing)}
-            </Button>
+          <div className="-mx-6 flex flex-wrap items-center justify-between gap-3 border-y border-border px-6 py-4">
+            <div>
+              <Button
+                type="button"
+                variant="secondary"
+                className="gap-1.5"
+                disabled={sharing || receipt.status !== 'signed'}
+                onClick={() => void mintShare()}
+              >
+                <LinkIcon size={14} strokeWidth={1.5} />
+                {shareButtonLabel(share, sharing)}
+              </Button>
+              {share.status === 'share_unminted' ? (
+                <p className="mt-2 text-[11px] text-text-subtle">
+                  Share links expire in 24 hours; you can re-mint any time.
+                </p>
+              ) : null}
+            </div>
             <Link
               href="/settings/mcp"
               className="inline-flex items-center gap-1.5 text-[13px] font-medium text-accent"
             >
-              MCP endpoint
+              Connect an MCP-compatible agent instead
               <ExternalLink size={13} strokeWidth={1.5} />
             </Link>
           </div>
@@ -207,16 +239,22 @@ export function PostExportDialog({
             </p>
           ) : null}
 
-          <Collapsible.Root className="mt-5 border-t border-border pt-4">
-            <Collapsible.Trigger className="flex w-full items-center justify-between text-left text-[12px] font-medium text-text-subtle">
+          <Collapsible.Root className="-mx-6 px-6 pt-5">
+            <Collapsible.Trigger className="flex w-full items-center justify-between text-left text-[18px] font-medium text-text-primary">
               <span>Generated from</span>
               <ChevronDown size={14} strokeWidth={1.5} />
             </Collapsible.Trigger>
             <Collapsible.Content className="pt-3">
-              <ul className="space-y-1.5 font-mono text-[10.5px] text-text-subtle">
+              <ul className="space-y-1.5 text-[13px] text-text-body">
                 {draft.cites.map((cite) => (
                   <li key={`${cite.index}-${cite.slug}`}>
-                    [{cite.index}] {cite.slug}
+                    <span className="font-mono text-[10.5px] text-text-subtle">
+                      [{cite.index}]
+                    </span>{' '}
+                    {cite.slug}{' '}
+                    <span className="font-mono text-[10px] text-text-faint">
+                      Generated at export
+                    </span>
                   </li>
                 ))}
               </ul>
@@ -235,7 +273,7 @@ function CopyButton({ copied, onClick }: { copied: boolean; onClick: () => void 
       onClick={onClick}
       className="inline-flex shrink-0 items-center gap-1.5 text-[12px] font-medium text-text-subtle hover:text-text-primary"
     >
-      {copied ? <Check size={14} strokeWidth={1.5} /> : <Copy size={14} strokeWidth={1.5} />}
+      {copied ? <Check size={16} strokeWidth={1.5} /> : <Copy size={16} strokeWidth={1.5} />}
       {copied ? 'Copied!' : 'Copy'}
     </button>
   );
@@ -248,8 +286,16 @@ function receiptText(receipt: PostExportReceipt): string {
 }
 
 function shareButtonLabel(share: ShareState, sharing: boolean): string {
-  if (sharing) return 'Minting...';
-  if (share.status === 'share_active') return 'Share active';
-  if (share.status === 'share_expired') return 'Share expired';
-  return 'Share';
+  if (sharing) return 'Generating...';
+  if (share.status === 'share_active') return 'Share link active';
+  if (share.status === 'share_expired') return 'Share link expired';
+  return 'Generate share link';
+}
+
+function humanizeSkillName(name: string): string {
+  return name
+    .split(/[-_\s]+/)
+    .filter(Boolean)
+    .map((part) => `${part.charAt(0).toUpperCase()}${part.slice(1)}`)
+    .join(' ');
 }

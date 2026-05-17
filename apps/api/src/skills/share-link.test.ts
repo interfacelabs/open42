@@ -9,15 +9,31 @@ import {
   hashShareToken,
   readBundle,
   resetShareLinkRateLimitForTest,
+  signShareToken,
+  verifyShareToken,
   writeBundle,
 } from './share-link.js';
+
+const TEST_KEK = 'f'.repeat(64);
 
 describe('share-link helpers', () => {
   afterEach(() => {
     resetShareLinkRateLimitForTest();
   });
 
+  it('signs opaque URL tokens with HMAC-SHA256', () => {
+    process.env.OPEN42_KEK = TEST_KEK;
+    const token = signShareToken('abc123abc123abc123abc1');
+    const tampered = `${token.slice(0, -1)}${token.endsWith('A') ? 'B' : 'A'}`;
+
+    expect(token).toMatch(/^sks_[A-Za-z0-9_-]+_[A-Za-z0-9_-]{43}$/);
+    expect(verifyShareToken(token)).toBe(true);
+    expect(verifyShareToken(tampered)).toBe(false);
+    expect(verifyShareToken('abc123abc123abc123abc1')).toBe(false);
+  });
+
   it('hashes opaque tokens without storing plaintext', () => {
+    process.env.OPEN42_KEK = TEST_KEK;
     expect(hashShareToken('secret-token')).toHaveLength(32);
     expect(hashShareToken('secret-token').equals(Buffer.from('secret-token'))).toBe(false);
   });

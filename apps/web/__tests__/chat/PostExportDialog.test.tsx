@@ -2,7 +2,7 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { PostExportDialog, type PostExportReceipt } from '@/components/PostExportDialog';
-import { SKILL_TARGETS } from '@/lib/skill-targets';
+import { SKILL_TARGETS, skillInstallDestination, skillTargetSteps } from '@/lib/skill-targets';
 import type { SkillDraft } from '@/lib/skill-types';
 
 const draft: SkillDraft = {
@@ -23,6 +23,7 @@ const signedReceipt: PostExportReceipt = {
   sourceCount: 2,
   version: '0.1.2',
   publicKeyUrl: '/api/workspaces/ws/signing-key.pub',
+  explainer: 'Use this skill when answering refund-policy questions from cited company sources.',
   explainerStatus: 'ready',
 };
 
@@ -39,10 +40,26 @@ describe('PostExportDialog', () => {
 
     fireEvent.click(screen.getByRole('button', { name: target.label }));
 
-    expect(screen.getAllByText(target.installPath, { exact: false }).length).toBeGreaterThan(0);
-    for (const step of target.steps) {
+    expect(screen.getByText(skillInstallDestination(target, draft.name))).toBeInTheDocument();
+    for (const step of skillTargetSteps(target)) {
       expect(screen.getByText(step)).toBeInTheDocument();
     }
+  });
+
+  it('matches the receipt-first export hierarchy without an in-dialog download action', () => {
+    renderDialog({ receipt: signedReceipt });
+
+    expect(screen.getByText('Refund Policy Skill exported')).toBeInTheDocument();
+    expect(screen.getByText('Signed by Acme Corp')).toBeInTheDocument();
+    expect(
+      screen.getByText(/Use this skill when answering refund-policy questions/i),
+    ).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Install in' })).toBeInTheDocument();
+    expect(
+      screen.getByRole('link', { name: /connect an mcp-compatible agent instead/i }),
+    ).toHaveAttribute('href', '/settings/mcp');
+    expect(screen.getByText(/Share links expire in 24 hours/i)).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /download/i })).not.toBeInTheDocument();
   });
 
   it('shows signing progress, explainer failure, and stale-at-export copy', () => {
@@ -60,6 +77,39 @@ describe('PostExportDialog', () => {
     expect(screen.getByText('Refund policy changed.')).toBeInTheDocument();
   });
 
+  it('renders explainer pending and signing failure states', () => {
+    const { rerender } = render(
+      <PostExportDialog
+        open
+        onOpenChange={() => undefined}
+        draft={draft}
+        receipt={{ ...signedReceipt, explainerStatus: 'pending' }}
+        onMintShare={async () => ({
+          url: 'https://api.open42.ai/shared/token.zip',
+          expiresAt: new Date(Date.now() + 60_000).toISOString(),
+        })}
+      />,
+    );
+
+    expect(screen.getByText(/Explainer is still being written/i)).toBeInTheDocument();
+
+    rerender(
+      <PostExportDialog
+        open
+        onOpenChange={() => undefined}
+        draft={draft}
+        receipt={{ ...signedReceipt, status: 'sign_failed' }}
+        onMintShare={async () => ({
+          url: 'https://api.open42.ai/shared/token.zip',
+          expiresAt: new Date(Date.now() + 60_000).toISOString(),
+        })}
+      />,
+    );
+
+    expect(screen.getByText(/Signing failed/i)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /generate share link/i })).toBeDisabled();
+  });
+
   it('mints a share link and exposes copy feedback without a toast', async () => {
     renderDialog({
       receipt: signedReceipt,
@@ -75,6 +125,21 @@ describe('PostExportDialog', () => {
     const copyButtons = screen.getAllByRole('button', { name: /^copy$/i });
     fireEvent.click(copyButtons.at(-1)!);
     await waitFor(() => expect(screen.getByText('Copied!')).toBeInTheDocument());
+  });
+
+  it('renders expired share links when the minter returns an expired URL', async () => {
+    renderDialog({
+      receipt: signedReceipt,
+      onMintShare: async () => ({
+        url: 'https://api.open42.ai/shared/expired.zip',
+        expiresAt: new Date(Date.now() - 60_000).toISOString(),
+      }),
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: /generate share link/i }));
+
+    expect(await screen.findByRole('button', { name: /share link expired/i })).toBeInTheDocument();
+    expect(screen.getByText('https://api.open42.ai/shared/expired.zip')).toBeInTheDocument();
   });
 });
 

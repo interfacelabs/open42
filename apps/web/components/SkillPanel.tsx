@@ -100,7 +100,8 @@ function PanelBody({
     sourceCount: draft.cites.length,
     version: draft.version,
     staleAtExport: draft.staleness ? { changelog: draft.staleness.changelog } : null,
-    explainerStatus: 'pending',
+    explainer: draft.explainer ?? null,
+    explainerStatus: draft.explainer ? 'ready' : 'pending',
   });
 
   async function onRevise(text: string) {
@@ -147,10 +148,11 @@ function PanelBody({
 
   const allRevisions = pendingYou ? [...draft.revisions, pendingYou] : draft.revisions;
 
-  async function startExport() {
+  async function startExport(options: { openDialogImmediately?: boolean } = {}) {
     if (!workspaceId || exporting) return;
+    const openDialogImmediately = options.openDialogImmediately ?? true;
     setExporting(true);
-    setExportDialogOpen(true);
+    if (openDialogImmediately) setExportDialogOpen(true);
     setExportReceipt({
       status: 'signing_in_progress',
       workspaceName,
@@ -174,19 +176,28 @@ function PanelBody({
           explainerStatus: 'failed',
           error: 'skill_export_failed',
         }));
+        setExportDialogOpen(true);
         return;
       }
       const blob = await response.blob();
       downloadBlob(blob, `${draft.name}-skill.zip`);
+      const refreshed = (await mutateDraft()) as SkillDraft | undefined;
+      const explainer = refreshed?.explainer ?? draft.explainer ?? null;
       setExportReceipt({
         status: 'signed',
         workspaceName,
-        sourceCount: draft.cites.length,
-        version: draft.version,
-        staleAtExport: draft.staleness ? { changelog: draft.staleness.changelog } : null,
-        explainerStatus: 'ready',
+        sourceCount: refreshed?.cites.length ?? draft.cites.length,
+        version: refreshed?.version ?? draft.version,
+        staleAtExport: refreshed?.staleness
+          ? { changelog: refreshed.staleness.changelog }
+          : draft.staleness
+            ? { changelog: draft.staleness.changelog }
+            : null,
+        explainer,
+        explainerStatus: explainer ? 'ready' : 'failed',
         publicKeyUrl: `/api/workspaces/${encodeURIComponent(workspaceId)}/signing-key.pub`,
       });
+      setExportDialogOpen(true);
     } catch {
       setExportReceipt((current) => ({
         ...current,
@@ -194,6 +205,7 @@ function PanelBody({
         explainerStatus: 'failed',
         error: 'network_error',
       }));
+      setExportDialogOpen(true);
     } finally {
       setExporting(false);
     }
@@ -253,7 +265,7 @@ function PanelBody({
             <span>{draft.staleness.changelog}</span>
             <button
               type="button"
-              onClick={() => void startExport()}
+              onClick={() => void startExport({ openDialogImmediately: false })}
               disabled={exporting}
               className="shrink-0 font-medium text-accent disabled:cursor-progress disabled:text-text-faint"
             >
