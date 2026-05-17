@@ -1,15 +1,25 @@
-import Anthropic from '@anthropic-ai/sdk';
 import { and, desc, eq } from 'drizzle-orm';
 import { Router } from 'express';
 
-import { resolveLlmKey, type ResolvedLlmKey } from '../auth/llm-keys.js';
+import { resolveLlmKey, type LlmProvider, type ResolvedLlmKey } from '../auth/llm-keys.js';
 import { recordCloudLlmUsage } from '../cloud-hooks.js';
 import { isUuid } from '../auth/uuid.js';
 import { db, schema } from '../db/client.js';
 import { GbrainCitationChunk, GbrainClient } from '../gbrain/client.js';
 import { requireMembership } from '../middleware/require-membership.js';
 import { checkWorkspaceChatBudget } from './chat-budget.js';
+import {
+  bodySizeBytes,
+  MAX_CHAT_BODY_BYTES,
+  MAX_CHAT_HISTORY_MESSAGES,
+  truncateHistory,
+} from './chat-history.js';
 import { buildSystemPrompt, type SkillContext } from './chat-prompt.js';
+import {
+  ChatProviderError,
+  createChatProvider,
+  type NormalizedMessage,
+} from './chat-providers.js';
 
 export { buildSystemPrompt, type SkillContext } from './chat-prompt.js';
 
@@ -17,11 +27,26 @@ export const chatRouter = Router();
 
 chatRouter.post('/', requireMembership({ from: 'body' }), async (req, res, next) => {
   try {
+    if (bodySizeBytes(req.body) > MAX_CHAT_BODY_BYTES) {
+      res.status(413).json({ error: 'chat_body_too_large' });
+      return;
+    }
+
     const query = String(req.body?.query ?? '').trim();
     if (!query) {
       res.status(400).json({ error: 'query_required' });
       return;
     }
+    const priorMessages = parsePriorMessages(req.body?.messages);
+    if (!priorMessages.ok) {
+      res.status(400).json({ error: priorMessages.error });
+      return;
+    }
+    if (priorMessages.messages.length > MAX_CHAT_HISTORY_MESSAGES) {
+      res.status(400).json({ error: 'chat_history_too_long' });
+      return;
+    }
+
     const skillId =
       typeof req.body?.skillId === 'string' && req.body.skillId.trim()
         ? req.body.skillId.trim()
@@ -48,7 +73,10 @@ chatRouter.post('/', requireMembership({ from: 'body' }), async (req, res, next)
 
     const budget = checkWorkspaceChatBudget({
       workspaceId: workspace.id,
-      inputChars: query.length + (skillContext?.body.length ?? 0),
+      inputChars:
+        query.length +
+        priorMessages.messages.reduce((sum, message) => sum + message.content.length, 0) +
+        (skillContext?.body.length ?? 0),
     });
     if (!budget.ok) {
       res.setHeader('Retry-After', String(budget.retryAfter));
@@ -79,11 +107,12 @@ chatRouter.post('/', requireMembership({ from: 'body' }), async (req, res, next)
     // collection has real data to rank from. Best-effort — a write failure
     // here doesn't fail the chat response (the user still gets their answer).
     await logDocumentCitations(workspace.id, citations);
-    const resolvedAnthropic =
+    const chatProvider = workspace.chatProvider;
+    const resolvedLlmKey =
       citations.length > 0
         ? await resolveLlmKey({
             workspaceId: workspace.id,
-            provider: 'anthropic',
+            provider: chatProvider,
             scope: 'chat',
           })
         : null;
@@ -103,17 +132,21 @@ chatRouter.post('/', requireMembership({ from: 'body' }), async (req, res, next)
       return;
     }
 
-    const usedSharedAnthropic = await streamAnthropicAnswer({
-      resolvedAnthropic,
-      query,
-      chunks,
+    const usedSharedKey = await streamProviderAnswer({
+      provider: chatProvider,
+      resolvedLlmKey,
+      messages: buildProviderMessages({
+        history: truncateHistory({ messages: priorMessages.messages }),
+        query,
+        chunks,
+      }),
       skillContext,
       res,
     });
-    if (usedSharedAnthropic && resolvedAnthropic?.source === 'shared') {
+    if (usedSharedKey && resolvedLlmKey?.source === 'shared') {
       void recordCloudLlmUsage({
         workspaceId: workspace.id,
-        provider: 'anthropic',
+        provider: chatProvider,
         scope: 'chat',
         keySource: 'shared',
         units: 1,
@@ -188,19 +221,61 @@ function normalizeChunks(chunks: GbrainCitationChunk[]): GbrainCitationChunk[] {
   }));
 }
 
-async function streamAnthropicAnswer(options: {
-  resolvedAnthropic: ResolvedLlmKey | null;
+export function buildProviderMessages(input: {
+  history: NormalizedMessage[];
   query: string;
   chunks: GbrainCitationChunk[];
+}): NormalizedMessage[] {
+  const context = input.chunks
+    .map(
+      (chunk, index) =>
+        `[${index + 1}] slug=${chunk.slug ?? 'unknown'} version=${chunk.version_id ?? 'unknown'} updated=${chunk.last_updated ?? 'unknown'}\n${chunk.excerpt ?? chunk.chunk_text ?? ''}`,
+    )
+    .join('\n\n');
+  return [
+    ...input.history,
+    { role: 'user', content: `Context:\n${context}` },
+    { role: 'user', content: `Question: ${input.query}` },
+  ];
+}
+
+function parsePriorMessages(
+  value: unknown,
+): { ok: true; messages: NormalizedMessage[] } | { ok: false; error: string } {
+  if (value === undefined || value === null) return { ok: true, messages: [] };
+  if (!Array.isArray(value)) return { ok: false, error: 'invalid_chat_messages' };
+
+  const messages: NormalizedMessage[] = [];
+  for (const item of value) {
+    const candidate = item as { role?: unknown; text?: unknown; content?: unknown };
+    if (candidate.role !== 'user' && candidate.role !== 'assistant') {
+      return { ok: false, error: 'invalid_chat_message_role' };
+    }
+    const content =
+      typeof candidate.text === 'string'
+        ? candidate.text.trim()
+        : typeof candidate.content === 'string'
+          ? candidate.content.trim()
+          : '';
+    if (!content) continue;
+    messages.push({ role: candidate.role, content });
+  }
+  return { ok: true, messages };
+}
+
+async function streamProviderAnswer(options: {
+  provider: LlmProvider;
+  resolvedLlmKey: ResolvedLlmKey | null;
+  messages: NormalizedMessage[];
   skillContext: SkillContext | null;
   res: { write: (chunk: string) => void };
 }): Promise<boolean> {
-  if (!options.resolvedAnthropic || options.resolvedAnthropic.apiKey === 'sk-ant-...') {
-    const first = options.chunks[0];
+  if (!options.resolvedLlmKey || isPlaceholderApiKey(options.resolvedLlmKey.apiKey)) {
+    const first = firstCitationMessage(options.messages);
     options.res.write(
       JSON.stringify({
         type: 'token',
-        text: `The strongest source I found is ${first?.slug ?? 'the imported page'} [1]. `,
+        text: `The strongest source I found is ${first ?? 'the imported page'} [1]. `,
       }) + '\n',
     );
     options.res.write(
@@ -212,34 +287,34 @@ async function streamAnthropicAnswer(options: {
     return false;
   }
 
-  const anthropic = new Anthropic({ apiKey: options.resolvedAnthropic.apiKey });
-  const context = options.chunks
-    .map(
-      (chunk, index) =>
-        `[${index + 1}] slug=${chunk.slug ?? 'unknown'} version=${chunk.version_id ?? 'unknown'} updated=${chunk.last_updated ?? 'unknown'}\n${chunk.excerpt ?? chunk.chunk_text ?? ''}`,
-    )
-    .join('\n\n');
-  const stream = anthropic.messages.stream({
-    model:
-      options.resolvedAnthropic.model?.trim() ||
-      process.env.ANTHROPIC_MODEL ||
-      'claude-3-5-sonnet-latest',
-    max_tokens: 700,
-    system: buildSystemPrompt(options.skillContext),
-    messages: [
-      {
-        role: 'user',
-        content: `Question: ${options.query}\n\nContext:\n${context}`,
-      },
-    ],
-  });
+  const adapter = createChatProvider(options.provider);
+  try {
+    const stream = adapter.sendStreamingChat({
+      systemPrompt: buildSystemPrompt(options.skillContext),
+      messages: options.messages,
+      resolvedKey: options.resolvedLlmKey,
+      maxTokens: 700,
+    });
 
-  for await (const event of stream) {
-    if (event.type === 'content_block_delta' && event.delta.type === 'text_delta') {
-      options.res.write(JSON.stringify({ type: 'token', text: event.delta.text }) + '\n');
+    for await (const event of stream) {
+      options.res.write(JSON.stringify({ type: 'token', text: event.text }) + '\n');
     }
+  } catch (err) {
+    const code = err instanceof ChatProviderError ? err.code : 'chat_provider_error';
+    options.res.write(JSON.stringify({ type: 'error', error: code }) + '\n');
+    return false;
   }
   return true;
+}
+
+function isPlaceholderApiKey(apiKey: string): boolean {
+  return apiKey === 'sk-ant-...' || apiKey === 'sk-...' || apiKey.endsWith('-...');
+}
+
+function firstCitationMessage(messages: NormalizedMessage[]): string | null {
+  const contextMessage = messages.find((message) => message.content.startsWith('Context:\n'));
+  const match = /\[1\]\s+slug=([^\s]+)/.exec(contextMessage?.content ?? '');
+  return match?.[1] ?? null;
 }
 
 /**
@@ -267,6 +342,7 @@ async function loadWorkspaceRuntime(workspaceId: string) {
     gbrainBaseUrl: workspace.gbrainBaseUrl ?? formatGbrainBaseUrl(workspace.gbrainPrivateAddress ?? ''),
     gbrainOauthClientId: workspace.gbrainOauthClientId,
     gbrainOauthClientSecretCiphertext: workspace.gbrainOauthClientSecretCiphertext,
+    chatProvider: workspace.chatProvider ?? 'anthropic',
   };
 }
 
