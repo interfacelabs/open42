@@ -1,6 +1,7 @@
 import { Router } from 'express';
 
 import { db as defaultDb } from '@open42/api/db/client';
+import { sendEmail as defaultSendEmail } from '@open42/api/integrations/resend';
 import { cloudWaitlistEntries } from '../schema-cloud.js';
 
 const MAX_EMAIL_LENGTH = 254;
@@ -27,8 +28,13 @@ export interface WaitlistRepo {
   upsert(input: WaitlistEntryInput): Promise<void>;
 }
 
-export function buildWaitlistRouter(deps: { repo?: WaitlistRepo } = {}) {
+export interface WaitlistNotifier {
+  notify(input: WaitlistEntryInput): Promise<{ ok: boolean; error?: string } | void>;
+}
+
+export function buildWaitlistRouter(deps: { repo?: WaitlistRepo; notifier?: WaitlistNotifier } = {}) {
   const repo = deps.repo ?? defaultWaitlistRepo();
+  const notifier = deps.notifier ?? defaultWaitlistNotifier();
   const router = Router();
 
   router.post('/', async (req, res, next) => {
@@ -53,6 +59,25 @@ export function buildWaitlistRouter(deps: { repo?: WaitlistRepo } = {}) {
         userAgent: req.header('user-agent')?.slice(0, 500) ?? null,
         ip,
       });
+      void notifier
+        .notify({
+          email: parsed.email,
+          source: parsed.source,
+          userAgent: req.header('user-agent')?.slice(0, 500) ?? null,
+          ip,
+        })
+        .then((result) => {
+          if (result && !result.ok) {
+            console.warn('[waitlist-notification-failed]', {
+              source: parsed.source,
+              error: result.error,
+            });
+          }
+        })
+        .catch((err) => {
+          const message = err instanceof Error ? err.message : 'unknown_waitlist_notification_error';
+          console.warn('[waitlist-notification-failed]', { source: parsed.source, error: message });
+        });
 
       res.status(202).json({ ok: true });
     } catch (err) {
@@ -61,6 +86,20 @@ export function buildWaitlistRouter(deps: { repo?: WaitlistRepo } = {}) {
   });
 
   return router;
+}
+
+function defaultWaitlistNotifier(): WaitlistNotifier {
+  const to = process.env.OPEN42_WAITLIST_NOTIFY_EMAIL?.trim() || 'support@open42.ai';
+  return {
+    async notify(input) {
+      return defaultSendEmail({
+        to,
+        subject: `Open42 beta request: ${input.email}`,
+        text: renderWaitlistNotificationText(input),
+        html: renderWaitlistNotificationHtml(input),
+      });
+    },
+  };
 }
 
 function defaultWaitlistRepo(): WaitlistRepo {
@@ -136,4 +175,49 @@ function checkRateLimit(
 
 export function resetWaitlistRateLimitForTest(): void {
   rateLimit.clear();
+}
+
+function renderWaitlistNotificationText(input: WaitlistEntryInput): string {
+  return [
+    'New Open42 beta request.',
+    '',
+    `Email: ${input.email}`,
+    `Source: ${input.source}`,
+    `IP: ${input.ip ?? 'unknown'}`,
+    `User-Agent: ${input.userAgent ?? 'unknown'}`,
+    '',
+    'Next step: schedule a 20-minute silent observation session.',
+  ].join('\n');
+}
+
+function renderWaitlistNotificationHtml(input: WaitlistEntryInput): string {
+  return [
+    '<p>New Open42 beta request.</p>',
+    '<ul>',
+    `<li><strong>Email:</strong> ${escapeHtml(input.email)}</li>`,
+    `<li><strong>Source:</strong> ${escapeHtml(input.source)}</li>`,
+    `<li><strong>IP:</strong> ${escapeHtml(input.ip ?? 'unknown')}</li>`,
+    `<li><strong>User-Agent:</strong> ${escapeHtml(input.userAgent ?? 'unknown')}</li>`,
+    '</ul>',
+    '<p>Next step: schedule a 20-minute silent observation session.</p>',
+  ].join('');
+}
+
+function escapeHtml(value: string): string {
+  return value.replace(/[&<>"']/g, (char) => {
+    switch (char) {
+      case '&':
+        return '&amp;';
+      case '<':
+        return '&lt;';
+      case '>':
+        return '&gt;';
+      case '"':
+        return '&quot;';
+      case "'":
+        return '&#39;';
+      default:
+        return char;
+    }
+  });
 }
