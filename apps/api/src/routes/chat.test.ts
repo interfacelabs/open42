@@ -243,6 +243,28 @@ describeDb('chat skill mode', () => {
     expect(res.text).toContain('"type":"done"');
   });
 
+  it('returns a plain no-answer stream without calling an LLM when gbrain returns no chunks', async () => {
+    const { workspaceId, sessionId } = await makeOwnerWorkspace('chat-agent');
+    mocks.query.mockResolvedValue({ chunks: [] });
+
+    const res = await request(buildApp())
+      .post('/api/chat')
+      .set('User-Agent', 'chat-agent')
+      .set('Cookie', `open42_session=${sessionId}`)
+      .send({
+        query: 'What is the office dog policy?',
+        messages: [],
+        workspace_id: workspaceId,
+      });
+
+    expect(res.status).toBe(200);
+    expect(res.text).toContain('"type":"citations","citations":[]');
+    expect(res.text).toContain("I don't have anything about this in your brain.");
+    expect(res.text).toContain('"type":"done"');
+    expect(mocks.resolveLlmKey).not.toHaveBeenCalled();
+    expect(mocks.createChatProvider).not.toHaveBeenCalled();
+  });
+
   it('rejects invalid prior message roles before querying gbrain', async () => {
     const { workspaceId, sessionId } = await makeOwnerWorkspace('chat-agent');
 
