@@ -4,6 +4,11 @@ import { eq } from 'drizzle-orm';
 import { createSession, invalidateSession } from '../auth/sessions.js';
 import { readSession } from '../auth/session-helpers.js';
 import {
+  SIGNIN_NOT_ALLOWED_ERROR,
+  assertSigninAllowed,
+  normalizeSigninEmail,
+} from '../auth/signup-gate.js';
+import {
   sendSupabaseMagicLink,
   verifySupabaseIdentity,
   type SupabaseIdentity,
@@ -16,10 +21,7 @@ export const authRouter = Router();
 const SIGNIN_WINDOW_MS = 15 * 60 * 1000;
 const SIGNIN_LIMIT = 5;
 const SIGNIN_MIN_GAP_MS = 30 * 1000;
-const signinAttempts = new Map<
-  string,
-  { count: number; resetAt: number; lastAttemptAt: number }
->();
+const signinAttempts = new Map<string, { count: number; resetAt: number; lastAttemptAt: number }>();
 
 export function __resetSigninAttempts(): void {
   signinAttempts.clear();
@@ -29,7 +31,7 @@ authRouter.post('/signin', async (req, res, next) => {
   try {
     const email = normalizeSigninEmail(String(req.body?.email ?? ''));
     assertSigninRateLimit(req.ip, email);
-    assertSigninAllowed(email);
+    await assertSigninAllowed(email);
     const webUrl = process.env.WEB_PUBLIC_URL ?? 'http://localhost:3000';
     const link = await sendSupabaseMagicLink({
       email,
@@ -45,8 +47,8 @@ authRouter.post('/signin', async (req, res, next) => {
       res.status(400).json({ error: 'email_invalid' });
       return;
     }
-    if (err instanceof Error && err.message === 'signin_not_allowed') {
-      res.status(403).json({ error: 'signin_not_allowed' });
+    if (err instanceof Error && err.message === SIGNIN_NOT_ALLOWED_ERROR) {
+      res.status(403).json({ error: SIGNIN_NOT_ALLOWED_ERROR });
       return;
     }
     if (err instanceof Error && err.message === 'signin_rate_limited') {
@@ -78,7 +80,7 @@ authRouter.post('/verify', async (req, res, next) => {
       token: optionalString(req.body?.token),
     });
     if (!inviteId) {
-      assertSigninAllowed(identity.email);
+      await assertSigninAllowed(identity.email);
     }
     const user = await upsertUser(identity);
 
@@ -241,8 +243,8 @@ authRouter.post('/verify', async (req, res, next) => {
       res.status(400).json({ error: err.message });
       return;
     }
-    if (err instanceof Error && err.message === 'signin_not_allowed') {
-      res.status(403).json({ error: 'signin_not_allowed' });
+    if (err instanceof Error && err.message === SIGNIN_NOT_ALLOWED_ERROR) {
+      res.status(403).json({ error: SIGNIN_NOT_ALLOWED_ERROR });
       return;
     }
     if (err instanceof Error && err.message === 'email_already_linked') {
@@ -276,7 +278,11 @@ authRouter.get('/me', async (req, res, next) => {
       return;
     }
     const [user] = await db
-      .select({ id: schema.users.id, email: schema.users.email, currentWorkspaceId: schema.users.currentWorkspaceId })
+      .select({
+        id: schema.users.id,
+        email: schema.users.email,
+        currentWorkspaceId: schema.users.currentWorkspaceId,
+      })
       .from(schema.users)
       .where(eq(schema.users.id, session.userId))
       .limit(1);
@@ -284,8 +290,14 @@ authRouter.get('/me', async (req, res, next) => {
       res.status(401).json({ error: 'unauthorized' });
       return;
     }
-    res.json({ id: user.id, email: user.email, currentWorkspaceId: user.currentWorkspaceId ?? null });
-  } catch (err) { next(err); }
+    res.json({
+      id: user.id,
+      email: user.email,
+      currentWorkspaceId: user.currentWorkspaceId ?? null,
+    });
+  } catch (err) {
+    next(err);
+  }
 });
 
 async function upsertUser(identity: SupabaseIdentity) {
@@ -357,23 +369,6 @@ function optionalString(value: unknown): string | undefined {
   return typeof value === 'string' && value.length > 0 ? value : undefined;
 }
 
-function assertSigninAllowed(email: string, env = process.env): void {
-  const normalized = normalizeSigninEmail(email);
-  const allowedEmails = csv(env.OPEN42_ALLOWED_EMAILS).map((value) => value.toLowerCase());
-  const allowedDomains = csv(env.OPEN42_ALLOWED_EMAIL_DOMAINS).map((value) =>
-    value.replace(/^@/, '').toLowerCase(),
-  );
-  const openSignups =
-    env.OPEN42_ENABLE_OPEN_SIGNUPS === 'true' ||
-    (env.NODE_ENV !== 'production' && allowedEmails.length === 0 && allowedDomains.length === 0);
-  if (openSignups) return;
-  if (allowedEmails.includes(normalized)) return;
-
-  const domain = normalized.split('@')[1] ?? '';
-  if (domain && allowedDomains.includes(domain)) return;
-  throw new Error('signin_not_allowed');
-}
-
 function assertSigninRateLimit(ip: string | undefined, email: string): void {
   const key = `${normalizeSigninEmail(email)}:${ip ?? 'unknown'}`;
   const now = Date.now();
@@ -394,19 +389,4 @@ function assertSigninRateLimit(ip: string | undefined, email: string): void {
   } else {
     signinAttempts.set(key, { count: 1, resetAt: now + SIGNIN_WINDOW_MS, lastAttemptAt: now });
   }
-}
-
-function normalizeSigninEmail(email: string): string {
-  const normalized = email.trim().toLowerCase();
-  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalized)) {
-    throw new Error('email_invalid');
-  }
-  return normalized;
-}
-
-function csv(value: string | undefined): string[] {
-  return (value ?? '')
-    .split(',')
-    .map((item) => item.trim())
-    .filter(Boolean);
 }

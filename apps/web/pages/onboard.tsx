@@ -29,10 +29,7 @@ import {
   deriveOnboardStep,
 } from '@/lib/onboarding/derive';
 import { EASE_STANDARD } from '@/lib/motion';
-import {
-  useWorkspaceStore,
-  type WorkspaceSummary,
-} from '@/lib/workspaces/store';
+import { useWorkspaceStore, type WorkspaceSummary } from '@/lib/workspaces/store';
 
 interface OnboardCurrentPayload extends CurrentPayload {
   workspace: { id: string; name: string; runtime: WorkspaceRuntime } | null;
@@ -78,14 +75,16 @@ export default function OnboardPage() {
   const router = useRouter();
   const urlStep = typeof router.query.step === 'string' ? router.query.step : null;
   const mode: OnboardMode = router.query.mode === 'create' ? 'create' : 'first';
-  const { data: current, error, mutate, isLoading, isValidating } = useSWR<OnboardCurrentPayload>(
-    '/api/workspaces/current',
-    fetcher,
-    {
-      refreshInterval: (latest) =>
-        deriveOnboardRefreshStep(latest, urlStep, mode) === 'provisioning' ? 1500 : 0,
-    },
-  );
+  const {
+    data: current,
+    error,
+    mutate,
+    isLoading,
+    isValidating,
+  } = useSWR<OnboardCurrentPayload>('/api/workspaces/current', fetcher, {
+    refreshInterval: (latest) =>
+      deriveOnboardRefreshStep(latest, urlStep, mode) === 'provisioning' ? 1500 : 0,
+  });
 
   // Lifted so the editorial pane reacts live to the form as the user types.
   const [workspaceName, setWorkspaceName] = useState<string>('');
@@ -251,11 +250,7 @@ export default function OnboardPage() {
             <TopBar step={step} workspaceName={topbarWorkspaceName} />
 
             <div className="mt-12 flex flex-1 items-start md:mt-16 md:items-center">
-              <div
-                className={`w-full ${
-                  step === 'connect' ? 'max-w-[560px]' : 'max-w-[460px]'
-                }`}
-              >
+              <div className={`w-full ${step === 'connect' ? 'max-w-[560px]' : 'max-w-[460px]'}`}>
                 {mode === 'create' && step === 'workspace' ? (
                   // In create mode the workspace-name step renders even before
                   // SWR settles — the user is creating a new workspace and
@@ -332,9 +327,7 @@ export default function OnboardPage() {
                 </>
               }
               attribution="— OPEN42 OPERATING PRINCIPLE №3"
-              illustration={
-                <BrainSpinUp failed={current?.workspace?.runtime === 'failed'} />
-              }
+              illustration={<BrainSpinUp failed={current?.workspace?.runtime === 'failed'} />}
             />
           ) : step === 'keys' ? (
             <EditorialPane
@@ -379,21 +372,13 @@ export default function OnboardPage() {
   );
 }
 
-function TopBar({
-  step,
-  workspaceName,
-}: {
-  step: OnboardStep | null;
-  workspaceName: string;
-}) {
+function TopBar({ step, workspaceName }: { step: OnboardStep | null; workspaceName: string }) {
   return (
     <div className="flex items-center justify-between">
       <span className="flex items-center gap-2 font-mono text-[13px] font-medium text-text-primary">
         <span className="h-[10px] w-[10px] rounded-full bg-accent" aria-hidden="true" />
         open42
-        {workspaceName ? (
-          <span className="text-text-subtle">&middot; {workspaceName}</span>
-        ) : null}
+        {workspaceName ? <span className="text-text-subtle">&middot; {workspaceName}</span> : null}
       </span>
       <ProgressIndicator step={step} />
     </div>
@@ -421,9 +406,9 @@ function ProgressIndicator({ step }: { step: OnboardStep | null }) {
           ? 'Spinning up'
           : step === 'keys'
             ? 'API keys'
-          : step === 'connect'
-            ? 'Connect a source'
-            : '';
+            : step === 'connect'
+              ? 'Connect a source'
+              : '';
 
   return (
     <div className="flex items-center gap-2.5 font-mono text-[11px] text-text-subtle">
@@ -447,11 +432,7 @@ function lineState(a: DotState, b: DotState): 'done' | 'pending' {
 
 function Dot({ state }: { state: DotState }) {
   const cls =
-    state === 'active'
-      ? 'bg-accent'
-      : state === 'done'
-        ? 'bg-accent opacity-55'
-        : 'bg-[#e5e5e5]';
+    state === 'active' ? 'bg-accent' : state === 'done' ? 'bg-accent opacity-55' : 'bg-[#e5e5e5]';
   return (
     <span
       className={`h-[7px] w-[7px] rounded-full transition-colors duration-200 ${cls}`}
@@ -508,10 +489,7 @@ function WorkspaceStep({
         // for the already-onboarded user. In the legacy first-time flow we
         // keep using the onboarding alias to preserve its specific semantics
         // (idempotent rename of the user's bootstrap workspace).
-        const url =
-          mode === 'create'
-            ? '/api/workspaces'
-            : '/api/workspaces/onboarding/workspace';
+        const url = mode === 'create' ? '/api/workspaces' : '/api/workspaces/onboarding/workspace';
         const response = await fetch(url, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', ...csrfHeaders() },
@@ -556,14 +534,11 @@ function WorkspaceStep({
       }}
     >
       <h1 className="text-[38px] font-medium leading-[1.06] tracking-[-0.025em] text-text-primary">
-        Name{' '}
-        <em className="font-newsreader font-normal italic text-text-primary">
-          your brain.
-        </em>
+        Name <em className="font-newsreader font-normal italic text-text-primary">your brain.</em>
       </h1>
       <p className="mt-3.5 max-w-[42ch] text-sm leading-body text-text-body">
-        A workspace is one company&rsquo;s brain. Pick something your team will recognize
-        &mdash; you can rename it later.
+        A workspace is one company&rsquo;s brain. Pick something your team will recognize &mdash;
+        you can rename it later.
       </p>
       <form onSubmit={submit} className="mt-7" noValidate>
         <label
@@ -599,9 +574,7 @@ function WorkspaceStep({
           </p>
         ) : null}
       </form>
-      <PulsingNote>
-        We&rsquo;ll prepare your private brain runtime in the background.
-      </PulsingNote>
+      <PulsingNote>We&rsquo;ll prepare your private brain runtime in the background.</PulsingNote>
     </motion.div>
   );
 }
@@ -680,16 +653,7 @@ function ProviderKeysStep({
         setSubmitting(false);
       }
     },
-    [
-      anthropicKey,
-      mutate,
-      needsAnthropic,
-      needsOpenAI,
-      openaiKey,
-      router,
-      submitting,
-      workspaceId,
-    ],
+    [anthropicKey, mutate, needsAnthropic, needsOpenAI, openaiKey, router, submitting, workspaceId],
   );
 
   return (
@@ -703,14 +667,11 @@ function ProviderKeysStep({
       }}
     >
       <h1 className="text-[38px] font-medium leading-[1.06] tracking-[-0.025em] text-text-primary">
-        Add{' '}
-        <em className="font-newsreader font-normal italic text-text-primary">
-          provider keys.
-        </em>
+        Add <em className="font-newsreader font-normal italic text-text-primary">provider keys.</em>
       </h1>
       <p className="mt-3.5 max-w-[46ch] text-sm leading-body text-text-body">
-        Community edition is BYOK by default. Keys are encrypted before storage and never
-        sent into the gbrain runtime.
+        Community edition is BYOK by default. Keys are encrypted before storage and never sent into
+        the gbrain runtime.
       </p>
       <form onSubmit={submit} className="mt-7 space-y-5" noValidate>
         <ProviderKeyField
@@ -865,13 +826,10 @@ function InviteStep({
     >
       <h1 className="text-[38px] font-medium leading-[1.06] tracking-[-0.025em] text-text-primary">
         Who else{' '}
-        <em className="font-newsreader font-normal italic text-text-primary">
-          needs this brain?
-        </em>
+        <em className="font-newsreader font-normal italic text-text-primary">needs this brain?</em>
       </h1>
       <p className="mt-3.5 max-w-[42ch] text-sm leading-body text-text-body">
-        Add teammates by email &mdash; comma or newline-separated. Watch the right side as
-        you type.
+        Add teammates by email &mdash; comma or newline-separated. Watch the right side as you type.
       </p>
       <form
         onSubmit={(event) => {
@@ -929,14 +887,11 @@ function InviteStep({
             <>Type one email per line. The right side reacts as you go.</>
           ) : (
             <>
-              <b className="font-medium text-text-primary">{validEmails.length}</b> valid
-              email{validEmails.length === 1 ? '' : 's'} of{' '}
-              <b className="font-medium text-text-primary">{lines.length}</b> &mdash;
-              they&rsquo;ll receive an invite from{' '}
-              <code className="font-mono text-[11px]">
-                open42 &lt;noreply@open42.app&gt;
-              </code>
-              .
+              <b className="font-medium text-text-primary">{validEmails.length}</b> valid email
+              {validEmails.length === 1 ? '' : 's'} of{' '}
+              <b className="font-medium text-text-primary">{lines.length}</b> &mdash; they&rsquo;ll
+              receive an invite from{' '}
+              <code className="font-mono text-[11px]">open42 &lt;noreply@open42.app&gt;</code>.
             </>
           )}
         </p>
@@ -1009,8 +964,7 @@ function ProvisioningStep({
     </>
   ) : (
     <>
-      Spinning up{' '}
-      <em className="font-newsreader font-normal italic">your brain.</em>
+      Spinning up <em className="font-newsreader font-normal italic">your brain.</em>
     </>
   );
 
@@ -1077,14 +1031,8 @@ function ProvisioningStep({
       <div className="mt-7 max-w-[460px] rounded-2xl border border-[#e5e5e5] bg-white p-[18px_22px]">
         <div className="flex items-center gap-2.5">
           <span
-            className={`h-[7px] w-[7px] rounded-full ${
-              failed ? 'bg-destructive' : 'bg-accent'
-            }`}
-            style={
-              failed
-                ? undefined
-                : { animation: 'pulse 1.6s ease-in-out infinite' }
-            }
+            className={`h-[7px] w-[7px] rounded-full ${failed ? 'bg-destructive' : 'bg-accent'}`}
+            style={failed ? undefined : { animation: 'pulse 1.6s ease-in-out infinite' }}
             aria-hidden="true"
           />
           <span className="text-sm font-medium text-text-primary">
@@ -1127,11 +1075,7 @@ function ProvisioningStep({
                 : 'inline-flex h-11 items-center justify-center rounded-xl border border-input bg-white px-5 text-[14px] font-medium tracking-[-0.01em] text-text-primary transition-[border-color,background-color] duration-140 hover:border-accent hover:text-accent disabled:cursor-not-allowed disabled:opacity-60'
             }
           >
-            {retrying
-              ? 'Retrying\u2026'
-              : failed
-                ? 'Retry provisioning'
-                : 'Restart provisioning'}
+            {retrying ? 'Retrying\u2026' : failed ? 'Retry provisioning' : 'Restart provisioning'}
           </button>
           {retryError ? (
             <span role="alert" className="text-[13px] font-medium text-destructive">
@@ -1148,6 +1092,8 @@ function humanizeError(code: string): string {
   switch (code) {
     case 'workspace_name_invalid':
       return 'That workspace name isn\u2019t valid. 80 characters max.';
+    case 'owner_signup_not_allowed':
+      return 'This email is not authorized to create a cloud workspace yet.';
     case 'invite_emails_invalid':
       return 'One or more email addresses look off. Check the list and try again.';
     case 'anthropic_key_required':

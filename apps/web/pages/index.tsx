@@ -17,12 +17,7 @@
  */
 import Head from 'next/head';
 import { useRouter } from 'next/router';
-import {
-  FormEvent,
-  useCallback,
-  useEffect,
-  useState,
-} from 'react';
+import { FormEvent, useCallback, useEffect, useState } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
 import useSWR from 'swr';
 import { ArrowRight } from 'lucide-react';
@@ -88,17 +83,22 @@ const fetcher = async (url: string) => {
   return res.json();
 };
 
-function deriveRefreshState(current: DashboardCurrentPayload | undefined): DashboardState['kind'] | null {
+function deriveRefreshState(
+  current: DashboardCurrentPayload | undefined,
+): DashboardState['kind'] | null {
   return current ? deriveDashboardState(current).kind : null;
 }
 
 export default function DashboardPage() {
   const router = useRouter();
-  const { data: current, error, mutate, isValidating } = useSWR<DashboardCurrentPayload>(
-    '/api/workspaces/current',
-    fetcher,
-    { refreshInterval: (latest) => (deriveRefreshState(latest) === 'ingesting' ? 1000 : 0) },
-  );
+  const {
+    data: current,
+    error,
+    mutate,
+    isValidating,
+  } = useSWR<DashboardCurrentPayload>('/api/workspaces/current', fetcher, {
+    refreshInterval: (latest) => (deriveRefreshState(latest) === 'ingesting' ? 1000 : 0),
+  });
 
   const state: DashboardState | null = current ? deriveDashboardState(current) : null;
 
@@ -255,8 +255,8 @@ function IngestingHero({ current }: { current: DashboardCurrentPayload }) {
         </span>
       </h1>
       <p className="mt-3.5 max-w-[42ch] text-[14px] leading-body text-text-body">
-        You can close this tab. We&rsquo;ll keep going. When you come back, your brain
-        will be ready.
+        You can close this tab. We&rsquo;ll keep going. When you come back, your brain will be
+        ready.
       </p>
 
       <div className="mt-8 max-w-[560px] rounded-xl border border-border-soft bg-white p-6">
@@ -400,12 +400,9 @@ function AskHero({ current }: { current: DashboardCurrentPayload }) {
         transition={{ duration: 0.32, ease: EASE_ENTER }}
         className="w-full max-w-[640px] text-center"
       >
-        <p className="font-mono text-[10.5px] uppercase tracking-[0.08em] text-text-subtle">
-          ASK
-        </p>
+        <p className="font-mono text-[10.5px] uppercase tracking-[0.08em] text-text-subtle">ASK</p>
         <h1 className="mt-4 text-[44px] font-medium leading-[1.04] tracking-[-0.025em] text-text-primary md:text-[52px]">
-          Ask the{' '}
-          <span className="font-serif font-normal italic">brain.</span>
+          Ask the <span className="font-serif font-normal italic">brain.</span>
         </h1>
         <p className="mt-3 text-[14px] leading-body text-text-body">
           Every answer cites its source.
@@ -493,9 +490,7 @@ function ErrorCard({
       className="flex items-center justify-between gap-4 rounded-xl border border-destructive/25 bg-white p-5"
     >
       <div>
-        <p className="text-[13.5px] font-medium text-text-primary">
-          Brain runtime had a problem.
-        </p>
+        <p className="text-[13.5px] font-medium text-text-primary">Brain runtime had a problem.</p>
         {error ? (
           <p className="mt-1 text-[12px] text-destructive">{humanizeError(error)}</p>
         ) : (
@@ -520,6 +515,8 @@ function humanizeError(code: string): string {
   switch (code) {
     case 'retry_failed':
       return 'Retry didn\u2019t go through. Try again in a moment.';
+    case 'owner_signup_not_allowed':
+      return 'This email is not authorized to create a cloud workspace yet.';
     case 'unauthorized':
       return 'Your session expired. Sign in again.';
     case 'network_error':

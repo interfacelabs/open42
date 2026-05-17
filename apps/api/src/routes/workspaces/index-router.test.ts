@@ -14,6 +14,11 @@ const mocks = vi.hoisted(() => ({
   validateSession: vi.fn(),
 }));
 
+vi.hoisted(() => {
+  process.env.OPEN42_EDITION = 'community';
+  process.env.OPEN42_ALLOW_MULTI_WORKSPACE = 'false';
+});
+
 vi.mock('../../auth/sessions.js', () => ({
   validateSession: mocks.validateSession,
 }));
@@ -31,10 +36,7 @@ vi.mock('../../middleware/require-membership.js', () => ({
     middlewareMocks.impl(req, res, next),
 }));
 
-import {
-  buildWorkspaceIndexRouter,
-  type IndexRouterRepo,
-} from './index-router.js';
+import { buildWorkspaceIndexRouter, type IndexRouterRepo } from './index-router.js';
 
 function denyWith(status: 401 | 403, code: string) {
   middlewareMocks.impl = (_req, res, _next) => {
@@ -75,10 +77,12 @@ function makeRepo(overrides: Partial<IndexRouterRepo> = {}): IndexRouterRepo {
   };
 }
 
-function makeApp(opts: {
-  repo?: IndexRouterRepo;
-  createWorkspaceForUser?: ReturnType<typeof vi.fn>;
-} = {}) {
+function makeApp(
+  opts: {
+    repo?: IndexRouterRepo;
+    createWorkspaceForUser?: ReturnType<typeof vi.fn>;
+  } = {},
+) {
   const app = express();
   app.use(express.json());
   app.use(cookieParser());
@@ -119,9 +123,7 @@ describe('workspace index router', () => {
           { id: 'ws-joined', name: 'Their WS', role: 'member' as const, status: 'ready' as const },
         ]),
       });
-      const res = await request(makeApp({ repo }))
-        .get('/workspaces')
-        .set('Cookie', COOKIE);
+      const res = await request(makeApp({ repo })).get('/workspaces').set('Cookie', COOKIE);
       expect(res.status).toBe(200);
       expect(repo.listMembershipsForUser).toHaveBeenCalledWith('user-1');
       expect(res.body.workspaces).toHaveLength(2);
@@ -144,9 +146,7 @@ describe('workspace index router', () => {
 
   describe('POST /workspaces', () => {
     it('401 when no session', async () => {
-      const res = await request(makeApp())
-        .post('/workspaces')
-        .send({ name: 'New WS' });
+      const res = await request(makeApp()).post('/workspaces').send({ name: 'New WS' });
       expect(res.status).toBe(401);
     });
 
@@ -193,6 +193,21 @@ describe('workspace index router', () => {
       });
     });
 
+    it('403 when cloud owner signup is not authorized', async () => {
+      setSession('user-1');
+      const create = vi.fn(async () => {
+        throw new Error('owner_signup_not_allowed');
+      });
+
+      const res = await request(makeApp({ createWorkspaceForUser: create }))
+        .post('/workspaces')
+        .set('Cookie', COOKIE)
+        .send({ name: 'Blocked Workspace' });
+
+      expect(res.status).toBe(403);
+      expect(res.body).toEqual({ error: 'owner_signup_not_allowed' });
+    });
+
     it('403 when community single-workspace mode already has an active workspace', async () => {
       setSession('user-1');
       const repo = makeRepo({ countActiveWorkspaces: vi.fn(async () => 1) });
@@ -220,9 +235,7 @@ describe('workspace index router', () => {
 
     it('403 when caller is not a member', async () => {
       denyWith(403, 'workspace_membership_required');
-      const res = await request(makeApp())
-        .post('/workspaces/ws-1/switch')
-        .set('Cookie', COOKIE);
+      const res = await request(makeApp()).post('/workspaces/ws-1/switch').set('Cookie', COOKIE);
       expect(res.status).toBe(403);
     });
 

@@ -66,10 +66,7 @@ describeDb('users.current_workspace_id invariants (DB integration)', () => {
   });
 
   async function seedUser(email: string) {
-    const [user] = await dbMod.db
-      .insert(dbMod.schema.users)
-      .values({ email })
-      .returning();
+    const [user] = await dbMod.db.insert(dbMod.schema.users).values({ email }).returning();
     if (!user) throw new Error('seedUser failed');
     userIds.push(user.id);
     return user;
@@ -103,15 +100,28 @@ describeDb('users.current_workspace_id invariants (DB integration)', () => {
     return user;
   }
 
+  function openOwnerSignupEnv(): NodeJS.ProcessEnv {
+    return {
+      ...process.env,
+      OPEN42_EDITION: 'cloud',
+      OPEN42_ENABLE_OPEN_SIGNUPS: 'true',
+      OPEN42_ALLOWED_EMAILS: '',
+      OPEN42_ALLOWED_EMAIL_DOMAINS: '',
+    };
+  }
+
   // -------------------------------------------------------------------------
   // Invariant: createWorkspaceForUser is NULL-guarded.
   // -------------------------------------------------------------------------
   describe('createWorkspaceForUser NULL-guard', () => {
     it('sets current_workspace_id when NULL', async () => {
-      const user = await seedUser(`invariants-create-null-${Date.now()}-${Math.random()}@open42.test`);
+      const user = await seedUser(
+        `invariants-create-null-${Date.now()}-${Math.random()}@open42.test`,
+      );
       const enqueue = vi.fn(async () => ({ jobId: 'ignored', alreadyEnqueued: false }));
       const result = await createMod.createWorkspaceForUser(user.id, 'X', {
         enqueueProvisionJob: enqueue as never,
+        env: openOwnerSignupEnv(),
       });
       workspaceIds.push(result.id);
 
@@ -120,10 +130,13 @@ describeDb('users.current_workspace_id invariants (DB integration)', () => {
     });
 
     it('does NOT overwrite a non-null current_workspace_id', async () => {
-      const user = await seedUser(`invariants-create-guard-${Date.now()}-${Math.random()}@open42.test`);
+      const user = await seedUser(
+        `invariants-create-guard-${Date.now()}-${Math.random()}@open42.test`,
+      );
       const enqueue = vi.fn(async () => ({ jobId: 'ignored', alreadyEnqueued: false }));
       const wsA = await createMod.createWorkspaceForUser(user.id, 'A', {
         enqueueProvisionJob: enqueue as never,
+        env: openOwnerSignupEnv(),
       });
       workspaceIds.push(wsA.id);
       // Sanity: current_workspace_id is now wsA.
@@ -131,6 +144,7 @@ describeDb('users.current_workspace_id invariants (DB integration)', () => {
 
       const wsB = await createMod.createWorkspaceForUser(user.id, 'B', {
         enqueueProvisionJob: enqueue as never,
+        env: openOwnerSignupEnv(),
       });
       workspaceIds.push(wsB.id);
 
@@ -222,8 +236,12 @@ describeDb('users.current_workspace_id invariants (DB integration)', () => {
   // -------------------------------------------------------------------------
   describe('member kick clearCurrentWorkspaceIfMatches', () => {
     it('nulls current_workspace_id when it pointed at the kicked-from workspace', async () => {
-      const owner = await seedUser(`invariants-kick-owner-${Date.now()}-${Math.random()}@open42.test`);
-      const kicked = await seedUser(`invariants-kick-victim-${Date.now()}-${Math.random()}@open42.test`);
+      const owner = await seedUser(
+        `invariants-kick-owner-${Date.now()}-${Math.random()}@open42.test`,
+      );
+      const kicked = await seedUser(
+        `invariants-kick-victim-${Date.now()}-${Math.random()}@open42.test`,
+      );
       const ws = await seedWorkspace(owner.id, 'Kick ws');
       await dbMod.db
         .insert(dbMod.schema.memberships)
@@ -253,20 +271,22 @@ describeDb('users.current_workspace_id invariants (DB integration)', () => {
     });
 
     it('leaves current_workspace_id alone when it pointed at a DIFFERENT workspace', async () => {
-      const owner = await seedUser(`invariants-kick-other-owner-${Date.now()}-${Math.random()}@open42.test`);
-      const kicked = await seedUser(`invariants-kick-other-victim-${Date.now()}-${Math.random()}@open42.test`);
+      const owner = await seedUser(
+        `invariants-kick-other-owner-${Date.now()}-${Math.random()}@open42.test`,
+      );
+      const kicked = await seedUser(
+        `invariants-kick-other-victim-${Date.now()}-${Math.random()}@open42.test`,
+      );
       const kickedFrom = await seedWorkspace(owner.id, 'KickedFrom');
       const stillActive = await seedWorkspace(owner.id, 'StillActive');
 
       // Kicked user is currently working in `stillActive` (somehow — perhaps
       // they were a member of both and `stillActive` is what their hint points
       // at). The kick from `kickedFrom` must leave the hint alone.
-      await dbMod.db
-        .insert(dbMod.schema.memberships)
-        .values([
-          { userId: kicked.id, workspaceId: kickedFrom.id, role: 'member' },
-          { userId: kicked.id, workspaceId: stillActive.id, role: 'member' },
-        ]);
+      await dbMod.db.insert(dbMod.schema.memberships).values([
+        { userId: kicked.id, workspaceId: kickedFrom.id, role: 'member' },
+        { userId: kicked.id, workspaceId: stillActive.id, role: 'member' },
+      ]);
       await dbMod.db
         .update(dbMod.schema.users)
         .set({ currentWorkspaceId: stillActive.id })

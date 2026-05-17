@@ -180,6 +180,22 @@ describe('workspace provision route', () => {
       });
     });
 
+    it('returns 403 when cloud owner signup is not authorized', async () => {
+      mocks.validateSession.mockResolvedValue({ userId: 'user-1' });
+      const repo = makeRepo();
+      repo.saveWorkspaceName.mockRejectedValueOnce(new Error('owner_signup_not_allowed'));
+      const app = makeApp(repo);
+
+      const res = await request(app)
+        .post('/workspaces/onboarding/workspace')
+        .set('Cookie', 'open42_session=session-1')
+        .send({ name: 'Blocked Workspace' });
+
+      expect(res.status).toBe(403);
+      expect(res.body).toEqual({ error: 'owner_signup_not_allowed' });
+      expect(mocks.safelyProvisionTenant).not.toHaveBeenCalled();
+    });
+
     it('returns existing workspace and does NOT re-provision when name matches', async () => {
       mocks.validateSession.mockResolvedValue({ userId: 'user-1' });
       const repo = makeRepo();

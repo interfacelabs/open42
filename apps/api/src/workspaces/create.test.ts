@@ -39,13 +39,20 @@ describeDb('createWorkspaceForUser', () => {
   });
 
   async function seedUser(email: string) {
-    const [user] = await dbMod.db
-      .insert(dbMod.schema.users)
-      .values({ email })
-      .returning();
+    const [user] = await dbMod.db.insert(dbMod.schema.users).values({ email }).returning();
     if (!user) throw new Error('seedUser failed');
     userIds.push(user.id);
     return user;
+  }
+
+  function openOwnerSignupEnv(): NodeJS.ProcessEnv {
+    return {
+      ...process.env,
+      OPEN42_EDITION: 'cloud',
+      OPEN42_ENABLE_OPEN_SIGNUPS: 'true',
+      OPEN42_ALLOWED_EMAILS: '',
+      OPEN42_ALLOWED_EMAIL_DOMAINS: '',
+    };
   }
 
   it('inserts workspace + owner membership, sets current_workspace_id when NULL, enqueues once', async () => {
@@ -57,6 +64,7 @@ describeDb('createWorkspaceForUser', () => {
 
     const result = await createMod.createWorkspaceForUser(user.id, 'Acme', {
       enqueueProvisionJob: enqueue as never,
+      env: openOwnerSignupEnv(),
     });
     workspaceIds.push(result.id);
 
@@ -106,6 +114,7 @@ describeDb('createWorkspaceForUser', () => {
     const enqueue1 = vi.fn(async () => ({ jobId: 'ignored', alreadyEnqueued: false }));
     const ws1 = await createMod.createWorkspaceForUser(user.id, 'First', {
       enqueueProvisionJob: enqueue1 as never,
+      env: openOwnerSignupEnv(),
     });
     workspaceIds.push(ws1.id);
 
@@ -121,6 +130,7 @@ describeDb('createWorkspaceForUser', () => {
     const enqueue2 = vi.fn(async () => ({ jobId: 'ignored', alreadyEnqueued: false }));
     const ws2 = await createMod.createWorkspaceForUser(user.id, 'Second', {
       enqueueProvisionJob: enqueue2 as never,
+      env: openOwnerSignupEnv(),
     });
     workspaceIds.push(ws2.id);
 
@@ -139,5 +149,30 @@ describeDb('createWorkspaceForUser', () => {
       .from(dbMod.schema.memberships)
       .where(eq(dbMod.schema.memberships.workspaceId, ws2.id));
     expect(memberships).toHaveLength(1);
+  });
+
+  it('rejects cloud owner workspace creation when the email is not authorized', async () => {
+    const user = await seedUser(`create-blocked-${Date.now()}-${Math.random()}@open42.test`);
+    const enqueue = vi.fn(async () => ({ jobId: 'ignored', alreadyEnqueued: false }));
+
+    await expect(
+      createMod.createWorkspaceForUser(user.id, 'Blocked', {
+        enqueueProvisionJob: enqueue as never,
+        env: {
+          ...process.env,
+          OPEN42_EDITION: 'cloud',
+          OPEN42_ENABLE_OPEN_SIGNUPS: 'false',
+          OPEN42_ALLOWED_EMAILS: 'someone-else@open42.test',
+          OPEN42_ALLOWED_EMAIL_DOMAINS: '',
+        },
+      }),
+    ).rejects.toThrow('owner_signup_not_allowed');
+
+    const workspaces = await dbMod.db
+      .select()
+      .from(dbMod.schema.workspaces)
+      .where(eq(dbMod.schema.workspaces.ownerUserId, user.id));
+    expect(workspaces).toHaveLength(0);
+    expect(enqueue).not.toHaveBeenCalled();
   });
 });
