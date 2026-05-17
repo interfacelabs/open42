@@ -40,6 +40,11 @@ export const WEB_PUBLIC_URL = (process.env.WEB_PUBLIC_URL ?? 'http://localhost:3
   /\/+$/,
   '',
 );
+export const LANDING_PUBLIC_URL = (
+  process.env.LANDING_PUBLIC_URL ??
+  process.env.NEXT_PUBLIC_OPEN42_LANDING_URL ??
+  (OPEN42_EDITION === 'cloud' ? 'https://open42.ai' : 'http://localhost:3002')
+).replace(/\/+$/, '');
 export const REDIS_URL =
   process.env.REDIS_URL ?? `redis://localhost:${process.env.REDIS_HOST_PORT ?? '63799'}`;
 export function assertBootSecrets(env: NodeJS.ProcessEnv = process.env): void {

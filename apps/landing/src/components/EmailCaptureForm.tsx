@@ -29,7 +29,9 @@ export function EmailCaptureForm({ variant = 'light', className = '' }: Props) {
     setStatus('submitting');
     setError('');
 
-    if (!WAITLIST_ENDPOINT) {
+    const endpoint = resolveWaitlistEndpoint();
+
+    if (!endpoint) {
       const body = [
         'Please add me to the Open42 private beta.',
         '',
@@ -43,7 +45,7 @@ export function EmailCaptureForm({ variant = 'light', className = '' }: Props) {
     }
 
     try {
-      const response = await fetch(WAITLIST_ENDPOINT, {
+      const response = await fetch(endpoint, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email: normalizedEmail, source: 'landing' }),
@@ -113,4 +115,14 @@ export function EmailCaptureForm({ variant = 'light', className = '' }: Props) {
       </p>
     </form>
   );
+}
+
+function resolveWaitlistEndpoint(): string {
+  if (WAITLIST_ENDPOINT) return WAITLIST_ENDPOINT;
+  if (typeof window === 'undefined') return '';
+  const hostname = window.location.hostname.toLowerCase();
+  if (hostname === 'open42.ai' || hostname === 'www.open42.ai') {
+    return 'https://api.open42.ai/waitlist';
+  }
+  return '';
 }
