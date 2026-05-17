@@ -46,7 +46,25 @@ describe('PostExportDialog', () => {
     }
   });
 
-  it('defaults to openclaw and restores the persisted install target', () => {
+  it('renders the locked target order while defaulting to openclaw', () => {
+    const openclaw = SKILL_TARGETS.find((target) => target.id === 'openclaw')!;
+
+    renderDialog({ receipt: signedReceipt });
+
+    const tabLabels = screen
+      .getAllByRole('button')
+      .map((button) => button.textContent?.trim())
+      .filter((label): label is string =>
+        SKILL_TARGETS.some((target) => target.label === label),
+      );
+
+    expect(tabLabels).toEqual(['Claude Code', 'openclaw', 'hermes']);
+    expect(
+      screen.getByText(skillInstallDestination(openclaw, draft.name)),
+    ).toBeInTheDocument();
+  });
+
+  it('restores the persisted install target', () => {
     const openclaw = SKILL_TARGETS.find((target) => target.id === 'openclaw')!;
     const claudeCode = SKILL_TARGETS.find((target) => target.id === 'claude-code')!;
     const first = renderDialog({ receipt: signedReceipt });
@@ -77,10 +95,12 @@ describe('PostExportDialog', () => {
 
     expect(screen.getByText('Refund Policy Skill exported')).toBeInTheDocument();
     expect(screen.getByText('Signed by Acme Corp')).toBeInTheDocument();
+    expect(screen.getByText('all fresh')).toBeInTheDocument();
     expect(
       screen.getByText(/Use this skill when answering refund-policy questions/i),
     ).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: 'Install in' })).toBeInTheDocument();
+    expect(document.body.querySelector('ol')).toHaveClass('list-decimal');
     expect(
       screen.getByRole('link', { name: /connect an mcp-compatible agent instead/i }),
     ).toHaveAttribute('href', '/settings/mcp');
