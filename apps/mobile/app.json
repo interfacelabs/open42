@@ -3,22 +3,17 @@
     "name": "Open42",
     "slug": "Open42",
     "version": "1.0.0",
-
+    "scheme": "open42",
     "web": {
       "favicon": "./assets/favicon.png"
     },
-
     "experiments": {
       "tsconfigPaths": true
     },
-
-    "plugins": [],
-
+    "plugins": ["expo-asset"],
     "orientation": "portrait",
     "icon": "./assets/icon.png",
-
     "userInterfaceStyle": "light",
-
     "splash": {
       "image": "./assets/splash.png",
       "resizeMode": "contain",
@@ -26,9 +21,34 @@
     },
     "assetBundlePatterns": ["**/*"],
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": true,
+      "associatedDomains": ["applinks:open42.app"]
     },
     "android": {
+      "intentFilters": [
+        {
+          "action": "VIEW",
+          "autoVerify": true,
+          "data": [
+            {
+              "scheme": "https",
+              "host": "open42.app",
+              "pathPrefix": "/sign_in"
+            },
+            {
+              "scheme": "https",
+              "host": "open42.app",
+              "pathPrefix": "/invite/accept"
+            },
+            {
+              "scheme": "https",
+              "host": "open42.app",
+              "pathPrefix": "/auth/invite/accept"
+            }
+          ],
+          "category": ["BROWSABLE", "DEFAULT"]
+        }
+      ],
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#ffffff"
