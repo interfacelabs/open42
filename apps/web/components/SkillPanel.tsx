@@ -183,16 +183,13 @@ function PanelBody({
       downloadBlob(blob, `${draft.name}-skill.zip`);
       const refreshed = (await mutateDraft()) as SkillDraft | undefined;
       const explainer = refreshed?.explainer ?? draft.explainer ?? null;
+      const staleAtExport = exportStalenessForReceipt(draft, refreshed);
       setExportReceipt({
         status: 'signed',
         workspaceName,
         sourceCount: refreshed?.cites.length ?? draft.cites.length,
         version: refreshed?.version ?? draft.version,
-        staleAtExport: refreshed?.staleness
-          ? { changelog: refreshed.staleness.changelog }
-          : draft.staleness
-            ? { changelog: draft.staleness.changelog }
-            : null,
+        staleAtExport,
         explainer,
         explainerStatus: explainer ? 'ready' : 'failed',
         publicKeyUrl: `/api/workspaces/${encodeURIComponent(workspaceId)}/signing-key.pub`,
@@ -305,6 +302,14 @@ function PanelBody({
       />
     </>
   );
+}
+
+export function exportStalenessForReceipt(
+  draft: Pick<SkillDraft, 'staleness'>,
+  refreshed?: Pick<SkillDraft, 'staleness'>,
+): { changelog: string } | null {
+  const staleness = refreshed !== undefined ? refreshed.staleness : draft.staleness;
+  return staleness ? { changelog: staleness.changelog } : null;
 }
 
 function downloadBlob(blob: Blob, filename: string) {
