@@ -1,4 +1,6 @@
-const docs = [
+import { pathToFileURL } from 'node:url';
+
+export const CHAT_EVAL_DOCS = [
   {
     slug: 'refund-policy',
     content:
@@ -20,15 +22,21 @@ async function main() {
   const mcpUrl = process.env.OPEN42_CHAT_EVAL_GBRAIN_MCP_URL?.replace(/\/+$/, '');
   const token = process.env.OPEN42_CHAT_EVAL_GBRAIN_TOKEN;
   if (!mcpUrl || !token) {
-    console.log(JSON.stringify({ docs }, null, 2));
+    console.log(JSON.stringify({ docs: CHAT_EVAL_DOCS }, null, 2));
     return;
   }
 
-  for (const doc of docs) {
+  const seeded = await seedBrain({ mcpUrl, token });
+  console.log(JSON.stringify({ seeded }, null, 2));
+}
+
+export async function seedBrain(input: { mcpUrl: string; token: string }): Promise<string[]> {
+  const mcpUrl = input.mcpUrl.replace(/\/+$/, '');
+  for (const doc of CHAT_EVAL_DOCS) {
     const response = await fetch(mcpUrl, {
       method: 'POST',
       headers: {
-        Authorization: `Bearer ${token}`,
+        Authorization: `Bearer ${input.token}`,
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
@@ -40,7 +48,9 @@ async function main() {
     });
     if (!response.ok) throw new Error(`seed failed for ${doc.slug}: ${response.status}`);
   }
-  console.log(JSON.stringify({ seeded: docs.map((doc) => doc.slug) }, null, 2));
+  return CHAT_EVAL_DOCS.map((doc) => doc.slug);
 }
 
-void main();
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  void main();
+}

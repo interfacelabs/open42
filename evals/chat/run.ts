@@ -1,6 +1,6 @@
 import { readFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import { gradeChatAnswerWithOptionalJudge, type ChatEvalQuestion } from './grader.js';
 
@@ -11,11 +11,37 @@ interface NormalizedMessage {
 
 const here = dirname(fileURLToPath(import.meta.url));
 
+export interface ChatEvalConfig {
+  apiUrl: string;
+  workspaceId: string;
+  cookie: string;
+  csrf?: string;
+  userAgent?: string;
+}
+
+export interface ChatEvalSummary {
+  suite: 'chat-multi-turn';
+  passed: number;
+  total: number;
+  passThreshold: number;
+  failures: Array<Record<string, unknown>>;
+  results: Array<Record<string, unknown>>;
+}
+
 async function main() {
-  const apiUrl = requiredEnv('OPEN42_CHAT_EVAL_API_URL').replace(/\/+$/, '');
-  const workspaceId = requiredEnv('OPEN42_CHAT_EVAL_WORKSPACE_ID');
-  const cookie = requiredEnv('OPEN42_CHAT_EVAL_COOKIE');
-  const csrf = process.env.OPEN42_CHAT_EVAL_CSRF ?? '';
+  const summary = await runChatEval({
+    apiUrl: requiredEnv('OPEN42_CHAT_EVAL_API_URL'),
+    workspaceId: requiredEnv('OPEN42_CHAT_EVAL_WORKSPACE_ID'),
+    cookie: requiredEnv('OPEN42_CHAT_EVAL_COOKIE'),
+    csrf: process.env.OPEN42_CHAT_EVAL_CSRF ?? '',
+    userAgent: process.env.OPEN42_CHAT_EVAL_USER_AGENT ?? '',
+  });
+  console.log(JSON.stringify(summary, null, 2));
+  if (summary.passed < summary.passThreshold) process.exitCode = 1;
+}
+
+export async function runChatEval(config: ChatEvalConfig): Promise<ChatEvalSummary> {
+  const apiUrl = config.apiUrl.replace(/\/+$/, '');
   const questions = JSON.parse(
     await readFile(join(here, 'questions.json'), 'utf8'),
   ) as ChatEvalQuestion[];
@@ -27,11 +53,12 @@ async function main() {
     for (const turn of question.turns) {
       const answer = await ask({
         apiUrl,
-        cookie,
-        csrf,
-        workspaceId,
+        cookie: config.cookie,
+        csrf: config.csrf ?? '',
+        workspaceId: config.workspaceId,
         query: turn,
         messages,
+        userAgent: config.userAgent,
       });
       messages.push({ role: 'user', text: turn });
       messages.push({ role: 'assistant', text: answer });
@@ -45,15 +72,14 @@ async function main() {
   }
 
   const passed = results.filter((result) => result.passed).length;
-  const summary = {
+  return {
     suite: 'chat-multi-turn',
     passed,
     total: results.length,
     passThreshold: 4,
     failures: results.filter((result) => !result.passed),
+    results,
   };
-  console.log(JSON.stringify(summary, null, 2));
-  if (passed < 4) process.exitCode = 1;
 }
 
 async function ask(input: {
@@ -63,6 +89,7 @@ async function ask(input: {
   workspaceId: string;
   query: string;
   messages: NormalizedMessage[];
+  userAgent?: string;
 }): Promise<string> {
   const response = await fetch(`${input.apiUrl}/chat`, {
     method: 'POST',
@@ -70,6 +97,7 @@ async function ask(input: {
       Cookie: input.cookie,
       'Content-Type': 'application/json',
       ...(input.csrf ? { 'X-CSRF-Token': input.csrf } : {}),
+      ...(input.userAgent ? { 'User-Agent': input.userAgent } : {}),
     },
     body: JSON.stringify({
       workspace_id: input.workspaceId,
@@ -109,4 +137,6 @@ function requiredEnv(name: string): string {
   return value;
 }
 
-void main();
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  void main();
+}
