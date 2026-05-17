@@ -94,7 +94,9 @@ Optional flags:
 | `OPEN42_ALLOW_SHARED_KEYS` | `false` in community | Allows fallback to server `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` |
 | `COMPOSIO_API_KEY` | unset | Enables Composio-backed connectors |
 | `OPEN42_DISABLE_COMPOSIO` | `false` | Hard-disables Composio even if a key is set |
-| `RESEND_API_KEY` | unset | Sends invite email instead of returning copyable invite links only |
+| `RESEND_API_KEY` | unset | Sends invite emails and landing waitlist notifications |
+| `RESEND_FROM_ADDRESS` | `Open42 <noreply@mail.open42.ai>` | From address for Resend-delivered email |
+| `OPEN42_WAITLIST_NOTIFY_EMAIL` | `riccardo@interfacelabs.ai` | Landing waitlist notification recipient |
 
 See `.env.community.example` for a full annotated environment file.
 

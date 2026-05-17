@@ -4,7 +4,6 @@ import { useState, type FormEvent } from 'react';
 import { WAITLIST } from '@/lib/content';
 
 const WAITLIST_ENDPOINT = process.env.NEXT_PUBLIC_OPEN42_WAITLIST_URL ?? '';
-const SUPPORT_EMAIL = 'support@open42.ai';
 
 type Props = {
   variant?: 'light' | 'dark';
@@ -30,19 +29,6 @@ export function EmailCaptureForm({ variant = 'light', className = '' }: Props) {
     setError('');
 
     const endpoint = resolveWaitlistEndpoint();
-
-    if (!endpoint) {
-      const body = [
-        'Please add me to the Open42 private beta.',
-        '',
-        `Email: ${normalizedEmail}`,
-      ].join('\n');
-      window.location.href = `mailto:${SUPPORT_EMAIL}?subject=${encodeURIComponent(
-        'Open42 private beta access',
-      )}&body=${encodeURIComponent(body)}`;
-      setStatus('sent');
-      return;
-    }
 
     try {
       const response = await fetch(endpoint, {
@@ -124,5 +110,5 @@ function resolveWaitlistEndpoint(): string {
   if (hostname === 'open42.ai' || hostname === 'www.open42.ai') {
     return 'https://api.open42.ai/waitlist';
   }
-  return '';
+  return '/api/waitlist';
 }
