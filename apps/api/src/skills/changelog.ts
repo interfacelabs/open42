@@ -31,10 +31,7 @@ export async function generateSkillChangelog(
   deps: GenerateSkillChangelogDeps = {},
 ): Promise<string | null> {
   const env = deps.env ?? process.env;
-  const model =
-    input.resolvedAnthropic.model?.trim() ||
-    env.ANTHROPIC_CHANGELOG_MODEL?.trim() ||
-    DEFAULT_CHANGELOG_MODEL;
+  const model = env.ANTHROPIC_CHANGELOG_MODEL?.trim() || DEFAULT_CHANGELOG_MODEL;
   const complete = deps.complete ?? buildAnthropicChangelogComplete(input.resolvedAnthropic);
   const raw = await complete({
     model,
