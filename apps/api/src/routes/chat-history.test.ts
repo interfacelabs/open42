@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest';
 
-import { bodySizeBytes, truncateHistory } from './chat-history.js';
+import {
+  bodySizeBytes,
+  MAX_CHAT_HISTORY_MESSAGES,
+  MAX_CHAT_HISTORY_TURNS,
+  truncateHistory,
+} from './chat-history.js';
 import type { NormalizedMessage } from './chat-providers.js';
 
 const msg = (content: string, role: 'user' | 'assistant' = 'user'): NormalizedMessage => ({
@@ -9,6 +14,11 @@ const msg = (content: string, role: 'user' | 'assistant' = 'user'): NormalizedMe
 });
 
 describe('truncateHistory', () => {
+  it('treats the default cap as 20 prior user/assistant turns', () => {
+    expect(MAX_CHAT_HISTORY_TURNS).toBe(20);
+    expect(MAX_CHAT_HISTORY_MESSAGES).toBe(40);
+  });
+
   it('keeps history that is already inside message and token caps', () => {
     const history = [msg('first'), msg('second', 'assistant')];
 

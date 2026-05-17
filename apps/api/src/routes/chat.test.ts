@@ -283,7 +283,53 @@ describeDb('chat skill mode', () => {
     expect(mocks.query).not.toHaveBeenCalled();
   });
 
-  it('rejects more than 20 prior messages before querying gbrain', async () => {
+  it('accepts exactly 20 prior user/assistant turns', async () => {
+    const { workspaceId, sessionId } = await makeOwnerWorkspace('chat-agent');
+    const providerInputs: Array<{
+      messages: Array<{ role: 'user' | 'assistant'; content: string }>;
+    }> = [];
+    mocks.resolveLlmKey.mockResolvedValue({
+      apiKey: 'sk-ant-real',
+      source: 'tenant',
+      model: null,
+    });
+    mocks.createChatProvider.mockImplementation((provider: 'anthropic' | 'openai') => ({
+      provider,
+      async *sendStreamingChat(input: (typeof providerInputs)[number]) {
+        providerInputs.push(input);
+        yield { text: 'Monthly customers have 14 days [1].' };
+      },
+    }));
+    const messages = Array.from({ length: 40 }, (_, index) => ({
+      id: `m${index}`,
+      role: index % 2 === 0 ? 'user' : 'assistant',
+      text: `prior message ${index}`,
+    }));
+
+    const res = await request(buildApp())
+      .post('/api/chat')
+      .set('User-Agent', 'chat-agent')
+      .set('Cookie', `open42_session=${sessionId}`)
+      .send({
+        query: 'What about monthly customers?',
+        messages,
+        workspace_id: workspaceId,
+      });
+
+    expect(res.status).toBe(200);
+    expect(mocks.query).toHaveBeenCalled();
+    expect(providerInputs[0]?.messages).toHaveLength(42);
+    expect(providerInputs[0]?.messages[0]).toEqual({
+      role: 'user',
+      content: 'prior message 0',
+    });
+    expect(providerInputs[0]?.messages[39]).toEqual({
+      role: 'assistant',
+      content: 'prior message 39',
+    });
+  });
+
+  it('rejects more than 20 prior user/assistant turns before querying gbrain', async () => {
     const { workspaceId, sessionId } = await makeOwnerWorkspace('chat-agent');
 
     const res = await request(buildApp())
@@ -292,7 +338,7 @@ describeDb('chat skill mode', () => {
       .set('Cookie', `open42_session=${sessionId}`)
       .send({
         query: 'What is the refund window?',
-        messages: Array.from({ length: 21 }, (_, index) => ({
+        messages: Array.from({ length: 41 }, (_, index) => ({
           id: `m${index}`,
           role: index % 2 === 0 ? 'user' : 'assistant',
           text: `turn ${index}`,

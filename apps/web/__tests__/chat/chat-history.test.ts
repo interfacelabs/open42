@@ -37,8 +37,8 @@ describe('buildChatRequestHistory', () => {
     ]);
   });
 
-  it('caps history to the newest 20 non-empty non-error turns', () => {
-    const messages: ChatMessage[] = Array.from({ length: 22 }, (_, index) => ({
+  it('caps history to the newest 20 prior user/assistant turns', () => {
+    const messages: ChatMessage[] = Array.from({ length: 42 }, (_, index) => ({
       id: `m${index}`,
       role: index % 2 === 0 ? 'user' : 'assistant',
       text: `turn ${index}`,
@@ -46,8 +46,8 @@ describe('buildChatRequestHistory', () => {
 
     const history = buildChatRequestHistory(messages);
 
-    expect(history).toHaveLength(20);
+    expect(history).toHaveLength(40);
     expect(history[0]).toEqual({ role: 'user', text: 'turn 2' });
-    expect(history.at(-1)).toEqual({ role: 'assistant', text: 'turn 21' });
+    expect(history.at(-1)).toEqual({ role: 'assistant', text: 'turn 41' });
   });
 });

@@ -1,5 +1,8 @@
 import type { ChatMessage } from '@/components/chat-types';
 
+const MAX_PRIOR_TURNS = 20;
+const MAX_PRIOR_MESSAGES = MAX_PRIOR_TURNS * 2;
+
 export interface ChatRequestHistoryMessage {
   role: 'user' | 'assistant';
   text: string;
@@ -26,5 +29,5 @@ export function buildChatRequestHistory(
     if (!message.text.trim()) continue;
     history.push({ role: message.role, text: message.text });
   }
-  return history.slice(-20);
+  return history.slice(-MAX_PRIOR_MESSAGES);
 }

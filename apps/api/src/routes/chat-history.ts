@@ -1,7 +1,8 @@
 import { countTokensInMessages } from './chat-budget.js';
 import type { NormalizedMessage } from './chat-providers.js';
 
-export const MAX_CHAT_HISTORY_MESSAGES = 20;
+export const MAX_CHAT_HISTORY_TURNS = 20;
+export const MAX_CHAT_HISTORY_MESSAGES = MAX_CHAT_HISTORY_TURNS * 2;
 export const MAX_CHAT_HISTORY_TOKENS = 8_000;
 export const MAX_CHAT_BODY_BYTES = 100 * 1024;
 
