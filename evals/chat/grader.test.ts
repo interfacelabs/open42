@@ -53,6 +53,41 @@ describe('chat eval grader', () => {
     expect(grade.passed).toBe(true);
   });
 
+  it('accepts cited source slugs as source-aware expected terms', () => {
+    const grade = gradeChatAnswer(
+      {
+        id: 'source-aware-followup',
+        turns: ['Which source explains annual refunds?', 'Use that same source.'],
+        expected: ['refund-policy', 'monthly', '[1]'],
+      },
+      {
+        id: 'source-aware-followup',
+        answer: 'Based on the same source, monthly customers have 14 days [1].',
+        citations: [{ slug: 'refund-policy' }],
+      },
+    );
+
+    expect(grade.passed).toBe(true);
+  });
+
+  it('accepts equivalent unsupported-answer phrasing', () => {
+    const grade = gradeChatAnswer(
+      {
+        id: 'unsupported-followup',
+        turns: ['What is the refund policy?', 'What is the office dog policy?'],
+        expected: ["don't have", '[1]'],
+        avoid: ['14', '30'],
+      },
+      {
+        id: 'unsupported-followup',
+        answer:
+          'I cannot answer that from the provided context; the source does not contain an office dog policy [1].',
+      },
+    );
+
+    expect(grade.passed).toBe(true);
+  });
+
   it('falls back to deterministic grading unless Anthropic grading is explicitly enabled', async () => {
     await expect(
       gradeChatAnswerWithOptionalJudge(

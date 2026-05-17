@@ -9,6 +9,11 @@ interface NormalizedMessage {
   text: string;
 }
 
+interface ChatEvalTurnAnswer {
+  text: string;
+  citations: Array<{ slug?: string | null }>;
+}
+
 const here = dirname(fileURLToPath(import.meta.url));
 
 export interface ChatEvalConfig {
@@ -50,6 +55,7 @@ export async function runChatEval(config: ChatEvalConfig): Promise<ChatEvalSumma
   for (const question of questions) {
     const messages: NormalizedMessage[] = [];
     let finalAnswer = '';
+    let finalCitations: Array<{ slug?: string | null }> = [];
     for (const turn of question.turns) {
       const answer = await ask({
         apiUrl,
@@ -61,12 +67,14 @@ export async function runChatEval(config: ChatEvalConfig): Promise<ChatEvalSumma
         userAgent: config.userAgent,
       });
       messages.push({ role: 'user', text: turn });
-      messages.push({ role: 'assistant', text: answer });
-      finalAnswer = answer;
+      messages.push({ role: 'assistant', text: answer.text });
+      finalAnswer = answer.text;
+      finalCitations = answer.citations;
     }
     const grade = await gradeChatAnswerWithOptionalJudge(question, {
       id: question.id,
       answer: finalAnswer,
+      citations: finalCitations,
     });
     results.push({ ...grade, answer: finalAnswer });
   }
@@ -90,7 +98,7 @@ async function ask(input: {
   query: string;
   messages: NormalizedMessage[];
   userAgent?: string;
-}): Promise<string> {
+}): Promise<ChatEvalTurnAnswer> {
   const response = await fetch(`${input.apiUrl}/chat`, {
     method: 'POST',
     headers: {
@@ -113,6 +121,7 @@ async function ask(input: {
   const decoder = new TextDecoder();
   let buffer = '';
   let text = '';
+  let citations: Array<{ slug?: string | null }> = [];
   while (true) {
     const { done, value } = await reader.read();
     if (done) break;
@@ -123,10 +132,20 @@ async function ask(input: {
       if (!line.trim()) continue;
       const event = JSON.parse(line) as { type?: string; text?: string; error?: string };
       if (event.type === 'token' && event.text) text += event.text;
+      if (
+        event.type === 'citations' &&
+        Array.isArray((event as { citations?: unknown }).citations)
+      ) {
+        citations = ((event as { citations?: Array<{ slug?: unknown }> }).citations ?? []).map(
+          (citation) => ({
+            slug: typeof citation.slug === 'string' ? citation.slug : null,
+          }),
+        );
+      }
       if (event.type === 'error') throw new Error(event.error ?? 'chat_eval_stream_error');
     }
   }
-  return text;
+  return { text, citations };
 }
 
 function requiredEnv(name: string): string {
