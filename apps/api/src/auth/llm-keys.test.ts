@@ -2,12 +2,7 @@ import { eq } from 'drizzle-orm';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import '../env.js';
-import {
-  deleteLlmKey,
-  resolveLlmKey,
-  upsertLlmKey,
-  type ResolveLlmKeyDeps,
-} from './llm-keys.js';
+import { deleteLlmKey, resolveLlmKey, upsertLlmKey, type ResolveLlmKeyDeps } from './llm-keys.js';
 
 const RUN_DB_TESTS = !!process.env.DATABASE_URL;
 const describeDb = RUN_DB_TESTS ? describe : describe.skip;
@@ -69,7 +64,7 @@ describe('resolveLlmKey', () => {
     expect(result).toEqual({ apiKey: 'sk-shared-trim-me', source: 'shared', model: null });
   });
 
-  it('does not use shared env keys by default', async () => {
+  it('does not use shared env keys when explicitly disabled', async () => {
     const result = await resolveLlmKey(
       {
         workspaceId: '2a2a2a2a-2222-4222-8222-222222222222',
@@ -78,7 +73,7 @@ describe('resolveLlmKey', () => {
       },
       {
         db: fakeSelectingDb(null),
-        env: { ANTHROPIC_API_KEY: 'sk-shared-disabled' },
+        env: { ANTHROPIC_API_KEY: 'sk-shared-disabled', OPEN42_ALLOW_SHARED_KEYS: 'false' },
       },
     );
 
@@ -312,11 +307,14 @@ describeDb('resolveLlmKey + upsertLlmKey + deleteLlmKey (round-trip)', () => {
       });
       await deleteLlmKey({ workspaceId, provider: 'openai', scope: 'chat' });
 
-      const resolved = await resolveLlmKey({
-        workspaceId,
-        provider: 'openai',
-        scope: 'chat',
-      }, { env: process.env });
+      const resolved = await resolveLlmKey(
+        {
+          workspaceId,
+          provider: 'openai',
+          scope: 'chat',
+        },
+        { env: process.env },
+      );
       expect(resolved).toEqual({
         apiKey: 'sk-shared-fallback',
         source: 'shared',
