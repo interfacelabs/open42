@@ -152,6 +152,17 @@ describeDb('chat skill mode', () => {
     const { workspaceId, sessionId } = await makeOwnerWorkspace('chat-agent', {
       chatProvider: 'openai',
     });
+    const providerInputs: Array<{
+      messages: Array<{ role: 'user' | 'assistant'; content: string }>;
+      resolvedKey: { apiKey: string; source: 'tenant' | 'shared'; model?: string | null };
+    }> = [];
+    mocks.createChatProvider.mockImplementation((provider: 'anthropic' | 'openai') => ({
+      provider,
+      async *sendStreamingChat(input: (typeof providerInputs)[number]) {
+        providerInputs.push(input);
+        yield { text: `provider:${provider} [1]` };
+      },
+    }));
     mocks.resolveLlmKey.mockResolvedValue({
       apiKey: 'sk-openai-real',
       source: 'tenant',
@@ -183,6 +194,21 @@ describeDb('chat skill mode', () => {
       detail: 'chunks',
     });
     expect(mocks.createChatProvider).toHaveBeenCalledWith('openai');
+    expect(providerInputs[0]?.resolvedKey).toMatchObject({
+      apiKey: 'sk-openai-real',
+      source: 'tenant',
+      model: 'gpt-test',
+    });
+    expect(providerInputs[0]?.messages).toEqual([
+      { role: 'user', content: 'What is the refund window for annual customers?' },
+      { role: 'assistant', content: 'Annual customers have 30 days [1].' },
+      {
+        role: 'user',
+        content:
+          'Context:\n[1] slug=refund-policy version=unknown updated=2026-04-01\nCustomers may request refunds within 30 days.',
+      },
+      { role: 'user', content: 'Question: What about monthly customers?' },
+    ]);
     expect(res.text).toContain('provider:openai [1]');
     expect(res.text).toContain('"type":"done"');
   });
