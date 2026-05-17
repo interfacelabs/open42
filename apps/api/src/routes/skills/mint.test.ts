@@ -2,6 +2,7 @@ import express from 'express';
 import cookieParser from 'cookie-parser';
 import { eq } from 'drizzle-orm';
 import AdmZip from 'adm-zip';
+import { createHash, webcrypto } from 'node:crypto';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -10,7 +11,6 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 
 import '../../env.js';
 import { requireMembership as realRequireMembership } from '../../middleware/require-membership.js';
-import { verifyCanonicalSkillMarkdownSignature } from '../../skills/signing.js';
 
 /**
  * Route-level coverage for the wide-Skillify endpoints. DB-backed: skipped
@@ -405,13 +405,13 @@ describeDb('skills routes', () => {
       const keyRes = await request(buildApp()).get(`/workspaces/${workspaceId}/signing-key.pub`);
       expect(keyRes.status).toBe(200);
       expect(keyRes.text).toContain('BEGIN PUBLIC KEY');
-      expect(
-        verifyCanonicalSkillMarkdownSignature({
+      await expect(
+        verifyExportedSkillSignatureWithWebCrypto({
           markdown: skillMd,
-          signature,
+          signatureBase64: signature,
           publicKeyPem: keyRes.text,
         }),
-      ).toBe(true);
+      ).resolves.toBe(true);
 
       const versions = await dbMod.db
         .select()
@@ -729,4 +729,28 @@ function binaryParser(res: Response, callback: (err: Error | null, body: Buffer)
   });
   res.on('end', () => callback(null, Buffer.concat(chunks)));
   res.on('error', callback);
+}
+
+async function verifyExportedSkillSignatureWithWebCrypto(input: {
+  markdown: string;
+  signatureBase64: string;
+  publicKeyPem: string;
+}): Promise<boolean> {
+  const canonical = input.markdown
+    .replace(/\r\n?/g, '\n')
+    .replace(/[ \t]+$/gm, '')
+    .replace(/\n*$/, '\n');
+  const digest = createHash('sha256').update(canonical, 'utf8').digest();
+  const keyDer = Buffer.from(
+    input.publicKeyPem.replace(/-----BEGIN PUBLIC KEY-----|-----END PUBLIC KEY-----|\s+/g, ''),
+    'base64',
+  );
+  const publicKey = await webcrypto.subtle.importKey('spki', keyDer, 'Ed25519', false, ['verify']);
+
+  return webcrypto.subtle.verify(
+    'Ed25519',
+    publicKey,
+    Buffer.from(input.signatureBase64, 'base64'),
+    digest,
+  );
 }
