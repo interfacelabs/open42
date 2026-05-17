@@ -126,6 +126,7 @@ describe('PostExportDialog', () => {
   it('renders explainer pending and signing failure states', () => {
     const { rerender } = render(
       <PostExportDialog
+        key="refund-policy:0.1.2:open"
         open
         onOpenChange={() => undefined}
         draft={draft}
@@ -186,6 +187,54 @@ describe('PostExportDialog', () => {
 
     expect(await screen.findByRole('button', { name: /share link expired/i })).toBeInTheDocument();
     expect(screen.getByText('https://api.open42.ai/shared/expired.zip')).toBeInTheDocument();
+  });
+
+  it('resets minted share state when the dialog is reopened for a new export context', async () => {
+    const { rerender } = render(
+      <PostExportDialog
+        open
+        onOpenChange={() => undefined}
+        draft={draft}
+        receipt={signedReceipt}
+        onMintShare={async () => ({
+          url: 'https://api.open42.ai/shared/token.zip',
+          expiresAt: new Date(Date.now() + 60_000).toISOString(),
+        })}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: /generate share link/i }));
+    expect(await screen.findByText('https://api.open42.ai/shared/token.zip')).toBeInTheDocument();
+
+    rerender(
+      <PostExportDialog
+        key="refund-policy:0.1.2:closed"
+        open={false}
+        onOpenChange={() => undefined}
+        draft={draft}
+        receipt={signedReceipt}
+        onMintShare={async () => ({
+          url: 'https://api.open42.ai/shared/token.zip',
+          expiresAt: new Date(Date.now() + 60_000).toISOString(),
+        })}
+      />,
+    );
+    rerender(
+      <PostExportDialog
+        key="refund-policy:0.1.3:open"
+        open
+        onOpenChange={() => undefined}
+        draft={draft}
+        receipt={{ ...signedReceipt, version: '0.1.3' }}
+        onMintShare={async () => ({
+          url: 'https://api.open42.ai/shared/token.zip',
+          expiresAt: new Date(Date.now() + 60_000).toISOString(),
+        })}
+      />,
+    );
+
+    expect(screen.queryByText('https://api.open42.ai/shared/token.zip')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /generate share link/i })).toBeInTheDocument();
   });
 });
 
