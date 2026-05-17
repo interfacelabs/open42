@@ -18,6 +18,7 @@ import { SlashMenu } from '@/components/SlashMenu';
 import { Transcript } from '@/components/Transcript';
 import { fetcher, type FetchError } from '@/lib/api';
 import { csrfHeaders } from '@/lib/csrf';
+import { buildChatRequestHistory } from '@/lib/chat-history';
 import type { SkillDraft } from '@/lib/skill-types';
 import { useWorkspaceStore } from '@/lib/workspaces/store';
 import { recoverFromTenant403 } from '@/lib/workspaces/with-recovery';
@@ -121,19 +122,7 @@ export default function ChatPage() {
   }
 
   async function sendQuery(query: string, retryAssistantId?: string) {
-    const requestHistory = messages
-      .filter(
-        (message) =>
-          (message.role === 'user' || message.role === 'assistant') &&
-          message.id !== retryAssistantId &&
-          !message.error &&
-          message.text.trim().length > 0,
-      )
-      .slice(-20)
-      .map((message) => ({
-        role: message.role,
-        text: message.text,
-      }));
+    const requestHistory = buildChatRequestHistory(messages, retryAssistantId);
     const userMessage: ChatMessage = { id: crypto.randomUUID(), role: 'user', text: query };
     const assistantId = retryAssistantId ?? crypto.randomUUID();
     currentAssistantId.current = assistantId;
