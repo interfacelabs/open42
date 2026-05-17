@@ -474,12 +474,23 @@ describeDb('skills routes', () => {
       expect(res.header['content-type']).toContain('application/zip');
       const zip = new AdmZip(zipResponseBuffer(res));
       const skillMd = zip.readAsText('sample-skill/SKILL.md');
+      const frontmatterYaml = zip.readAsText('sample-skill/frontmatter.yaml');
       const signature = zip.readAsText('sample-skill/SKILL.md.sig').trim();
       const manifest = JSON.parse(zip.readAsText('sample-skill/manifest.json')) as {
+        entrypoint: string;
         signed_payload_sha256: string;
         public_key_url: string;
       };
+      expect(skillMd).toContain('name: sample-skill');
+      expect(skillMd).toContain(
+        'description: "Use when answering refund, return, cancellation, or enterprise SLA refund questions."',
+      );
       expect(skillMd).toContain('explainer: "Use this skill for refund-policy answers."');
+      expect(frontmatterYaml).toContain('name: sample-skill');
+      expect(frontmatterYaml).toContain(
+        'description: "Use when answering refund, return, cancellation, or enterprise SLA refund questions."',
+      );
+      expect(manifest.entrypoint).toBe('SKILL.md');
       expect(manifest.signed_payload_sha256).toMatch(/^[0-9a-f]{64}$/);
       expect(manifest.public_key_url).toContain(`/workspaces/${workspaceId}/signing-key.pub`);
 
