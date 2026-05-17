@@ -1,6 +1,8 @@
-import { createClient } from '@supabase/supabase-js';
+import { createClient, type WebSocketLikeConstructor } from '@supabase/supabase-js';
+import WebSocket from 'ws';
 
 const DEFAULT_MAGIC_LINK_TTL_MINUTES = 15;
+const WebSocketTransport = WebSocket as unknown as WebSocketLikeConstructor;
 
 type SupabaseOtpType = 'signup' | 'magiclink' | 'recovery' | 'invite' | 'email';
 
@@ -65,6 +67,9 @@ export function createSupabaseAuthClient(env: SupabaseAuthEnv = process.env): Su
       autoRefreshToken: false,
       persistSession: false,
     },
+    realtime: {
+      transport: WebSocketTransport,
+    },
   }) as unknown as SupabaseAuthClient;
 }
 
@@ -78,6 +83,9 @@ export function createSupabaseAdminClient(env: SupabaseAuthEnv = process.env): S
     auth: {
       autoRefreshToken: false,
       persistSession: false,
+    },
+    realtime: {
+      transport: WebSocketTransport,
     },
   }) as unknown as SupabaseAdminClient;
 }
