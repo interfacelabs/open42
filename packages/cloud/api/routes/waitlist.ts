@@ -89,7 +89,7 @@ export function buildWaitlistRouter(deps: { repo?: WaitlistRepo; notifier?: Wait
 }
 
 function defaultWaitlistNotifier(): WaitlistNotifier {
-  const to = process.env.OPEN42_WAITLIST_NOTIFY_EMAIL?.trim() || 'support@open42.ai';
+  const to = process.env.OPEN42_WAITLIST_NOTIFY_EMAIL?.trim() || 'riccardo@interfacelabs.ai';
   return {
     async notify(input) {
       return defaultSendEmail({

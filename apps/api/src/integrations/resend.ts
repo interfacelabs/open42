@@ -13,7 +13,7 @@ export interface SendEmailResult {
   error?: string;
 }
 
-const DEFAULT_FROM = process.env.RESEND_FROM_ADDRESS ?? 'open42 <noreply@open42.app>';
+const DEFAULT_FROM = process.env.RESEND_FROM_ADDRESS ?? 'Open42 <noreply@mail.open42.ai>';
 const TOKEN_QUERY_KEYS = new Set([
   'access_token',
   'code',

@@ -12,7 +12,7 @@ export const NAV_LINKS = [
 
 export const HERO = {
   eyebrow: 'Open42 · built on gbrain',
-  heading: 'The AI that knows your company — and turns answers into tools your team can reuse.',
+  heading: 'The AI that knows your company and turns answers into tools your team can reuse.',
   subhead:
     "Connect your docs, chats, and email. Open42 becomes your team's shared brain — answering with citations, and turning any answer into a one-click Skill anyone can run again.",
   secondaryCta: { label: 'See how it works', href: '#how' },
@@ -24,7 +24,7 @@ export const WAITLIST = {
   cta: 'Request access',
   submitting: 'Sending...',
   note: "Private beta. Drop your work email and we'll reach out before opening your workspace.",
-  success: "Request received. We'll reply from support@open42.ai before opening your workspace.",
+  success: "Request received. We'll be in touch before opening your workspace.",
   invalid: 'Use a valid work email.',
   error: "Couldn't send that request. Email support@open42.ai and we'll add you.",
 };
@@ -74,7 +74,7 @@ export const PROCESS = {
 // inline HTML mock; no marketing screenshots.
 export const FEATURES = {
   eyebrow: "[ What's inside ]",
-  heading: 'A brain that answers — and turns those answers into tools.',
+  heading: 'A brain that answers and turns those answers into tools.',
   subhead:
     'Open42 connects your knowledge to your team. It cites sources, flags stale info, and turns any answer into a Skill anyone can run again.',
   cards: [
