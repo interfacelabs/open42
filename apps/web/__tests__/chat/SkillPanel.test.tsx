@@ -12,6 +12,7 @@ vi.mock('swr', async () => {
 import useSWR from 'swr';
 import { SkillPanel } from '@/components/SkillPanel';
 import type { SkillDraft } from '@/lib/skill-types';
+import { __resetWorkspaceStoreForTests, useWorkspaceStore } from '@/lib/workspaces/store';
 
 const mockSWR = useSWR as unknown as ReturnType<typeof vi.fn>;
 
@@ -47,6 +48,19 @@ const FIXTURE_DRAFT: SkillDraft = {
 describe('SkillPanel', () => {
   beforeEach(() => {
     vi.restoreAllMocks();
+    __resetWorkspaceStoreForTests();
+    useWorkspaceStore.setState({
+      currentWorkspaceId: 'ws-1',
+      workspaces: [{ id: 'ws-1', name: 'Acme Corp', role: 'owner', status: 'ready' }],
+    });
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response(new Blob(['zip']), { status: 200 })),
+    );
+    vi.stubGlobal('URL', {
+      createObjectURL: vi.fn(() => 'blob:skill'),
+      revokeObjectURL: vi.fn(),
+    });
     mockSWR.mockReset();
     mockSWR.mockReturnValue({
       data: { draft: FIXTURE_DRAFT },
@@ -89,5 +103,30 @@ describe('SkillPanel', () => {
     expect(
       screen.getByRole('heading', { name: /partial refunds/i }),
     ).toBeInTheDocument();
+  });
+
+  it('shows stale changelog copy with a Re-export CTA', () => {
+    const staleDraft = {
+      ...FIXTURE_DRAFT,
+      staleness: {
+        changelog: 'Refund policy changed since this skill was exported.',
+        detectedAt: '2026-05-17T00:00:00.000Z',
+      },
+    };
+    const mutate = vi.fn(async () => ({
+      ...staleDraft,
+      explainer: 'Use this skill when answering refund-policy questions.',
+    }));
+    mockSWR.mockReturnValue({
+      data: { draft: staleDraft },
+      error: null,
+      isLoading: false,
+      mutate,
+    });
+
+    render(<SkillPanel draftId="refund-policy" onClose={() => {}} />);
+
+    expect(screen.getByText('Refund policy changed since this skill was exported.')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /re-export/i })).toBeInTheDocument();
   });
 });

@@ -837,6 +837,11 @@ async function loadSkillDraft(workspaceId: string, id: string): Promise<SkillDra
   const slugs = Array.isArray(version.citedDocSlugs)
     ? (version.citedDocSlugs as unknown[]).filter((s): s is string => typeof s === 'string')
     : [];
+  const frontmatter = version.frontmatter as Record<string, unknown>;
+  const explainer =
+    typeof frontmatter.explainer === 'string' && frontmatter.explainer.trim()
+      ? frontmatter.explainer.trim()
+      : null;
   const [stale] = await db
     .select({
       changelog: schema.skillStaleness.changelog,
@@ -857,6 +862,7 @@ async function loadSkillDraft(workspaceId: string, id: string): Promise<SkillDra
     name: skill.name,
     version: version.version,
     body: version.body,
+    explainer,
     cites: slugs.map((slug, idx) => ({ index: idx + 1, slug })),
     revisions: revisions.map((r) => ({
       id: r.id,

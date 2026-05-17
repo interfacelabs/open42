@@ -28,6 +28,7 @@ export interface SkillDraft {
   version: string;
   /** Markdown body — used by the panel preview and the export bundle. */
   body: string;
+  explainer?: string | null;
   cites: SkillCite[];
   revisions: SkillRevision[];
   /** True if there are unsaved revisions ahead of `version`. */

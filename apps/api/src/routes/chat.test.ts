@@ -81,7 +81,7 @@ describeDb('chat skill mode', () => {
   function buildApp() {
     const app = express();
     app.set('trust proxy', true);
-    app.use(express.json());
+    app.use(express.json({ limit: '1mb' }));
     app.use(cookieParser());
     app.use('/api/chat', mod.chatRouter);
     return app;
@@ -208,6 +208,24 @@ describeDb('chat skill mode', () => {
 
     expect(res.status).toBe(400);
     expect(res.body).toEqual({ error: 'chat_history_too_long' });
+    expect(mocks.query).not.toHaveBeenCalled();
+  });
+
+  it('rejects bodies over 100KB before querying gbrain', async () => {
+    const { workspaceId, sessionId } = await makeOwnerWorkspace('chat-agent');
+
+    const res = await request(buildApp())
+      .post('/api/chat')
+      .set('User-Agent', 'chat-agent')
+      .set('Cookie', `open42_session=${sessionId}`)
+      .send({
+        query: 'What is the refund window?',
+        messages: [{ role: 'user', text: 'x'.repeat(101 * 1024) }],
+        workspace_id: workspaceId,
+      });
+
+    expect(res.status).toBe(413);
+    expect(res.body).toEqual({ error: 'chat_body_too_large' });
     expect(mocks.query).not.toHaveBeenCalled();
   });
 

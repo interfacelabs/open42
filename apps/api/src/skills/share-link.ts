@@ -1,13 +1,21 @@
-import { createHash, randomBytes as defaultRandomBytes } from 'node:crypto';
+import {
+  createHash,
+  createHmac,
+  randomBytes as defaultRandomBytes,
+  timingSafeEqual,
+} from 'node:crypto';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname, join, normalize, resolve, sep } from 'node:path';
 import { and, eq, gt, isNull } from 'drizzle-orm';
 
+import { readKek } from '../crypto/envelope.js';
 import { db as defaultDb, schema } from '../db/client.js';
 
 export const SHARE_LINK_TTL_MS = 24 * 60 * 60 * 1000;
 export const SHARE_LINK_RATE_LIMIT = 10;
 export const SHARE_LINK_RATE_LIMIT_WINDOW_MS = 60_000;
+export const SHARE_LINK_TOKEN_PREFIX = 'sks';
+const SHARE_LINK_TOKEN_PATTERN = /^sks_([A-Za-z0-9_-]{22,128})_([A-Za-z0-9_-]{43})$/;
 
 interface RateEntry {
   count: number;
@@ -92,7 +100,7 @@ export async function mintShareLink(
   }
 
   const randomBytes = deps.randomBytes ?? defaultRandomBytes;
-  const token = randomBytes(32).toString('base64url');
+  const token = signShareToken(randomBytes(32).toString('base64url'));
   const tokenHash = hashShareToken(token);
   const expiresAt = new Date(now.getTime() + SHARE_LINK_TTL_MS);
   const storageKey = buildShareStorageKey({
@@ -124,6 +132,7 @@ export async function resolveShareLink(
   token: string,
   deps: ResolveShareLinkDeps = {},
 ): Promise<ResolvedShareLink | null> {
+  if (!verifyShareToken(token)) return null;
   const now = deps.now?.() ?? new Date();
   const tokenHash = hashShareToken(token);
   const db = deps.db ?? defaultDb;
@@ -159,6 +168,22 @@ export async function resolveShareLink(
 
 export function hashShareToken(token: string): Buffer {
   return createHash('sha256').update(token, 'utf8').digest();
+}
+
+export function signShareToken(nonce: string): string {
+  if (!/^[A-Za-z0-9_-]{22,128}$/.test(nonce)) {
+    throw new Error('invalid_share_token_nonce');
+  }
+  return `${SHARE_LINK_TOKEN_PREFIX}_${nonce}_${shareTokenMac(nonce).toString('base64url')}`;
+}
+
+export function verifyShareToken(token: string): boolean {
+  const match = SHARE_LINK_TOKEN_PATTERN.exec(token.trim());
+  if (!match?.[1] || !match[2]) return false;
+
+  const expected = shareTokenMac(match[1]);
+  const actual = Buffer.from(match[2], 'base64url');
+  return actual.length === expected.length && timingSafeEqual(actual, expected);
 }
 
 export function buildShareStorageKey(input: {
@@ -197,4 +222,8 @@ function bundlePath(storageKey: string, env: NodeJS.ProcessEnv): string {
   const path = resolve(root, normalizedKey);
   if (path !== root && !path.startsWith(`${root}${sep}`)) throw new Error('invalid_storage_key');
   return path;
+}
+
+function shareTokenMac(nonce: string): Buffer {
+  return createHmac('sha256', readKek()).update(`skill-share:${nonce}`, 'utf8').digest();
 }

@@ -3,43 +3,51 @@ export type SkillTargetId = 'openclaw' | 'claude-code' | 'hermes';
 export interface SkillTarget {
   id: SkillTargetId;
   label: string;
-  installPath: string;
-  steps: string[];
+  basePath: string;
+  reloadLabel: string;
 }
 
 export const SKILL_TARGETS: readonly SkillTarget[] = [
   {
     id: 'openclaw',
     label: 'openclaw',
-    installPath: '~/.openclaw/skills/',
-    steps: [
-      'Move the exported folder into ~/.openclaw/skills/.',
-      'Restart openclaw so it reloads local skills.',
-      'Ask openclaw to use this skill by name.',
-    ],
+    basePath: '~/.openclaw/skills/',
+    reloadLabel: 'openclaw',
   },
   {
     id: 'claude-code',
     label: 'Claude Code',
-    installPath: '~/.claude/skills/',
-    steps: [
-      'Unzip the bundle into ~/.claude/skills/.',
-      'Restart Claude Code in the project where you need it.',
-      'Reference the skill name when asking for the workflow.',
-    ],
+    basePath: '~/.claude/skills/',
+    reloadLabel: 'Claude Code',
   },
   {
     id: 'hermes',
     label: 'hermes',
-    installPath: '~/.hermes/skills/',
-    steps: [
-      'Unzip the bundle into ~/.hermes/skills/.',
-      'Restart hermes to refresh its skill registry.',
-      'Run the matching workflow from the hermes skill picker.',
-    ],
+    basePath: '~/.hermes/skills/',
+    reloadLabel: 'hermes',
   },
 ];
 
 export function skillTargetById(id: string | null): SkillTarget {
   return SKILL_TARGETS.find((target) => target.id === id) ?? SKILL_TARGETS[0]!;
+}
+
+export function skillInstallDestination(target: SkillTarget, skillName: string): string {
+  return `${target.basePath}${skillFolderName(skillName)}/`;
+}
+
+export function skillTargetSteps(target: SkillTarget): string[] {
+  return [
+    `Drop the skill folder into ${target.basePath}.`,
+    `Restart ${target.reloadLabel} to reload skills.`,
+  ];
+}
+
+function skillFolderName(name: string): string {
+  return (
+    name
+      .toLowerCase()
+      .replace(/[^a-z0-9_.-]+/g, '-')
+      .replace(/^[_.-]+|[_.-]+$/g, '') || 'skill'
+  );
 }
