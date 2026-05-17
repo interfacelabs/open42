@@ -118,12 +118,31 @@ export const stripeWebhookEvents = pgTable(
   }),
 );
 
+export const cloudWaitlistEntries = pgTable(
+  'cloud_waitlist_entries',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    email: text('email').notNull(),
+    source: text('source').notNull().default('landing'),
+    userAgent: text('user_agent'),
+    ip: text('ip'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    emailUniq: uniqueIndex('cloud_waitlist_entries_email_uniq').on(t.email),
+    createdAtIdx: index('cloud_waitlist_entries_created_at_idx').on(t.createdAt),
+  }),
+);
+
 export const cloudSchema = {
   workspaceBilling,
   billingUsageEvents,
   stripeWebhookEvents,
+  cloudWaitlistEntries,
 };
 
 export type WorkspaceBilling = typeof workspaceBilling.$inferSelect;
 export type BillingUsageEvent = typeof billingUsageEvents.$inferSelect;
 export type StripeWebhookEvent = typeof stripeWebhookEvents.$inferSelect;
+export type CloudWaitlistEntry = typeof cloudWaitlistEntries.$inferSelect;
