@@ -564,6 +564,66 @@ describeDb('skills routes', () => {
       const expired = await request(buildApp()).get(new URL(share.body.url).pathname);
       expect(expired.status).toBe(404);
     });
+
+    it('creates a refreshed version before minting a share link for a stale skill', async () => {
+      const { workspaceId, sessionId } = await makeOwnerWorkspace('test-agent');
+      const minted = await request(buildApp())
+        .post(skillsPath(workspaceId))
+        .set('User-Agent', 'test-agent')
+        .set('Cookie', `open42_session=${sessionId}`)
+        .send(mintPayload('Draft'));
+      expect(minted.status).toBe(201);
+      const skillId = minted.body.draft.id as string;
+
+      const [initialVersion] = await dbMod.db
+        .select()
+        .from(dbMod.schema.skillVersions)
+        .where(eq(dbMod.schema.skillVersions.skillId, skillId));
+      expect(initialVersion?.version).toBe('0.1.0');
+
+      await dbMod.db.insert(dbMod.schema.skillStaleness).values({
+        workspaceId,
+        skillId,
+        skillVersionId: initialVersion!.id,
+        citationIndex: 1,
+        slug: 'refund-policy-2024',
+        previousVersionId: '3',
+        latestVersionId: '4',
+        previousCitedTextSha256: 'a'.repeat(64),
+        latestCitedTextSha256: 'b'.repeat(64),
+        changelog: 'Refund policy changed since export.',
+        status: 'stale',
+        detectedAt: new Date('2026-05-17T05:00:00.000Z'),
+      });
+
+      const share = await request(buildApp())
+        .post(`${skillPath(workspaceId, skillId)}/share`)
+        .set('User-Agent', 'test-agent')
+        .set('Cookie', `open42_session=${sessionId}`);
+
+      expect(share.status).toBe(200);
+      const shareRows = await dbMod.db
+        .select()
+        .from(dbMod.schema.skillShareLinks)
+        .where(eq(dbMod.schema.skillShareLinks.skillId, skillId));
+      expect(shareRows).toHaveLength(1);
+
+      const versions = await dbMod.db
+        .select()
+        .from(dbMod.schema.skillVersions)
+        .where(eq(dbMod.schema.skillVersions.skillId, skillId));
+      const refreshedVersion = versions.find((version) => version.version === '0.1.1');
+      expect(refreshedVersion).toBeTruthy();
+      expect(shareRows[0]?.skillVersionId).toBe(refreshedVersion!.id);
+
+      const bundle = await request(buildApp())
+        .get(new URL(share.body.url).pathname)
+        .buffer(true)
+        .parse(binaryParser);
+      expect(bundle.status).toBe(200);
+      const zip = new AdmZip(zipResponseBuffer(bundle));
+      expect(zip.readAsText('sample-skill/SKILL.md')).toContain('version: 0.1.1');
+    });
   });
 
   describe('POST /workspaces/:id/skills/:skillId/revise', () => {
