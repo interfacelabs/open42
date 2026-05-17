@@ -46,6 +46,32 @@ describe('PostExportDialog', () => {
     }
   });
 
+  it('defaults to openclaw and restores the persisted install target', () => {
+    const openclaw = SKILL_TARGETS.find((target) => target.id === 'openclaw')!;
+    const claudeCode = SKILL_TARGETS.find((target) => target.id === 'claude-code')!;
+    const first = renderDialog({ receipt: signedReceipt });
+
+    expect(screen.getByText(skillInstallDestination(openclaw, draft.name))).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: claudeCode.label }));
+    expect(window.localStorage.getItem('open42.skillExport.installTarget')).toBe('claude-code');
+    expect(screen.getByText(skillInstallDestination(claudeCode, draft.name))).toBeInTheDocument();
+
+    first.unmount();
+    renderDialog({ receipt: signedReceipt });
+
+    expect(screen.getByText(skillInstallDestination(claudeCode, draft.name))).toBeInTheDocument();
+  });
+
+  it('falls back to openclaw when the persisted install target is unknown', () => {
+    const openclaw = SKILL_TARGETS.find((target) => target.id === 'openclaw')!;
+    window.localStorage.setItem('open42.skillExport.installTarget', 'cursor');
+
+    renderDialog({ receipt: signedReceipt });
+
+    expect(screen.getByText(skillInstallDestination(openclaw, draft.name))).toBeInTheDocument();
+  });
+
   it('matches the receipt-first export hierarchy without an in-dialog download action', () => {
     renderDialog({ receipt: signedReceipt });
 
