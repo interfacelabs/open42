@@ -2,7 +2,8 @@
   {
     "id": "refund-monthly-followup",
     "turns": ["What is the refund window for annual customers?", "What about monthly customers?"],
-    "expected": ["monthly", "14", "[1]"]
+    "expected": ["monthly", "14", "[1]"],
+    "avoid": ["30 days"]
   },
   {
     "id": "enterprise-exception-followup",
@@ -20,7 +21,8 @@
   {
     "id": "unsupported-followup",
     "turns": ["What is the refund policy?", "What is the office dog policy?"],
-    "expected": ["don't have", "[1]"]
+    "expected": ["don't have", "[1]"],
+    "avoid": ["14", "30"]
   },
   {
     "id": "source-aware-followup",
@@ -28,6 +30,7 @@
       "Which source explains annual refunds?",
       "Use that same source to answer monthly refunds."
     ],
-    "expected": ["refund-policy", "monthly", "[1]"]
+    "expected": ["refund-policy", "monthly", "[1]"],
+    "avoid": ["enterprise"]
   }
 ]
