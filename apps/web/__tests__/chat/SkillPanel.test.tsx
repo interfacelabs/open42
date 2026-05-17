@@ -1,11 +1,39 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 
 vi.mock('swr', async () => {
   const actual = await vi.importActual<typeof import('swr')>('swr');
   return {
     ...actual,
     default: vi.fn(),
+  };
+});
+
+vi.mock('@/components/PostExportDialog', async () => {
+  const React = await vi.importActual<typeof import('react')>('react');
+  return {
+    PostExportDialog: ({
+      open,
+      receipt,
+    }: {
+      open: boolean;
+      receipt: {
+        status?: string;
+        staleAtExport?: { changelog: string } | null;
+        explainer?: string | null;
+      };
+    }) =>
+      open
+        ? React.createElement(
+            'div',
+            { role: 'dialog' },
+            React.createElement('span', { 'data-testid': 'export-status' }, receipt.status),
+            React.createElement('span', null, receipt.staleAtExport?.changelog ?? 'all fresh'),
+            receipt.explainer
+              ? React.createElement('span', null, receipt.explainer)
+              : null,
+          )
+        : null,
   };
 });
 
@@ -56,10 +84,15 @@ describe('SkillPanel', () => {
       'fetch',
       vi.fn(async () => new Response(new Blob(['zip']), { status: 200 })),
     );
-    vi.stubGlobal('URL', {
-      createObjectURL: vi.fn(() => 'blob:skill'),
-      revokeObjectURL: vi.fn(),
+    Object.defineProperty(URL, 'createObjectURL', {
+      configurable: true,
+      value: vi.fn(() => 'blob:skill'),
     });
+    Object.defineProperty(URL, 'revokeObjectURL', {
+      configurable: true,
+      value: vi.fn(),
+    });
+    vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => undefined);
     mockSWR.mockReset();
     mockSWR.mockReturnValue({
       data: { draft: FIXTURE_DRAFT },
@@ -139,5 +172,50 @@ describe('SkillPanel', () => {
       changelog: 'Refund policy changed since this skill was exported.',
     });
     expect(exportStalenessForReceipt(staleDraft, freshAfterExport)).toBeNull();
+  });
+
+  it('re-exports a stale skill and opens the post-export dialog with the refreshed receipt', async () => {
+    const staleDraft: SkillDraft = {
+      ...FIXTURE_DRAFT,
+      staleness: {
+        changelog: 'Refund policy changed since this skill was exported.',
+        detectedAt: '2026-05-17T00:00:00.000Z',
+      },
+    };
+    const freshAfterExport: SkillDraft = {
+      ...staleDraft,
+      staleness: null,
+      explainer: 'Use this skill when answering refund-policy questions.',
+    };
+    const mutate = vi.fn(async () => freshAfterExport);
+    const fetchImpl = vi.fn(async () => new Response('zip', { status: 200 }));
+    mockSWR.mockReturnValue({
+      data: { draft: staleDraft },
+      error: null,
+      isLoading: false,
+      mutate,
+    });
+
+    render(
+      <SkillPanel
+        draftId="refund-policy"
+        onClose={() => {}}
+        fetchImpl={fetchImpl as unknown as typeof fetch}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: /^re-export$/i }));
+
+    await waitFor(() => {
+      expect(fetchImpl).toHaveBeenCalledWith('/api/workspaces/ws-1/skills/refund-policy', {
+        method: 'POST',
+        headers: expect.any(Object),
+      });
+    });
+
+    await waitFor(() => expect(screen.getByTestId('export-status')).toHaveTextContent('signed'));
+    expect(screen.getByText('all fresh')).toBeInTheDocument();
+    expect(screen.getByText('Use this skill when answering refund-policy questions.')).toBeInTheDocument();
+    expect(mutate).toHaveBeenCalled();
   });
 });
