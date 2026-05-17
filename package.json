@@ -43,6 +43,7 @@
     "test:e2e": "playwright test",
     "eval:refund-policy": "tsx eval/runners/refund-policy.ts",
     "eval:chat": "tsx evals/chat/run.ts",
+    "eval:chat:local": "tsx evals/chat/local-fixture.ts",
     "eval:chat:test": "vitest run evals/chat/grader.test.ts",
     "db:generate": "npm run db:generate -w @open42/api",
     "db:push": "npm run db:push -w @open42/api",

@@ -4,7 +4,7 @@ export const CHAT_EVAL_DOCS = [
   {
     slug: 'refund-policy',
     content:
-      'Annual customers have a 30 day refund window. Monthly customers have a 14 day refund window.',
+      'Source slug: refund-policy. Annual customers have a 30 day refund window. Monthly customers have a 14 day refund window. This source does not contain an office dog policy.',
   },
   {
     slug: 'enterprise-msa',
