@@ -260,6 +260,8 @@ export default function ChatPage() {
     }
     const threadCitations = latestCitations.map((c) => ({
       slug: c.slug,
+      excerpt: c.excerpt,
+      versionId: c.version_id ?? undefined,
       lastUpdated: c.last_updated ?? undefined,
     }));
 

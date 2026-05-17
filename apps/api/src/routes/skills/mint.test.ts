@@ -288,6 +288,84 @@ describeDb('skills routes', () => {
       expect(second.body).toEqual({ error: 'skill_name_already_exists' });
     });
 
+    it('persists verified citation excerpts as provenance without whole-page appendix text', async () => {
+      mocks.getChunks.mockImplementation(async (slug: string) => {
+        if (slug === 'refund-policy-2024') {
+          return [
+            {
+              slug,
+              chunk_text: 'Relevant refund span.\n\nUnrelated appendix that changed later.',
+              version_id: 3,
+              last_updated: '2026-04-01',
+            },
+          ];
+        }
+        return [
+          {
+            slug,
+            chunk_text: `Canonical server excerpt for ${slug}`,
+            version_id: 2,
+            last_updated: '2026-04-01',
+          },
+        ];
+      });
+      const { workspaceId, sessionId } = await makeOwnerWorkspace('test-agent');
+
+      const minted = await request(buildApp())
+        .post(skillsPath(workspaceId))
+        .set('User-Agent', 'test-agent')
+        .set('Cookie', `open42_session=${sessionId}`)
+        .send({
+          intent: 'Draft a sample skill',
+          threadCitations: [
+            {
+              slug: 'refund-policy-2024',
+              excerpt: 'Relevant refund span.',
+              lastUpdated: '2026-04-01',
+            },
+            { slug: 'enterprise-msa' },
+          ],
+        });
+
+      expect(minted.status).toBe(201);
+      const generateInput = mocks.generateSkill.mock.calls[0]?.[0];
+      expect(generateInput.threadCitations[0]).toMatchObject({
+        slug: 'refund-policy-2024',
+        excerpt: 'Relevant refund span.',
+      });
+      const skillId = minted.body.draft.id as string;
+      const [version] = await dbMod.db
+        .select()
+        .from(dbMod.schema.skillVersions)
+        .where(eq(dbMod.schema.skillVersions.skillId, skillId));
+      const beforeExport = await dbMod.db
+        .select()
+        .from(dbMod.schema.skillCitationProvenance)
+        .where(eq(dbMod.schema.skillCitationProvenance.skillVersionId, version!.id));
+      expect(beforeExport.find((row) => row.slug === 'refund-policy-2024')).toMatchObject({
+        citedText: 'Relevant refund span.',
+      });
+
+      const exported = await request(buildApp())
+        .post(skillPath(workspaceId, skillId))
+        .set('User-Agent', 'test-agent')
+        .set('Cookie', `open42_session=${sessionId}`)
+        .buffer(true)
+        .parse(binaryParser);
+      expect(exported.status).toBe(200);
+
+      const afterExport = await dbMod.db
+        .select()
+        .from(dbMod.schema.skillCitationProvenance)
+        .where(eq(dbMod.schema.skillCitationProvenance.skillVersionId, version!.id));
+      expect(afterExport.find((row) => row.slug === 'refund-policy-2024')).toMatchObject({
+        citedText: 'Relevant refund span.',
+      });
+      expect(
+        afterExport.find((row) => row.slug === 'refund-policy-2024')?.citedText,
+      ).not.toContain('Unrelated appendix');
+    });
+
     it('returns 422 when the model cites a slug the server did not fetch', async () => {
       mocks.generateSkill.mockResolvedValueOnce({
         draft: {

@@ -14,7 +14,11 @@ import {
   parseMintInput,
   type MintThreadCitationInput,
 } from '../../skills/mint-input.js';
-import { captureSkillCitationProvenance } from '../../skills/provenance.js';
+import {
+  captureSkillCitationProvenance,
+  citedTextSha256,
+  latestVersionIdFromChunks,
+} from '../../skills/provenance.js';
 import { mintShareLink } from '../../skills/share-link.js';
 import {
   canonicalizeSkillMarkdown,
@@ -388,7 +392,7 @@ skillsRouter.post('/', async (req, res, next) => {
       workspaceId: workspace.id,
       userId: session.userId,
       generated,
-      sourceCitationSlugs: new Set(threadCitations.map((c) => c.slug)),
+      sourceCitations: threadCitations,
     });
 
     if (!persisted.ok) {
@@ -431,13 +435,14 @@ async function persistDraft(args: {
   workspaceId: string;
   userId: string;
   generated: Awaited<ReturnType<typeof generateSkill>>;
-  sourceCitationSlugs: ReadonlySet<string>;
+  sourceCitations: ThreadCitation[];
 }): Promise<PersistOk | PersistErr> {
-  const { workspaceId, userId, generated, sourceCitationSlugs } = args;
+  const { workspaceId, userId, generated, sourceCitations } = args;
   const { draft } = generated;
   const name = draft.frontmatter.name;
   const version = draft.frontmatter.version;
-  if (draft.cited_doc_slugs.some((slug) => !sourceCitationSlugs.has(slug))) {
+  const sourceCitationBySlug = new Map(sourceCitations.map((citation) => [citation.slug, citation]));
+  if (draft.cited_doc_slugs.some((slug) => !sourceCitationBySlug.has(slug))) {
     return {
       ok: false,
       status: 422,
@@ -473,6 +478,24 @@ async function persistDraft(args: {
           status: 500,
           error: 'skill_version_insert_failed',
         };
+      }
+
+      const provenanceRows = draft.cited_doc_slugs.flatMap((slug, idx) => {
+        const citation = sourceCitationBySlug.get(slug);
+        if (!citation?.excerpt) return [];
+        return [
+          {
+            skillVersionId: version_.id,
+            citationIndex: idx + 1,
+            slug,
+            versionId: citation.versionId ?? null,
+            citedText: citation.excerpt,
+            citedTextSha256: citedTextSha256(citation.excerpt),
+          },
+        ];
+      });
+      if (provenanceRows.length > 0) {
+        await tx.insert(schema.skillCitationProvenance).values(provenanceRows);
       }
 
       const citeChips =
@@ -610,6 +633,23 @@ async function persistRevision(args: {
         };
       }
 
+      const previousProvenance = await tx
+        .select()
+        .from(schema.skillCitationProvenance)
+        .where(eq(schema.skillCitationProvenance.skillVersionId, previousVersion.id));
+      if (previousProvenance.length > 0) {
+        await tx.insert(schema.skillCitationProvenance).values(
+          previousProvenance.map((row) => ({
+            skillVersionId: version.id,
+            citationIndex: row.citationIndex,
+            slug: row.slug,
+            versionId: row.versionId,
+            citedText: row.citedText,
+            citedTextSha256: row.citedTextSha256,
+          })),
+        );
+      }
+
       await tx
         .update(schema.skills)
         .set({ updatedAt: new Date() })
@@ -656,18 +696,38 @@ async function rehydrateThreadCitations(
     const chunks = await gbrain.getChunks(citation.slug);
     if (chunks.length === 0) continue;
 
-    const excerpt = chunksToExcerpt(chunks).slice(0, remaining);
+    const excerpt = citationScopedExcerpt(citation, chunks).slice(0, remaining);
     if (!excerpt) continue;
 
     remaining -= excerpt.length;
     out.push({
       slug: citation.slug,
       excerpt,
+      versionId: citation.versionId ?? latestVersionIdFromChunks(chunks) ?? undefined,
       lastUpdated: citation.lastUpdated ?? latestChunkUpdate(chunks),
     });
   }
 
   return out;
+}
+
+function citationScopedExcerpt(
+  citation: MintThreadCitationInput,
+  chunks: GbrainCitationChunk[],
+): string {
+  const serverText = chunksToExcerpt(chunks);
+  const claimed = citation.excerpt?.trim();
+  if (claimed && containsCitedSpan(serverText, claimed)) return claimed;
+  return serverText;
+}
+
+function containsCitedSpan(serverText: string, citedSpan: string): boolean {
+  if (serverText.includes(citedSpan)) return true;
+  return normalizeCitationText(serverText).includes(normalizeCitationText(citedSpan));
+}
+
+function normalizeCitationText(value: string): string {
+  return value.replace(/\s+/g, ' ').trim();
 }
 
 function chunksToExcerpt(chunks: GbrainCitationChunk[]): string {
