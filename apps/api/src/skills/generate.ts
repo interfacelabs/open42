@@ -39,7 +39,7 @@ import { SKILLIFY_META_PROMPT } from './skillify-meta.js';
  *     `skill_generation_failed` for the UI.
  */
 
-const DEFAULT_MODEL = 'claude-3-5-sonnet-latest';
+const DEFAULT_MODEL = 'claude-sonnet-4-6';
 const MAX_OUTPUT_TOKENS = 4_000;
 const MAX_REPAIR_RETRIES = 1;
 const DEFAULT_SKILLIFY_TIMEOUT_MS = 60_000;

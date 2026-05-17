@@ -2,7 +2,7 @@ import Anthropic from '@anthropic-ai/sdk';
 
 import type { ResolvedLlmKey } from '../auth/llm-keys.js';
 
-const DEFAULT_CHANGELOG_MODEL = 'claude-3-5-haiku-latest';
+const DEFAULT_CHANGELOG_MODEL = 'claude-haiku-4-5-20251001';
 const MAX_CHANGELOG_TOKENS = 140;
 const MAX_CHANGELOG_CHARS = 320;
 
