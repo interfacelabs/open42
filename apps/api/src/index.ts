@@ -27,6 +27,14 @@ import { sweepStaleCycles } from './ingest/staging.js';
 import { closeAllRedisConnections } from './queue/connection.js';
 import { closeProvisionQueue } from './queue/provision-queue.js';
 import { startProvisionWorker, stopProvisionWorker } from './queue/provision-worker.js';
+import {
+  closeSkillStalenessQueue,
+  scheduleSkillStalenessSweep,
+} from './queue/skill-staleness-queue.js';
+import {
+  startSkillStalenessWorker,
+  stopSkillStalenessWorker,
+} from './queue/skill-staleness-worker.js';
 import { authRouter } from './routes/auth.js';
 import { chatRouter } from './routes/chat.js';
 import { buildNotionZipRouter } from './routes/connections/notion-zip.js';
@@ -43,8 +51,10 @@ import { buildInvitesRouter } from './routes/workspaces/invites.js';
 import { buildWorkspaceMcpProxyRouter } from './routes/workspaces/mcp-proxy.js';
 import { buildMembersRouter } from './routes/workspaces/members.js';
 import { buildWorkspaceProvisionRouter } from './routes/workspaces/provision.js';
+import { buildWorkspaceSigningKeyRouter } from './routes/workspaces/signing-key.js';
 import { buildHealthzRouter } from './routes/healthz.js';
 import { libraryRouter } from './routes/library/index.js';
+import { buildSharedSkillsRouter } from './routes/shared-skills.js';
 import { skillsRouter } from './routes/skills/mint.js';
 import { buildComposioWebhookRouter } from './routes/webhooks/composio.js';
 import {
@@ -153,6 +163,8 @@ app.use(
 // Routes
 app.use('/healthz', buildHealthzRouter({ notReady: () => !scheduler }));
 app.use('/auth', authRouter);
+app.use('/shared', buildSharedSkillsRouter());
+app.use('/workspaces', buildWorkspaceSigningKeyRouter());
 // Connections live under `/workspaces/:id/connections/...` so the workspace
 // is supplied via the path and `requireMembership` can assert the caller is
 // a member before the handler runs. The previous flat `/connections/*`
@@ -257,6 +269,10 @@ const server = app.listen(port, () => {
   // another worker (or this same process on restart) picks the job back
   // up after the stalled-interval timeout. No DB sweep required.
   startProvisionWorker();
+  startSkillStalenessWorker();
+  void scheduleSkillStalenessSweep().catch((err) => {
+    logger.error({ err: sanitizeErrorForLog(err) }, 'skill_staleness_schedule_failed');
+  });
 });
 
 // Graceful shutdown — drain in-flight jobs, close Redis sockets, then exit.
@@ -274,7 +290,9 @@ async function gracefulShutdown(signal: string): Promise<void> {
     await scheduler.stop();
   }
   await cloudHandle?.stop();
+  await stopSkillStalenessWorker();
   await stopProvisionWorker();
+  await closeSkillStalenessQueue();
   await closeProvisionQueue();
   await closeAllRedisConnections();
   logger.info('shutdown_complete');

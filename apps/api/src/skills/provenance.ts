@@ -4,7 +4,7 @@ import { eq } from 'drizzle-orm';
 import { db as defaultDb, schema } from '../db/client.js';
 import type { GbrainCitationChunk, GbrainClient } from '../gbrain/client.js';
 
-const MAX_PROVENANCE_EXCERPT_CHARS = 6_000;
+export const MAX_PROVENANCE_EXCERPT_CHARS = 6_000;
 
 export interface CaptureSkillProvenanceInput {
   skillVersionId: string;
@@ -27,13 +27,13 @@ export async function captureSkillCitationProvenance(
   const rows = [];
   for (const [index, slug] of citedDocSlugs.entries()) {
     const chunks = await input.gbrain.getChunks(slug);
-    const citedText = chunksToExcerpt(chunks).slice(0, MAX_PROVENANCE_EXCERPT_CHARS);
+    const citedText = citedTextFromChunks(chunks);
     if (!citedText) continue;
     rows.push({
       skillVersionId: input.skillVersionId,
       citationIndex: index + 1,
       slug,
-      versionId: latestVersionId(chunks),
+      versionId: latestVersionIdFromChunks(chunks),
       citedText,
       citedTextSha256: sha256Hex(citedText),
     });
@@ -50,15 +50,16 @@ export function citedTextSha256(citedText: string): string {
   return sha256Hex(citedText);
 }
 
-function chunksToExcerpt(chunks: GbrainCitationChunk[]): string {
+export function citedTextFromChunks(chunks: GbrainCitationChunk[]): string {
   return chunks
     .map((chunk) => chunk.chunk_text ?? chunk.excerpt ?? '')
     .filter((text) => text.trim().length > 0)
     .join('\n\n')
-    .trim();
+    .trim()
+    .slice(0, MAX_PROVENANCE_EXCERPT_CHARS);
 }
 
-function latestVersionId(chunks: GbrainCitationChunk[]): string | null {
+export function latestVersionIdFromChunks(chunks: GbrainCitationChunk[]): string | null {
   const versions = chunks
     .map((chunk) => chunk.version_id)
     .filter((value): value is number => typeof value === 'number')

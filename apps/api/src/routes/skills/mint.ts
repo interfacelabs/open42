@@ -5,13 +5,22 @@ import { Router } from 'express';
 import { resolveLlmKey } from '../../auth/llm-keys.js';
 import { isUuid } from '../../auth/uuid.js';
 import { db, schema } from '../../db/client.js';
+import { API_PUBLIC_URL } from '../../env.js';
 import { GbrainCitationChunk, GbrainClient } from '../../gbrain/client.js';
+import { generateSkillExplainer } from '../../skills/explainer.js';
 import { bumpPatch, generateSkill, type ThreadCitation } from '../../skills/generate.js';
 import {
   estimateInputChars,
   parseMintInput,
   type MintThreadCitationInput,
 } from '../../skills/mint-input.js';
+import { captureSkillCitationProvenance } from '../../skills/provenance.js';
+import { mintShareLink } from '../../skills/share-link.js';
+import {
+  canonicalizeSkillMarkdown,
+  getOrCreateWorkspaceSigningKey,
+  signCanonicalSkillMarkdown,
+} from '../../skills/signing.js';
 import type { SkillDraftResponse } from '../../skills/contract.js';
 import { checkWorkspaceChatBudget } from '../chat-budget.js';
 
@@ -231,11 +240,72 @@ skillsRouter.post('/:skillId', async (req, res, next) => {
       version: fetched.version,
     });
 
-    const zip = buildSkillZip(fetched.skill.name, fetched.version);
+    const prepared = await prepareSignedSkillBundle({
+      workspace,
+      userId: session.userId,
+      skill: fetched.skill,
+      version: fetched.version,
+    });
     res.setHeader('Content-Type', 'application/zip');
     res.setHeader('Content-Disposition', `attachment; filename="${fetched.skill.name}-skill.zip"`);
-    res.send(zip);
+    res.send(prepared.zip);
   } catch (err) {
+    next(err);
+  }
+});
+
+skillsRouter.post('/:skillId/share', async (req, res, next) => {
+  try {
+    const session = req.session!;
+    const workspace = await loadWorkspaceRuntime(req.workspace!.id);
+    if (!workspace) {
+      res.status(409).json({ error: 'workspace_not_ready' });
+      return;
+    }
+
+    const id = req.params.skillId;
+    if (!id) {
+      res.status(400).json({ error: 'missing_id' });
+      return;
+    }
+    if (!isUuid(id)) {
+      res.status(404).json({ error: 'skill_not_found' });
+      return;
+    }
+
+    const fetched = await loadLatestVersion(workspace.id, id);
+    if (!fetched) {
+      res.status(404).json({ error: 'skill_not_found' });
+      return;
+    }
+
+    const prepared = await prepareSignedSkillBundle({
+      workspace,
+      userId: session.userId,
+      skill: fetched.skill,
+      version: fetched.version,
+    });
+    const link = await mintShareLink({
+      workspaceId: workspace.id,
+      skillId: fetched.skill.id,
+      skillVersionId: prepared.version.id,
+      createdByUserId: session.userId,
+      bundle: prepared.zip,
+      publicBaseUrl: API_PUBLIC_URL,
+    });
+
+    res.json({
+      url: link.url,
+      expiresAt: link.expiresAt.toISOString(),
+      publicKeyUrl: `${API_PUBLIC_URL}/workspaces/${workspace.id}/signing-key.pub`,
+    });
+  } catch (err) {
+    if (err instanceof Error && err.message === 'share_link_rate_limited') {
+      const retryAfter = (err as Error & { retryAfter?: number }).retryAfter ?? 60;
+      res.setHeader('Retry-After', String(retryAfter));
+      res.status(429).json({ error: 'share_link_rate_limited' });
+      return;
+    }
     next(err);
   }
 });
@@ -632,6 +702,81 @@ function normalizeCitedDocSlugs(value: unknown): string[] {
     : [];
 }
 
+type WorkspaceRuntime = NonNullable<Awaited<ReturnType<typeof loadWorkspaceRuntime>>>;
+
+interface PreparedSkillBundle {
+  version: typeof schema.skillVersions.$inferSelect;
+  zip: Buffer;
+}
+
+async function prepareSignedSkillBundle(args: {
+  workspace: WorkspaceRuntime;
+  userId: string;
+  skill: LoadedVersion['skill'];
+  version: typeof schema.skillVersions.$inferSelect;
+}): Promise<PreparedSkillBundle> {
+  const version = await materializeExplainer({
+    workspaceId: args.workspace.id,
+    skillName: args.skill.name,
+    version: args.version,
+  });
+  const gbrain = new GbrainClient(
+    {
+      workspaceId: args.workspace.id,
+      baseUrl: args.workspace.gbrainBaseUrl,
+      oauthClientId: args.workspace.gbrainOauthClientId,
+      oauthClientSecretCiphertext: args.workspace.gbrainOauthClientSecretCiphertext,
+    },
+    { callerUserId: args.userId },
+  );
+
+  await captureSkillCitationProvenance({
+    skillVersionId: version.id,
+    citedDocSlugs: normalizeCitedDocSlugs(version.citedDocSlugs),
+    gbrain,
+  });
+
+  const signingKey = await getOrCreateWorkspaceSigningKey(args.workspace.id);
+  const zip = buildSkillZip(args.skill.name, version, {
+    workspaceId: args.workspace.id,
+    privateKeyPem: signingKey.privateKey,
+  });
+  return { version, zip };
+}
+
+async function materializeExplainer(args: {
+  workspaceId: string;
+  skillName: string;
+  version: typeof schema.skillVersions.$inferSelect;
+}): Promise<typeof schema.skillVersions.$inferSelect> {
+  const frontmatter = args.version.frontmatter as Record<string, unknown>;
+  if (Object.prototype.hasOwnProperty.call(frontmatter, 'explainer')) {
+    return args.version;
+  }
+
+  const resolvedAnthropic = await resolveLlmKey({
+    workspaceId: args.workspaceId,
+    provider: 'anthropic',
+    scope: 'chat',
+  }).catch(() => null);
+  let explainer: string | null = null;
+  if (resolvedAnthropic) {
+    explainer = await generateSkillExplainer({
+      skillName: args.skillName,
+      frontmatter,
+      body: args.version.body,
+      resolvedAnthropic,
+    }).catch(() => null);
+  }
+
+  const [updated] = await db
+    .update(schema.skillVersions)
+    .set({ frontmatter: { ...frontmatter, explainer } })
+    .where(eq(schema.skillVersions.id, args.version.id))
+    .returning();
+  return updated ?? args.version;
+}
+
 /**
  * Workspace-scoped skill listing for the sidebar. Joins to the latest
  * `skill_versions` row per skill so callers can render `name` + `version`
@@ -692,6 +837,20 @@ async function loadSkillDraft(workspaceId: string, id: string): Promise<SkillDra
   const slugs = Array.isArray(version.citedDocSlugs)
     ? (version.citedDocSlugs as unknown[]).filter((s): s is string => typeof s === 'string')
     : [];
+  const [stale] = await db
+    .select({
+      changelog: schema.skillStaleness.changelog,
+      detectedAt: schema.skillStaleness.detectedAt,
+    })
+    .from(schema.skillStaleness)
+    .where(
+      and(
+        eq(schema.skillStaleness.skillVersionId, version.id),
+        eq(schema.skillStaleness.status, 'stale'),
+      ),
+    )
+    .orderBy(desc(schema.skillStaleness.detectedAt))
+    .limit(1);
 
   return {
     id: skill.id,
@@ -705,6 +864,12 @@ async function loadSkillDraft(workspaceId: string, id: string): Promise<SkillDra
       text: r.text,
       cites: r.cites ?? undefined,
     })),
+    staleness: stale
+      ? {
+          changelog: stale.changelog ?? 'A cited source changed since this skill was exported.',
+          detectedAt: stale.detectedAt.toISOString(),
+        }
+      : null,
   };
 }
 
@@ -732,17 +897,32 @@ async function loadLatestVersion(workspaceId: string, id: string): Promise<Loade
   return { skill, version };
 }
 
-function buildSkillZip(name: string, version: typeof schema.skillVersions.$inferSelect): Buffer {
+interface BuildSkillZipOptions {
+  workspaceId: string;
+  privateKeyPem: string;
+}
+
+function buildSkillZip(
+  name: string,
+  version: typeof schema.skillVersions.$inferSelect,
+  options: BuildSkillZipOptions,
+): Buffer {
   const zip = new AdmZip();
   const frontmatterYaml = stringifyYamlFrontmatter(version.frontmatter as Record<string, unknown>);
-  const skillMd = `---\n${frontmatterYaml}---\n\n${version.body}\n`;
+  const skillMd = canonicalizeSkillMarkdown(`---\n${frontmatterYaml}---\n\n${version.body}\n`);
+  const signature = signCanonicalSkillMarkdown(skillMd, options.privateKeyPem);
   const manifest = {
     name,
     version: version.version,
     entrypoint: 'SKILL.md',
     generated_at: version.createdAt.toISOString(),
+    signature_algorithm: 'Ed25519',
+    signed_payload: 'SHA-256(canonical SKILL.md)',
+    signed_payload_sha256: signature.payloadSha256Hex,
+    public_key_url: `${API_PUBLIC_URL}/workspaces/${options.workspaceId}/signing-key.pub`,
   };
   zip.addFile(`${name}/SKILL.md`, Buffer.from(skillMd, 'utf8'));
+  zip.addFile(`${name}/SKILL.md.sig`, Buffer.from(`${signature.signatureBase64}\n`, 'utf8'));
   zip.addFile(`${name}/frontmatter.yaml`, Buffer.from(frontmatterYaml, 'utf8'));
   zip.addFile(`${name}/manifest.json`, Buffer.from(JSON.stringify(manifest, null, 2), 'utf8'));
   return zip.toBuffer();
@@ -802,7 +982,8 @@ async function loadWorkspaceRuntime(workspaceId: string) {
   }
   return {
     id: workspace.id,
-    gbrainBaseUrl: workspace.gbrainBaseUrl ?? formatGbrainBaseUrl(workspace.gbrainPrivateAddress ?? ''),
+    gbrainBaseUrl:
+      workspace.gbrainBaseUrl ?? formatGbrainBaseUrl(workspace.gbrainPrivateAddress ?? ''),
     gbrainOauthClientId: workspace.gbrainOauthClientId,
     gbrainOauthClientSecretCiphertext: workspace.gbrainOauthClientSecretCiphertext,
   };

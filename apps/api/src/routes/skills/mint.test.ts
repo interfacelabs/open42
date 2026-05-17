@@ -1,11 +1,16 @@
 import express from 'express';
 import cookieParser from 'cookie-parser';
 import { eq } from 'drizzle-orm';
-import request from 'supertest';
-import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import AdmZip from 'adm-zip';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import request, { type Response } from 'supertest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import '../../env.js';
 import { requireMembership as realRequireMembership } from '../../middleware/require-membership.js';
+import { verifyCanonicalSkillMarkdownSignature } from '../../skills/signing.js';
 
 /**
  * Route-level coverage for the wide-Skillify endpoints. DB-backed: skipped
@@ -26,6 +31,7 @@ const describeDb = RUN_DB_TESTS ? describe : describe.skip;
 const mocks = vi.hoisted(() => ({
   resolveLlmKey: vi.fn(),
   generateSkill: vi.fn(),
+  generateSkillExplainer: vi.fn(),
   getChunks: vi.fn(),
 }));
 
@@ -40,6 +46,13 @@ vi.mock('../../skills/generate.js', async () => {
     '../../skills/generate.js',
   );
   return { ...actual, generateSkill: mocks.generateSkill };
+});
+
+vi.mock('../../skills/explainer.js', async () => {
+  const actual = await vi.importActual<typeof import('../../skills/explainer.js')>(
+    '../../skills/explainer.js',
+  );
+  return { ...actual, generateSkillExplainer: mocks.generateSkillExplainer };
 });
 
 vi.mock('../../gbrain/client.js', async () => {
@@ -82,18 +95,31 @@ function mintPayload(intent: string) {
 
 describeDb('skills routes', () => {
   let mod: typeof import('./mint.js');
+  let sharedMod: typeof import('../shared-skills.js');
+  let signingKeyMod: typeof import('../workspaces/signing-key.js');
   let dbMod: typeof import('../../db/client.js');
+  let shareStoreDir: string;
   const workspaceIds: string[] = [];
   const userIds: string[] = [];
 
   beforeAll(async () => {
+    process.env.OPEN42_KEK ??= '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
+    shareStoreDir = await mkdtemp(join(tmpdir(), 'open42-mint-share-'));
+    process.env.OPEN42_SKILL_BUNDLE_STORE_DIR = shareStoreDir;
     mod = await import('./mint.js');
+    sharedMod = await import('../shared-skills.js');
+    signingKeyMod = await import('../workspaces/signing-key.js');
     dbMod = await import('../../db/client.js');
+  });
+
+  afterAll(async () => {
+    if (shareStoreDir) await rm(shareStoreDir, { recursive: true, force: true });
   });
 
   beforeEach(() => {
     mocks.resolveLlmKey.mockReset();
     mocks.generateSkill.mockReset();
+    mocks.generateSkillExplainer.mockReset();
     mocks.getChunks.mockReset();
     mocks.resolveLlmKey.mockResolvedValue({
       apiKey: 'sk-ant-test',
@@ -104,9 +130,11 @@ describeDb('skills routes', () => {
       {
         slug,
         chunk_text: `Canonical server excerpt for ${slug}`,
+        version_id: slug === 'refund-policy-2024' ? 3 : 2,
         last_updated: '2026-04-01',
       },
     ]);
+    mocks.generateSkillExplainer.mockResolvedValue('Use this skill for refund-policy answers.');
     mocks.generateSkill.mockResolvedValue({
       draft: sampleDraft,
       model: 'claude-3-5-sonnet-latest',
@@ -134,19 +162,16 @@ describeDb('skills routes', () => {
     app.set('trust proxy', true);
     app.use(express.json());
     app.use(cookieParser());
-    app.use(
-      '/workspaces/:id/skills',
-      realRequireMembership({ from: 'param' }),
-      mod.skillsRouter,
-    );
+    app.use('/shared', sharedMod.buildSharedSkillsRouter());
+    app.use('/workspaces', signingKeyMod.buildWorkspaceSigningKeyRouter());
+    app.use('/workspaces/:id/skills', realRequireMembership({ from: 'param' }), mod.skillsRouter);
     return app;
   }
 
   // Path helpers — the old tests used `/skills/...`; rebuild them under the
   // new workspace-scoped mount. Each test gets the correct workspace id from
   // its `makeOwnerWorkspace` result.
-  const skillsPath = (workspaceId: string) =>
-    `/workspaces/${workspaceId}/skills`;
+  const skillsPath = (workspaceId: string) => `/workspaces/${workspaceId}/skills`;
   const skillPath = (workspaceId: string, skillId: string) =>
     `/workspaces/${workspaceId}/skills/${skillId}`;
 
@@ -360,10 +385,52 @@ describeDb('skills routes', () => {
       const res = await request(buildApp())
         .post(skillPath(workspaceId, skillId))
         .set('User-Agent', 'test-agent')
-        .set('Cookie', `open42_session=${sessionId}`);
+        .set('Cookie', `open42_session=${sessionId}`)
+        .buffer(true)
+        .parse(binaryParser);
 
       expect(res.status).toBe(200);
       expect(res.header['content-type']).toContain('application/zip');
+      const zip = new AdmZip(zipResponseBuffer(res));
+      const skillMd = zip.readAsText('sample-skill/SKILL.md');
+      const signature = zip.readAsText('sample-skill/SKILL.md.sig').trim();
+      const manifest = JSON.parse(zip.readAsText('sample-skill/manifest.json')) as {
+        signed_payload_sha256: string;
+        public_key_url: string;
+      };
+      expect(skillMd).toContain('explainer: "Use this skill for refund-policy answers."');
+      expect(manifest.signed_payload_sha256).toMatch(/^[0-9a-f]{64}$/);
+      expect(manifest.public_key_url).toContain(`/workspaces/${workspaceId}/signing-key.pub`);
+
+      const keyRes = await request(buildApp()).get(`/workspaces/${workspaceId}/signing-key.pub`);
+      expect(keyRes.status).toBe(200);
+      expect(keyRes.text).toContain('BEGIN PUBLIC KEY');
+      expect(
+        verifyCanonicalSkillMarkdownSignature({
+          markdown: skillMd,
+          signature,
+          publicKeyPem: keyRes.text,
+        }),
+      ).toBe(true);
+
+      const versions = await dbMod.db
+        .select()
+        .from(dbMod.schema.skillVersions)
+        .where(eq(dbMod.schema.skillVersions.skillId, skillId));
+      expect(versions[0]?.frontmatter).toMatchObject({
+        explainer: 'Use this skill for refund-policy answers.',
+      });
+
+      const provenance = await dbMod.db
+        .select()
+        .from(dbMod.schema.skillCitationProvenance)
+        .where(eq(dbMod.schema.skillCitationProvenance.skillVersionId, versions[0]!.id));
+      expect(provenance).toHaveLength(2);
+      expect(provenance[0]).toMatchObject({
+        citationIndex: 1,
+        slug: 'refund-policy-2024',
+        versionId: '3',
+      });
 
       const exports = await dbMod.db
         .select()
@@ -375,6 +442,55 @@ describeDb('skills routes', () => {
         citedDocSlugs: sampleDraft.cited_doc_slugs,
         stalenessWarning: false,
       });
+    });
+
+    it('mints an ephemeral signed share link and serves the stored bundle', async () => {
+      const { workspaceId, sessionId } = await makeOwnerWorkspace('test-agent');
+      const minted = await request(buildApp())
+        .post(skillsPath(workspaceId))
+        .set('User-Agent', 'test-agent')
+        .set('Cookie', `open42_session=${sessionId}`)
+        .send(mintPayload('Draft'));
+      expect(minted.status).toBe(201);
+      const skillId = minted.body.draft.id as string;
+
+      const share = await request(buildApp())
+        .post(`${skillPath(workspaceId, skillId)}/share`)
+        .set('User-Agent', 'test-agent')
+        .set('Cookie', `open42_session=${sessionId}`);
+
+      expect(share.status).toBe(200);
+      expect(share.body.url).toMatch(/\/shared\/[A-Za-z0-9_-]+\.zip$/);
+      expect(share.body.expiresAt).toEqual(expect.any(String));
+      expect(share.body.publicKeyUrl).toContain(`/workspaces/${workspaceId}/signing-key.pub`);
+
+      const shareRows = await dbMod.db
+        .select()
+        .from(dbMod.schema.skillShareLinks)
+        .where(eq(dbMod.schema.skillShareLinks.skillId, skillId));
+      expect(shareRows).toHaveLength(1);
+      expect(shareRows[0]?.tokenHash).toHaveLength(32);
+
+      const bundle = await request(buildApp())
+        .get(new URL(share.body.url).pathname)
+        .buffer(true)
+        .parse(binaryParser);
+      expect(bundle.status).toBe(200);
+      const zip = new AdmZip(zipResponseBuffer(bundle));
+      expect(zip.readAsText('sample-skill/SKILL.md.sig')).toMatch(/\S+/);
+
+      const [used] = await dbMod.db
+        .select()
+        .from(dbMod.schema.skillShareLinks)
+        .where(eq(dbMod.schema.skillShareLinks.id, shareRows[0]!.id));
+      expect(used?.lastUsedAt).toBeInstanceOf(Date);
+
+      await dbMod.db
+        .update(dbMod.schema.skillShareLinks)
+        .set({ expiresAt: new Date(Date.now() - 1_000) })
+        .where(eq(dbMod.schema.skillShareLinks.id, shareRows[0]!.id));
+      const expired = await request(buildApp()).get(new URL(share.body.url).pathname);
+      expect(expired.status).toBe(404);
     });
   });
 
@@ -599,3 +715,18 @@ describeDb('skills routes', () => {
     return { userId: user.id, workspaceId: workspace.id, sessionId: session.id };
   }
 });
+
+function zipResponseBuffer(res: Response): Buffer {
+  if (Buffer.isBuffer(res.body)) return res.body;
+  if (res.body instanceof Uint8Array) return Buffer.from(res.body);
+  return Buffer.from(res.text, 'binary');
+}
+
+function binaryParser(res: Response, callback: (err: Error | null, body: Buffer) => void): void {
+  const chunks: Buffer[] = [];
+  res.on('data', (chunk: Buffer | string) => {
+    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+  });
+  res.on('end', () => callback(null, Buffer.concat(chunks)));
+  res.on('error', callback);
+}
