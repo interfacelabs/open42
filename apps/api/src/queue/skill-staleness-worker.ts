@@ -5,7 +5,7 @@ import pino from 'pino';
 import { resolveLlmKey, type ResolvedLlmKey } from '../auth/llm-keys.js';
 import { db as defaultDb, schema } from '../db/client.js';
 import { buildGbrainForWorkspace } from '../gbrain/factory.js';
-import type { GbrainClient } from '../gbrain/client.js';
+import type { GbrainCitationChunk, GbrainClient } from '../gbrain/client.js';
 import { fallbackSkillChangelog, generateSkillChangelog } from '../skills/changelog.js';
 import {
   citedTextFromChunks,
@@ -134,7 +134,7 @@ export async function runSkillStalenessSweep(
       gbrains.set(candidate.workspaceId, gbrain);
     }
     const chunks = await gbrain.getChunks(candidate.slug);
-    const latestCitedText = citedTextFromChunks(chunks);
+    const latestCitedText = latestTextForCitedSpan(candidate.previousCitedText, chunks);
     if (!latestCitedText) continue;
 
     const latestHash = citedTextSha256(latestCitedText);
@@ -183,6 +183,20 @@ export async function runSkillStalenessSweep(
   }
 
   return { checked: candidates.length, stale, resolved };
+}
+
+function latestTextForCitedSpan(previousCitedText: string, chunks: GbrainCitationChunk[]): string {
+  const latestText = citedTextFromChunks(chunks);
+  if (!latestText) return '';
+  if (latestText.includes(previousCitedText)) return previousCitedText;
+  if (normalizeCitationText(latestText).includes(normalizeCitationText(previousCitedText))) {
+    return previousCitedText;
+  }
+  return latestText;
+}
+
+function normalizeCitationText(value: string): string {
+  return value.replace(/\s+/g, ' ').trim();
 }
 
 function defaultRepo(): SkillStalenessRepo {

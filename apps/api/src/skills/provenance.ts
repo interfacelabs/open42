@@ -23,6 +23,12 @@ export async function captureSkillCitationProvenance(
   const db = deps.db ?? defaultDb;
   const citedDocSlugs = Array.from(new Set(input.citedDocSlugs.filter(Boolean)));
   if (citedDocSlugs.length === 0) return;
+  const [existing] = await db
+    .select({ id: schema.skillCitationProvenance.skillVersionId })
+    .from(schema.skillCitationProvenance)
+    .where(eq(schema.skillCitationProvenance.skillVersionId, input.skillVersionId))
+    .limit(1);
+  if (existing) return;
 
   const rows = [];
   for (const [index, slug] of citedDocSlugs.entries()) {

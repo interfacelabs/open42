@@ -98,6 +98,7 @@ leans on — pull from the Sources section of the user message.`;
 export interface ThreadCitation {
   slug: string;
   excerpt: string;
+  versionId?: string;
   lastUpdated?: string;
 }
 

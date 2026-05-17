@@ -109,6 +109,38 @@ describe('runSkillStalenessSweep', () => {
       resolvedAt: new Date('2026-05-17T05:10:00.000Z'),
     });
   });
+
+  it('does not mark a skill stale when unrelated page text changes around the cited span', async () => {
+    const resolvedWrites: unknown[] = [];
+    const staleWrites: unknown[] = [];
+    const repo = fakeRepo([baseCandidate], { resolvedWrites, staleWrites });
+
+    const result = await runSkillStalenessSweep(
+      {},
+      {
+        repo,
+        buildGbrain: async () => ({
+          getChunks: async () => [
+            {
+              slug: 'refund-policy',
+              version_id: 2,
+              chunk_text: 'Annual customers have thirty days.\n\nUnrelated appendix changed.',
+            },
+          ],
+        }),
+        resolveLlmKey: async () => null,
+        now: () => new Date('2026-05-17T05:12:00.000Z'),
+      },
+    );
+
+    expect(result).toEqual({ checked: 1, stale: 0, resolved: 1 });
+    expect(staleWrites).toHaveLength(0);
+    expect(resolvedWrites[0]).toEqual({
+      skillVersionId: 'version-1',
+      citationIndex: 1,
+      resolvedAt: new Date('2026-05-17T05:12:00.000Z'),
+    });
+  });
 });
 
 describe('runSkillStalenessSweep default repo', () => {
