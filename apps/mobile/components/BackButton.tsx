@@ -1,5 +1,9 @@
-import { Feather } from '@expo/vector-icons';
-import { Text, View } from 'react-native';
+import { ChevronLeft } from 'lucide-react-native';
+import { Pressable } from 'react-native';
+
+import { colors } from '@/utils/theme';
+
+import { AppText } from './ui/Text';
 
 interface BackButtonProps {
   onPress: () => void;
@@ -7,16 +11,16 @@ interface BackButtonProps {
 
 export const BackButton: React.FC<BackButtonProps> = ({ onPress }) => {
   return (
-    <View className={styles.backButton}>
-      <Feather name="chevron-left" size={16} color="#007AFF" />
-      <Text className={styles.backButtonText} onPress={onPress}>
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel="Go back"
+      className="flex-row items-center"
+      hitSlop={12}
+      onPress={onPress}>
+      <ChevronLeft size={18} color={colors.textBody} strokeWidth={1.5} />
+      <AppText variant="caption" weight="medium" tone="body">
         Back
-      </Text>
-    </View>
+      </AppText>
+    </Pressable>
   );
-};
-
-const styles = {
-  backButton: 'flex-row',
-  backButtonText: 'text-blue-500 ml-1',
 };
