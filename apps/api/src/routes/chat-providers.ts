@@ -2,9 +2,10 @@ import Anthropic from '@anthropic-ai/sdk';
 
 import type { LlmProvider, ResolvedLlmKey } from '../auth/llm-keys.js';
 
-const DEFAULT_ANTHROPIC_MODEL = 'claude-3-5-sonnet-latest';
+const DEFAULT_ANTHROPIC_MODEL = 'claude-sonnet-4-6';
 const DEFAULT_OPENAI_MODEL = 'gpt-4o-mini';
 const OPENAI_CHAT_COMPLETIONS_URL = 'https://api.openai.com/v1/chat/completions';
+const MAX_ANTHROPIC_MESSAGE_CACHE_BREAKPOINTS = 3;
 
 export type NormalizedChatRole = 'user' | 'assistant';
 
@@ -65,6 +66,7 @@ export class AnthropicChatAdapter implements ChatProvider {
 
   async *sendStreamingChat(input: ChatProviderInput): AsyncIterable<ChatToken> {
     const client = this.clientFactory(input.resolvedKey.apiKey);
+    const cacheableMessageIndexes = anthropicCacheMessageIndexes(input.messages);
     const stream = client.messages.stream({
       model: pickModel(input.resolvedKey, this.env.ANTHROPIC_MODEL, DEFAULT_ANTHROPIC_MODEL),
       max_tokens: input.maxTokens ?? 700,
@@ -81,7 +83,7 @@ export class AnthropicChatAdapter implements ChatProvider {
           {
             type: 'text',
             text: message.content,
-            ...(shouldCacheAnthropicMessage(input.messages, index)
+            ...(cacheableMessageIndexes.has(index)
               ? { cache_control: { type: 'ephemeral' } }
               : {}),
           },
@@ -179,11 +181,22 @@ function pickModel(
   return resolvedKey.model?.trim() || envModel?.trim() || fallback;
 }
 
-function shouldCacheAnthropicMessage(messages: NormalizedMessage[], index: number): boolean {
+function anthropicCacheMessageIndexes(messages: NormalizedMessage[]): Set<number> {
   // The route appends the latest context block and latest question as the last
   // two adjacent user messages. Everything before that is replayed history and
-  // is stable enough to mark as prompt-cacheable for Anthropic only.
-  return index < Math.max(0, messages.length - 2);
+  // is stable enough to mark as prompt-cacheable for Anthropic only. The system
+  // prompt already uses one explicit cache breakpoint, so cap message
+  // breakpoints at three to stay inside Anthropic's four-breakpoint limit.
+  const stableMessageCount = Math.max(0, messages.length - 2);
+  if (stableMessageCount <= MAX_ANTHROPIC_MESSAGE_CACHE_BREAKPOINTS) {
+    return new Set(Array.from({ length: stableMessageCount }, (_, index) => index));
+  }
+
+  const indexes = new Set<number>();
+  indexes.add(stableMessageCount - 1);
+  indexes.add(Math.max(0, stableMessageCount - 21));
+  indexes.add(Math.max(0, stableMessageCount - 41));
+  return indexes;
 }
 
 function tokenFromAnthropicEvent(event: unknown): string | null {

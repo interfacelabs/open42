@@ -12,7 +12,7 @@ export interface SkillContext {
  */
 export function buildSystemPrompt(skillContext: SkillContext | null): string {
   const base =
-    'You answer as Open42. Use only the provided context. Every factual claim must include a bracketed citation like [1]. If the context is insufficient, say so plainly.';
+    'You answer as Open42. Use only the provided context. Every factual claim must include a bracketed citation like [1]. If the context is insufficient, say so plainly and still include at least one citation marker when context was provided.';
   if (!skillContext) return base;
   return [
     base,

@@ -11,6 +11,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 
 import '../../env.js';
 import { requireMembership as realRequireMembership } from '../../middleware/require-membership.js';
+import { resetShareLinkRateLimitForTest } from '../../skills/share-link.js';
 
 /**
  * Route-level coverage for the wide-Skillify endpoints. DB-backed: skipped
@@ -117,6 +118,7 @@ describeDb('skills routes', () => {
   });
 
   beforeEach(() => {
+    resetShareLinkRateLimitForTest();
     mocks.resolveLlmKey.mockReset();
     mocks.generateSkill.mockReset();
     mocks.generateSkillExplainer.mockReset();
@@ -143,6 +145,7 @@ describeDb('skills routes', () => {
   });
 
   afterEach(async () => {
+    resetShareLinkRateLimitForTest();
     for (const workspaceId of workspaceIds.splice(0)) {
       await dbMod.db
         .delete(dbMod.schema.skills)
@@ -288,6 +291,84 @@ describeDb('skills routes', () => {
       expect(second.body).toEqual({ error: 'skill_name_already_exists' });
     });
 
+    it('persists verified citation excerpts as provenance without whole-page appendix text', async () => {
+      mocks.getChunks.mockImplementation(async (slug: string) => {
+        if (slug === 'refund-policy-2024') {
+          return [
+            {
+              slug,
+              chunk_text: 'Relevant refund span.\n\nUnrelated appendix that changed later.',
+              version_id: 3,
+              last_updated: '2026-04-01',
+            },
+          ];
+        }
+        return [
+          {
+            slug,
+            chunk_text: `Canonical server excerpt for ${slug}`,
+            version_id: 2,
+            last_updated: '2026-04-01',
+          },
+        ];
+      });
+      const { workspaceId, sessionId } = await makeOwnerWorkspace('test-agent');
+
+      const minted = await request(buildApp())
+        .post(skillsPath(workspaceId))
+        .set('User-Agent', 'test-agent')
+        .set('Cookie', `open42_session=${sessionId}`)
+        .send({
+          intent: 'Draft a sample skill',
+          threadCitations: [
+            {
+              slug: 'refund-policy-2024',
+              excerpt: 'Relevant refund span.',
+              lastUpdated: '2026-04-01',
+            },
+            { slug: 'enterprise-msa' },
+          ],
+        });
+
+      expect(minted.status).toBe(201);
+      const generateInput = mocks.generateSkill.mock.calls[0]?.[0];
+      expect(generateInput.threadCitations[0]).toMatchObject({
+        slug: 'refund-policy-2024',
+        excerpt: 'Relevant refund span.',
+      });
+      const skillId = minted.body.draft.id as string;
+      const [version] = await dbMod.db
+        .select()
+        .from(dbMod.schema.skillVersions)
+        .where(eq(dbMod.schema.skillVersions.skillId, skillId));
+      const beforeExport = await dbMod.db
+        .select()
+        .from(dbMod.schema.skillCitationProvenance)
+        .where(eq(dbMod.schema.skillCitationProvenance.skillVersionId, version!.id));
+      expect(beforeExport.find((row) => row.slug === 'refund-policy-2024')).toMatchObject({
+        citedText: 'Relevant refund span.',
+      });
+
+      const exported = await request(buildApp())
+        .post(skillPath(workspaceId, skillId))
+        .set('User-Agent', 'test-agent')
+        .set('Cookie', `open42_session=${sessionId}`)
+        .buffer(true)
+        .parse(binaryParser);
+      expect(exported.status).toBe(200);
+
+      const afterExport = await dbMod.db
+        .select()
+        .from(dbMod.schema.skillCitationProvenance)
+        .where(eq(dbMod.schema.skillCitationProvenance.skillVersionId, version!.id));
+      expect(afterExport.find((row) => row.slug === 'refund-policy-2024')).toMatchObject({
+        citedText: 'Relevant refund span.',
+      });
+      expect(
+        afterExport.find((row) => row.slug === 'refund-policy-2024')?.citedText,
+      ).not.toContain('Unrelated appendix');
+    });
+
     it('returns 422 when the model cites a slug the server did not fetch', async () => {
       mocks.generateSkill.mockResolvedValueOnce({
         draft: {
@@ -393,12 +474,23 @@ describeDb('skills routes', () => {
       expect(res.header['content-type']).toContain('application/zip');
       const zip = new AdmZip(zipResponseBuffer(res));
       const skillMd = zip.readAsText('sample-skill/SKILL.md');
+      const frontmatterYaml = zip.readAsText('sample-skill/frontmatter.yaml');
       const signature = zip.readAsText('sample-skill/SKILL.md.sig').trim();
       const manifest = JSON.parse(zip.readAsText('sample-skill/manifest.json')) as {
+        entrypoint: string;
         signed_payload_sha256: string;
         public_key_url: string;
       };
+      expect(skillMd).toContain('name: sample-skill');
+      expect(skillMd).toContain(
+        'description: "Use when answering refund, return, cancellation, or enterprise SLA refund questions."',
+      );
       expect(skillMd).toContain('explainer: "Use this skill for refund-policy answers."');
+      expect(frontmatterYaml).toContain('name: sample-skill');
+      expect(frontmatterYaml).toContain(
+        'description: "Use when answering refund, return, cancellation, or enterprise SLA refund questions."',
+      );
+      expect(manifest.entrypoint).toBe('SKILL.md');
       expect(manifest.signed_payload_sha256).toMatch(/^[0-9a-f]{64}$/);
       expect(manifest.public_key_url).toContain(`/workspaces/${workspaceId}/signing-key.pub`);
 
@@ -444,6 +536,119 @@ describeDb('skills routes', () => {
       });
     });
 
+    it('stores a null explainer fallback and still signs when explainer generation fails', async () => {
+      mocks.generateSkillExplainer.mockRejectedValueOnce(new Error('explainer_down'));
+      const { workspaceId, sessionId } = await makeOwnerWorkspace('test-agent');
+      const minted = await request(buildApp())
+        .post(skillsPath(workspaceId))
+        .set('User-Agent', 'test-agent')
+        .set('Cookie', `open42_session=${sessionId}`)
+        .send(mintPayload('Draft'));
+      expect(minted.status).toBe(201);
+      const skillId = minted.body.draft.id as string;
+
+      const res = await request(buildApp())
+        .post(skillPath(workspaceId, skillId))
+        .set('User-Agent', 'test-agent')
+        .set('Cookie', `open42_session=${sessionId}`)
+        .buffer(true)
+        .parse(binaryParser);
+
+      expect(res.status).toBe(200);
+      const zip = new AdmZip(zipResponseBuffer(res));
+      const skillMd = zip.readAsText('sample-skill/SKILL.md');
+      const signature = zip.readAsText('sample-skill/SKILL.md.sig').trim();
+      expect(skillMd).not.toContain('explainer:');
+
+      const [version] = await dbMod.db
+        .select()
+        .from(dbMod.schema.skillVersions)
+        .where(eq(dbMod.schema.skillVersions.skillId, skillId));
+      expect(version?.frontmatter).toMatchObject({ explainer: null });
+
+      const keyRes = await request(buildApp()).get(`/workspaces/${workspaceId}/signing-key.pub`);
+      expect(keyRes.status).toBe(200);
+      await expect(
+        verifyExportedSkillSignatureWithWebCrypto({
+          markdown: skillMd,
+          signatureBase64: signature,
+          publicKeyPem: keyRes.text,
+        }),
+      ).resolves.toBe(true);
+    });
+
+    it('creates a refreshed version before exporting a stale skill', async () => {
+      const { workspaceId, sessionId } = await makeOwnerWorkspace('test-agent');
+      const minted = await request(buildApp())
+        .post(skillsPath(workspaceId))
+        .set('User-Agent', 'test-agent')
+        .set('Cookie', `open42_session=${sessionId}`)
+        .send(mintPayload('Draft'));
+      expect(minted.status).toBe(201);
+      const skillId = minted.body.draft.id as string;
+
+      const [initialVersion] = await dbMod.db
+        .select()
+        .from(dbMod.schema.skillVersions)
+        .where(eq(dbMod.schema.skillVersions.skillId, skillId));
+      expect(initialVersion?.version).toBe('0.1.0');
+
+      await dbMod.db.insert(dbMod.schema.skillStaleness).values({
+        workspaceId,
+        skillId,
+        skillVersionId: initialVersion!.id,
+        citationIndex: 1,
+        slug: 'refund-policy-2024',
+        previousVersionId: '3',
+        latestVersionId: '4',
+        previousCitedTextSha256: 'a'.repeat(64),
+        latestCitedTextSha256: 'b'.repeat(64),
+        changelog: 'Refund policy changed since export.',
+        status: 'stale',
+        detectedAt: new Date('2026-05-17T05:00:00.000Z'),
+      });
+
+      const res = await request(buildApp())
+        .post(skillPath(workspaceId, skillId))
+        .set('User-Agent', 'test-agent')
+        .set('Cookie', `open42_session=${sessionId}`)
+        .buffer(true)
+        .parse(binaryParser);
+
+      expect(res.status).toBe(200);
+      const zip = new AdmZip(zipResponseBuffer(res));
+      const skillMd = zip.readAsText('sample-skill/SKILL.md');
+      expect(skillMd).toContain('version: 0.1.1');
+
+      const versions = await dbMod.db
+        .select()
+        .from(dbMod.schema.skillVersions)
+        .where(eq(dbMod.schema.skillVersions.skillId, skillId));
+      expect(versions.map((version) => version.version).sort()).toEqual(['0.1.0', '0.1.1']);
+      const refreshedVersion = versions.find((version) => version.version === '0.1.1');
+      expect(refreshedVersion).toBeTruthy();
+
+      const provenance = await dbMod.db
+        .select()
+        .from(dbMod.schema.skillCitationProvenance)
+        .where(eq(dbMod.schema.skillCitationProvenance.skillVersionId, refreshedVersion!.id));
+      expect(provenance).toHaveLength(2);
+
+      const refreshedDraft = await request(buildApp())
+        .get(`${skillPath(workspaceId, skillId)}/draft`)
+        .set('User-Agent', 'test-agent')
+        .set('Cookie', `open42_session=${sessionId}`);
+      expect(refreshedDraft.status).toBe(200);
+      expect(refreshedDraft.body.draft).toMatchObject({
+        version: '0.1.1',
+        staleness: null,
+      });
+      expect(refreshedDraft.body.draft.revisions.at(-1)).toMatchObject({
+        role: 'brain',
+        text: 'Re-exported v0.1.1 from refreshed sources.',
+      });
+    });
+
     it('mints an ephemeral signed share link and serves the stored bundle', async () => {
       const { workspaceId, sessionId } = await makeOwnerWorkspace('test-agent');
       const minted = await request(buildApp())
@@ -476,6 +681,9 @@ describeDb('skills routes', () => {
         .buffer(true)
         .parse(binaryParser);
       expect(bundle.status).toBe(200);
+      expect(bundle.headers['content-type']).toContain('application/zip');
+      expect(bundle.headers['cache-control']).toBe('private, max-age=0, no-store');
+      expect(bundle.headers['content-disposition']).toBe(`attachment; filename="${skillId}.zip"`);
       const zip = new AdmZip(zipResponseBuffer(bundle));
       expect(zip.readAsText('sample-skill/SKILL.md.sig')).toMatch(/\S+/);
 
@@ -491,6 +699,94 @@ describeDb('skills routes', () => {
         .where(eq(dbMod.schema.skillShareLinks.id, shareRows[0]!.id));
       const expired = await request(buildApp()).get(new URL(share.body.url).pathname);
       expect(expired.status).toBe(404);
+    });
+
+    it('rate-limits share link minting after 10 mints per workspace minute', async () => {
+      const { workspaceId, sessionId } = await makeOwnerWorkspace('test-agent');
+      const minted = await request(buildApp())
+        .post(skillsPath(workspaceId))
+        .set('User-Agent', 'test-agent')
+        .set('Cookie', `open42_session=${sessionId}`)
+        .send(mintPayload('Draft'));
+      expect(minted.status).toBe(201);
+      const skillId = minted.body.draft.id as string;
+
+      for (let i = 0; i < 10; i += 1) {
+        const share = await request(buildApp())
+          .post(`${skillPath(workspaceId, skillId)}/share`)
+          .set('User-Agent', 'test-agent')
+          .set('Cookie', `open42_session=${sessionId}`);
+        expect(share.status).toBe(200);
+      }
+
+      const limited = await request(buildApp())
+        .post(`${skillPath(workspaceId, skillId)}/share`)
+        .set('User-Agent', 'test-agent')
+        .set('Cookie', `open42_session=${sessionId}`);
+
+      expect(limited.status).toBe(429);
+      expect(limited.headers['retry-after']).toEqual(expect.any(String));
+      expect(limited.body).toEqual({ error: 'share_link_rate_limited' });
+    });
+
+    it('creates a refreshed version before minting a share link for a stale skill', async () => {
+      const { workspaceId, sessionId } = await makeOwnerWorkspace('test-agent');
+      const minted = await request(buildApp())
+        .post(skillsPath(workspaceId))
+        .set('User-Agent', 'test-agent')
+        .set('Cookie', `open42_session=${sessionId}`)
+        .send(mintPayload('Draft'));
+      expect(minted.status).toBe(201);
+      const skillId = minted.body.draft.id as string;
+
+      const [initialVersion] = await dbMod.db
+        .select()
+        .from(dbMod.schema.skillVersions)
+        .where(eq(dbMod.schema.skillVersions.skillId, skillId));
+      expect(initialVersion?.version).toBe('0.1.0');
+
+      await dbMod.db.insert(dbMod.schema.skillStaleness).values({
+        workspaceId,
+        skillId,
+        skillVersionId: initialVersion!.id,
+        citationIndex: 1,
+        slug: 'refund-policy-2024',
+        previousVersionId: '3',
+        latestVersionId: '4',
+        previousCitedTextSha256: 'a'.repeat(64),
+        latestCitedTextSha256: 'b'.repeat(64),
+        changelog: 'Refund policy changed since export.',
+        status: 'stale',
+        detectedAt: new Date('2026-05-17T05:00:00.000Z'),
+      });
+
+      const share = await request(buildApp())
+        .post(`${skillPath(workspaceId, skillId)}/share`)
+        .set('User-Agent', 'test-agent')
+        .set('Cookie', `open42_session=${sessionId}`);
+
+      expect(share.status).toBe(200);
+      const shareRows = await dbMod.db
+        .select()
+        .from(dbMod.schema.skillShareLinks)
+        .where(eq(dbMod.schema.skillShareLinks.skillId, skillId));
+      expect(shareRows).toHaveLength(1);
+
+      const versions = await dbMod.db
+        .select()
+        .from(dbMod.schema.skillVersions)
+        .where(eq(dbMod.schema.skillVersions.skillId, skillId));
+      const refreshedVersion = versions.find((version) => version.version === '0.1.1');
+      expect(refreshedVersion).toBeTruthy();
+      expect(shareRows[0]?.skillVersionId).toBe(refreshedVersion!.id);
+
+      const bundle = await request(buildApp())
+        .get(new URL(share.body.url).pathname)
+        .buffer(true)
+        .parse(binaryParser);
+      expect(bundle.status).toBe(200);
+      const zip = new AdmZip(zipResponseBuffer(bundle));
+      expect(zip.readAsText('sample-skill/SKILL.md')).toContain('version: 0.1.1');
     });
   });
 

@@ -18,6 +18,7 @@ import { useWorkspaceStore } from '@/lib/workspaces/store';
 interface SkillPanelProps {
   draftId: string | null;
   onClose: () => void;
+  fetchImpl?: typeof fetch;
 }
 
 /**
@@ -28,7 +29,7 @@ interface SkillPanelProps {
  * Composer is currently local-only (revisions append to React state, no server
  * round-trip). Real drafting is wired in P6c.
  */
-export function SkillPanel({ draftId, onClose }: SkillPanelProps) {
+export function SkillPanel({ draftId, onClose, fetchImpl = fetch }: SkillPanelProps) {
   // The skill draft endpoint is workspace-scoped (`/workspaces/:id/skills/...`).
   // Read the workspace id from the Zustand store; SWR stays idle until both
   // draftId and workspaceId are known.
@@ -67,6 +68,7 @@ export function SkillPanel({ draftId, onClose }: SkillPanelProps) {
           workspaceId={workspaceId}
           workspaceName={workspaceName}
           mutateDraft={mutate}
+          fetchImpl={fetchImpl}
           onClose={onClose}
         />
       )}
@@ -79,12 +81,14 @@ function PanelBody({
   workspaceId,
   workspaceName,
   mutateDraft,
+  fetchImpl,
   onClose,
 }: {
   draft: SkillDraft;
   workspaceId: string | null;
   workspaceName: string | null;
   mutateDraft: () => Promise<unknown>;
+  fetchImpl: typeof fetch;
   onClose: () => void;
 }) {
   // Optimistic 'you' revision shown until the POST returns the next version.
@@ -119,7 +123,7 @@ function PanelBody({
     setReviseError(null);
     setRevising(true);
     try {
-      const response = await fetch(
+      const response = await fetchImpl(
         `/api/workspaces/${encodeURIComponent(workspaceId)}/skills/${encodeURIComponent(draft.id)}/revise`,
         {
           method: 'POST',
@@ -162,7 +166,7 @@ function PanelBody({
       explainerStatus: 'pending',
     });
     try {
-      const response = await fetch(
+      const response = await fetchImpl(
         `/api/workspaces/${encodeURIComponent(workspaceId)}/skills/${encodeURIComponent(draft.id)}`,
         {
           method: 'POST',
@@ -210,7 +214,7 @@ function PanelBody({
 
   async function mintShareLink(): Promise<ShareLinkResult> {
     if (!workspaceId) throw new Error('no_active_workspace');
-    const response = await fetch(
+    const response = await fetchImpl(
       `/api/workspaces/${encodeURIComponent(workspaceId)}/skills/${encodeURIComponent(draft.id)}/share`,
       {
         method: 'POST',
@@ -294,6 +298,7 @@ function PanelBody({
       </div>
 
       <PostExportDialog
+        key={`${draft.id}:${exportReceipt.version}:${exportDialogOpen ? 'open' : 'closed'}`}
         open={exportDialogOpen}
         onOpenChange={setExportDialogOpen}
         draft={draft}

@@ -55,6 +55,54 @@ describe('AnthropicChatAdapter', () => {
     expect(anthropicMessages[2]?.content[0]?.cache_control).toBeUndefined();
     expect(anthropicMessages[3]?.content[0]?.cache_control).toBeUndefined();
   });
+
+  it('caps Anthropic message cache breakpoints while leaving the latest context and question uncached', async () => {
+    const longHistory: NormalizedMessage[] = [
+      ...Array.from({ length: 40 }, (_, index) => ({
+        role: index % 2 === 0 ? ('user' as const) : ('assistant' as const),
+        content: `prior ${index}`,
+      })),
+      {
+        role: 'user' as const,
+        content: 'Context:\n[1] slug=refund-policy version=v1 updated=now\nMonthly differs.',
+      },
+      { role: 'user' as const, content: 'Question: What about monthly customers?' },
+    ];
+    const requests: Array<Record<string, unknown>> = [];
+    const adapter = new AnthropicChatAdapter({
+      clientFactory: () => ({
+        messages: {
+          stream(params: Record<string, unknown>) {
+            requests.push(params);
+            return (async function* () {
+              yield { type: 'content_block_delta', delta: { type: 'text_delta', text: 'ok' } };
+            })();
+          },
+        },
+      }),
+      env: {} as NodeJS.ProcessEnv,
+    });
+
+    await collect(
+      adapter.sendStreamingChat({
+        systemPrompt: 'system',
+        messages: longHistory,
+        resolvedKey: { apiKey: 'sk-ant-real', source: 'tenant', model: null },
+      }),
+    );
+
+    const anthropicMessages = requests[0]?.messages as Array<{
+      content: Array<{ text: string; cache_control?: { type: string } }>;
+    }>;
+    const cachedMessageIndexes = anthropicMessages
+      .map((message, index) => (message.content[0]?.cache_control ? index : -1))
+      .filter((index) => index >= 0);
+
+    expect(cachedMessageIndexes).toHaveLength(3);
+    expect(cachedMessageIndexes).toContain(39);
+    expect(anthropicMessages[40]?.content[0]?.cache_control).toBeUndefined();
+    expect(anthropicMessages[41]?.content[0]?.cache_control).toBeUndefined();
+  });
 });
 
 describe('OpenAIChatAdapter', () => {

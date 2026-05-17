@@ -4,15 +4,18 @@ import { tmpdir } from 'node:os';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import {
+  SHARE_LINK_TTL_MS,
   buildShareStorageKey,
   checkShareLinkRateLimit,
   hashShareToken,
+  mintShareLink,
   readBundle,
   resetShareLinkRateLimitForTest,
   signShareToken,
   verifyShareToken,
   writeBundle,
 } from './share-link.js';
+import type { MintShareLinkDeps } from './share-link.js';
 
 const TEST_KEK = 'f'.repeat(64);
 
@@ -58,6 +61,56 @@ describe('share-link helpers', () => {
     });
     expect(checkShareLinkRateLimit('other-workspace', 1_000).ok).toBe(true);
     expect(checkShareLinkRateLimit('workspace', 61_001).ok).toBe(true);
+  });
+
+  it('mints share URLs that expire 24 hours from the mint time', async () => {
+    process.env.OPEN42_KEK = TEST_KEK;
+    const root = await mkdtemp(join(tmpdir(), 'open42-share-link-'));
+    const now = new Date('2026-05-17T10:00:00.000Z');
+    let inserted:
+      | {
+          expiresAt: Date;
+          tokenHash: Buffer;
+          storageKey: string;
+        }
+      | undefined;
+    const db = {
+      insert: () => ({
+        values: async (row: { expiresAt: Date; tokenHash: Buffer; storageKey: string }) => {
+          inserted = row;
+        },
+      }),
+    } as unknown as NonNullable<MintShareLinkDeps['db']>;
+
+    try {
+      const env = { OPEN42_SKILL_BUNDLE_STORE_DIR: root } as NodeJS.ProcessEnv;
+      const result = await mintShareLink(
+        {
+          workspaceId: 'workspace',
+          skillId: 'skill',
+          skillVersionId: 'version',
+          createdByUserId: 'user',
+          bundle: Buffer.from('zip'),
+          publicBaseUrl: 'https://app.example.test/',
+        },
+        {
+          db,
+          env,
+          now: () => now,
+          randomBytes: () => Buffer.alloc(32, 1),
+        },
+      );
+
+      expect(result.expiresAt.getTime()).toBe(now.getTime() + SHARE_LINK_TTL_MS);
+      expect(inserted?.expiresAt).toEqual(result.expiresAt);
+      expect(inserted?.tokenHash).toEqual(hashShareToken(result.token));
+      expect(inserted?.storageKey).toBe(result.storageKey);
+      expect(JSON.stringify(inserted)).not.toContain(result.token);
+      expect(result.url).toBe(`https://app.example.test/shared/${result.token}.zip`);
+      await expect(readBundle(result.storageKey, env)).resolves.toEqual(Buffer.from('zip'));
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
   });
 
   it('writes and reads bundles from the configured store', async () => {

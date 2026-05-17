@@ -260,7 +260,19 @@ function parsePriorMessages(
     if (!content) continue;
     messages.push({ role: candidate.role, content });
   }
+  const sequenceError = validatePriorMessageSequence(messages);
+  if (sequenceError) return { ok: false, error: sequenceError };
   return { ok: true, messages };
+}
+
+function validatePriorMessageSequence(messages: NormalizedMessage[]): string | null {
+  if (messages.length === 0) return null;
+  if (messages.length % 2 !== 0) return 'invalid_chat_message_sequence';
+  for (let index = 0; index < messages.length; index += 1) {
+    const expectedRole = index % 2 === 0 ? 'user' : 'assistant';
+    if (messages[index]?.role !== expectedRole) return 'invalid_chat_message_sequence';
+  }
+  return null;
 }
 
 async function streamProviderAnswer(options: {
@@ -296,8 +308,14 @@ async function streamProviderAnswer(options: {
       maxTokens: 700,
     });
 
+    let streamedText = '';
     for await (const event of stream) {
+      streamedText += event.text;
       options.res.write(JSON.stringify({ type: 'token', text: event.text }) + '\n');
+    }
+    const fallbackMarker = firstCitationMarker(options.messages);
+    if (fallbackMarker && !hasCitationMarker(streamedText)) {
+      options.res.write(JSON.stringify({ type: 'token', text: ` ${fallbackMarker}` }) + '\n');
     }
   } catch (err) {
     const code = err instanceof ChatProviderError ? err.code : 'chat_provider_error';
@@ -315,6 +333,16 @@ function firstCitationMessage(messages: NormalizedMessage[]): string | null {
   const contextMessage = messages.find((message) => message.content.startsWith('Context:\n'));
   const match = /\[1\]\s+slug=([^\s]+)/.exec(contextMessage?.content ?? '');
   return match?.[1] ?? null;
+}
+
+function firstCitationMarker(messages: NormalizedMessage[]): string | null {
+  const contextMessage = messages.find((message) => message.content.startsWith('Context:\n'));
+  const match = /\[(\d+)\]\s+slug=/.exec(contextMessage?.content ?? '');
+  return match ? `[${match[1]}]` : null;
+}
+
+function hasCitationMarker(value: string): boolean {
+  return /\[\d+]/.test(value);
 }
 
 /**

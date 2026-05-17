@@ -152,6 +152,17 @@ describeDb('chat skill mode', () => {
     const { workspaceId, sessionId } = await makeOwnerWorkspace('chat-agent', {
       chatProvider: 'openai',
     });
+    const providerInputs: Array<{
+      messages: Array<{ role: 'user' | 'assistant'; content: string }>;
+      resolvedKey: { apiKey: string; source: 'tenant' | 'shared'; model?: string | null };
+    }> = [];
+    mocks.createChatProvider.mockImplementation((provider: 'anthropic' | 'openai') => ({
+      provider,
+      async *sendStreamingChat(input: (typeof providerInputs)[number]) {
+        providerInputs.push(input);
+        yield { text: `provider:${provider} [1]` };
+      },
+    }));
     mocks.resolveLlmKey.mockResolvedValue({
       apiKey: 'sk-openai-real',
       source: 'tenant',
@@ -183,8 +194,75 @@ describeDb('chat skill mode', () => {
       detail: 'chunks',
     });
     expect(mocks.createChatProvider).toHaveBeenCalledWith('openai');
+    expect(providerInputs[0]?.resolvedKey).toMatchObject({
+      apiKey: 'sk-openai-real',
+      source: 'tenant',
+      model: 'gpt-test',
+    });
+    expect(providerInputs[0]?.messages).toEqual([
+      { role: 'user', content: 'What is the refund window for annual customers?' },
+      { role: 'assistant', content: 'Annual customers have 30 days [1].' },
+      {
+        role: 'user',
+        content:
+          'Context:\n[1] slug=refund-policy version=unknown updated=2026-04-01\nCustomers may request refunds within 30 days.',
+      },
+      { role: 'user', content: 'Question: What about monthly customers?' },
+    ]);
     expect(res.text).toContain('provider:openai [1]');
     expect(res.text).toContain('"type":"done"');
+  });
+
+  it('appends a fallback citation marker when a provider omits one', async () => {
+    const { workspaceId, sessionId } = await makeOwnerWorkspace('chat-agent');
+    mocks.resolveLlmKey.mockResolvedValue({
+      apiKey: 'sk-ant-real',
+      source: 'tenant',
+      model: null,
+    });
+    mocks.createChatProvider.mockImplementation((provider: 'anthropic' | 'openai') => ({
+      provider,
+      async *sendStreamingChat() {
+        yield { text: 'The provided context does not contain that policy.' };
+      },
+    }));
+
+    const res = await request(buildApp())
+      .post('/api/chat')
+      .set('User-Agent', 'chat-agent')
+      .set('Cookie', `open42_session=${sessionId}`)
+      .send({
+        query: 'What is the office dog policy?',
+        messages: [],
+        workspace_id: workspaceId,
+      });
+
+    expect(res.status).toBe(200);
+    expect(res.text).toContain('The provided context does not contain that policy.');
+    expect(res.text).toContain('"text":" [1]"');
+    expect(res.text).toContain('"type":"done"');
+  });
+
+  it('returns a plain no-answer stream without calling an LLM when gbrain returns no chunks', async () => {
+    const { workspaceId, sessionId } = await makeOwnerWorkspace('chat-agent');
+    mocks.query.mockResolvedValue({ chunks: [] });
+
+    const res = await request(buildApp())
+      .post('/api/chat')
+      .set('User-Agent', 'chat-agent')
+      .set('Cookie', `open42_session=${sessionId}`)
+      .send({
+        query: 'What is the office dog policy?',
+        messages: [],
+        workspace_id: workspaceId,
+      });
+
+    expect(res.status).toBe(200);
+    expect(res.text).toContain('"type":"citations","citations":[]');
+    expect(res.text).toContain("I don't have anything about this in your brain.");
+    expect(res.text).toContain('"type":"done"');
+    expect(mocks.resolveLlmKey).not.toHaveBeenCalled();
+    expect(mocks.createChatProvider).not.toHaveBeenCalled();
   });
 
   it('rejects invalid prior message roles before querying gbrain', async () => {
@@ -205,7 +283,92 @@ describeDb('chat skill mode', () => {
     expect(mocks.query).not.toHaveBeenCalled();
   });
 
-  it('rejects more than 20 prior messages before querying gbrain', async () => {
+  it('rejects non-alternating prior message sequences before querying gbrain', async () => {
+    const { workspaceId, sessionId } = await makeOwnerWorkspace('chat-agent');
+
+    const res = await request(buildApp())
+      .post('/api/chat')
+      .set('User-Agent', 'chat-agent')
+      .set('Cookie', `open42_session=${sessionId}`)
+      .send({
+        query: 'What about monthly customers?',
+        messages: [
+          { role: 'user', text: 'What is the annual refund window?' },
+          { role: 'user', text: 'What about monthly customers?' },
+        ],
+        workspace_id: workspaceId,
+      });
+
+    expect(res.status).toBe(400);
+    expect(res.body).toEqual({ error: 'invalid_chat_message_sequence' });
+    expect(mocks.query).not.toHaveBeenCalled();
+  });
+
+  it('rejects incomplete prior turns before querying gbrain', async () => {
+    const { workspaceId, sessionId } = await makeOwnerWorkspace('chat-agent');
+
+    const res = await request(buildApp())
+      .post('/api/chat')
+      .set('User-Agent', 'chat-agent')
+      .set('Cookie', `open42_session=${sessionId}`)
+      .send({
+        query: 'What about monthly customers?',
+        messages: [{ role: 'user', text: 'What is the annual refund window?' }],
+        workspace_id: workspaceId,
+      });
+
+    expect(res.status).toBe(400);
+    expect(res.body).toEqual({ error: 'invalid_chat_message_sequence' });
+    expect(mocks.query).not.toHaveBeenCalled();
+  });
+
+  it('accepts exactly 20 prior user/assistant turns', async () => {
+    const { workspaceId, sessionId } = await makeOwnerWorkspace('chat-agent');
+    const providerInputs: Array<{
+      messages: Array<{ role: 'user' | 'assistant'; content: string }>;
+    }> = [];
+    mocks.resolveLlmKey.mockResolvedValue({
+      apiKey: 'sk-ant-real',
+      source: 'tenant',
+      model: null,
+    });
+    mocks.createChatProvider.mockImplementation((provider: 'anthropic' | 'openai') => ({
+      provider,
+      async *sendStreamingChat(input: (typeof providerInputs)[number]) {
+        providerInputs.push(input);
+        yield { text: 'Monthly customers have 14 days [1].' };
+      },
+    }));
+    const messages = Array.from({ length: 40 }, (_, index) => ({
+      id: `m${index}`,
+      role: index % 2 === 0 ? 'user' : 'assistant',
+      text: `prior message ${index}`,
+    }));
+
+    const res = await request(buildApp())
+      .post('/api/chat')
+      .set('User-Agent', 'chat-agent')
+      .set('Cookie', `open42_session=${sessionId}`)
+      .send({
+        query: 'What about monthly customers?',
+        messages,
+        workspace_id: workspaceId,
+      });
+
+    expect(res.status).toBe(200);
+    expect(mocks.query).toHaveBeenCalled();
+    expect(providerInputs[0]?.messages).toHaveLength(42);
+    expect(providerInputs[0]?.messages[0]).toEqual({
+      role: 'user',
+      content: 'prior message 0',
+    });
+    expect(providerInputs[0]?.messages[39]).toEqual({
+      role: 'assistant',
+      content: 'prior message 39',
+    });
+  });
+
+  it('rejects more than 20 prior user/assistant turns before querying gbrain', async () => {
     const { workspaceId, sessionId } = await makeOwnerWorkspace('chat-agent');
 
     const res = await request(buildApp())
@@ -214,7 +377,7 @@ describeDb('chat skill mode', () => {
       .set('Cookie', `open42_session=${sessionId}`)
       .send({
         query: 'What is the refund window?',
-        messages: Array.from({ length: 21 }, (_, index) => ({
+        messages: Array.from({ length: 42 }, (_, index) => ({
           id: `m${index}`,
           role: index % 2 === 0 ? 'user' : 'assistant',
           text: `turn ${index}`,

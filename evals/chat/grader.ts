@@ -8,6 +8,7 @@ export interface ChatEvalQuestion {
 export interface ChatEvalAnswer {
   id: string;
   answer: string;
+  citations?: Array<{ slug?: string | null }>;
 }
 
 export interface ChatEvalCriterion {
@@ -26,9 +27,7 @@ export interface ChatEvalGrade {
 
 export function gradeChatAnswer(question: ChatEvalQuestion, answer: ChatEvalAnswer): ChatEvalGrade {
   const expectedTerms = question.expected.filter((expected) => expected !== '[1]');
-  const missingTerms = expectedTerms.filter((expected) => {
-    return !containsTerm(answer.answer, expected);
-  });
+  const missingTerms = expectedTerms.filter((expected) => !containsExpected(answer, expected));
   const needsCitation = question.expected.includes('[1]');
   const hasCitation = /\[\d+]/.test(answer.answer);
   const avoided = (question.avoid ?? []).filter((term) => containsTerm(answer.answer, term));
@@ -71,8 +70,29 @@ export function gradeChatAnswer(question: ChatEvalQuestion, answer: ChatEvalAnsw
   };
 }
 
-function containsTerm(answer: string, term: string): boolean {
-  return normalizeText(answer).includes(normalizeText(term));
+function containsExpected(answer: ChatEvalAnswer, term: string): boolean {
+  if (containsTerm(answer.answer, term)) return true;
+  if (normalizeText(term) === 'don t have') {
+    return [
+      "don't have",
+      'do not have',
+      'cannot answer',
+      'can not answer',
+      'does not contain',
+      'not contain',
+      'does not provide',
+      'not provide',
+      'no information',
+    ].some((phrase) => containsTerm(answer.answer, phrase));
+  }
+
+  return (answer.citations ?? []).some((citation) => {
+    return typeof citation.slug === 'string' && containsTerm(citation.slug, term);
+  });
+}
+
+function containsTerm(value: string, term: string): boolean {
+  return normalizeText(value).includes(normalizeText(term));
 }
 
 function normalizeText(value: string): string {
@@ -97,7 +117,7 @@ export async function gradeChatAnswerWithOptionalJudge(
     const Anthropic = (await import('@anthropic-ai/sdk')).default;
     const client = new Anthropic({ apiKey: env.ANTHROPIC_API_KEY, maxRetries: 0 });
     const response = await client.messages.create({
-      model: env.OPEN42_CHAT_EVAL_GRADER_MODEL || 'claude-3-5-haiku-latest',
+      model: env.OPEN42_CHAT_EVAL_GRADER_MODEL || 'claude-haiku-4-5-20251001',
       max_tokens: 360,
       system:
         'Grade an Open42 multi-turn answer. Return strict JSON only with criteria for resolution, source_overlap, and no_regression. Each criterion needs passed boolean and reason string. Overall passed requires all criteria true.',

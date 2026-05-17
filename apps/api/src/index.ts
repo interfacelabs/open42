@@ -15,6 +15,7 @@ import {
   OPEN42_COMPOSIO_ENABLED,
   OPEN42_EDITION,
   API_PUBLIC_URL,
+  LANDING_PUBLIC_URL,
   WEB_PUBLIC_URL,
   assertBootSecrets,
 } from './env.js';
@@ -84,6 +85,16 @@ const port = Number(
   process.env.API_PORT ?? process.env.PORT ?? portFromUrl(process.env.API_PUBLIC_URL) ?? 3001,
 );
 assertBootSecrets();
+const browserOrigins = Array.from(
+  new Set(
+    [
+      WEB_PUBLIC_URL,
+      API_PUBLIC_URL,
+      LANDING_PUBLIC_URL,
+      OPEN42_EDITION === 'cloud' ? 'https://www.open42.ai' : null,
+    ].filter((origin): origin is string => Boolean(origin)),
+  ),
+);
 
 export let composio: ComposioClient | null = null;
 export let scheduler: SchedulerHandle | null = null;
@@ -133,7 +144,7 @@ app.use(
 );
 app.use(
   cors({
-    origin: WEB_PUBLIC_URL,
+    origin: browserOrigins,
     credentials: true,
   }),
 );
@@ -156,7 +167,7 @@ app.use(express.json({ limit: '1mb' }));
 app.use(cookieParser());
 app.use(
   csrfMiddleware({
-    allowedOrigins: [WEB_PUBLIC_URL, API_PUBLIC_URL],
+    allowedOrigins: browserOrigins,
   }),
 );
 
