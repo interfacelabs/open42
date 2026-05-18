@@ -20,6 +20,7 @@ const generated = {
   OPEN42_ALLOW_SHARED_KEYS: 'false',
   OPEN42_KEK: valueOrGenerated(existing, 'OPEN42_KEK', randomHex32),
   SESSION_SECRET: valueOrGenerated(existing, 'SESSION_SECRET', randomHex32),
+  OPEN42_INGEST_HMAC_SECRET: valueOrGenerated(existing, 'OPEN42_INGEST_HMAC_SECRET', randomHex32),
   OPEN42_SINGLE_WORKSPACE_ID: workspaceId,
   OPEN42_TENANT_PROXY_TOKEN: tenantProxyTokenForWorkspace(existing, workspaceId),
 };

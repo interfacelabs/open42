@@ -57,3 +57,14 @@ Confirm:
 - `COMPOSIO_WEBHOOK_SECRET` is set when receiving webhooks.
 
 If you want zip-only import, leave Composio unset.
+
+## GitHub Connection Fails
+
+Confirm:
+
+- `OPEN42_INGEST_HMAC_SECRET` is set.
+- Cloud deployments have the managed Open42 GitHub App environment configured.
+- Community/self-host installs either have `GITHUB_APP_ID`, `GITHUB_APP_SLUG`,
+  `GITHUB_APP_PRIVATE_KEY`, and `GITHUB_WEBHOOK_SECRET` set, or the owner has
+  completed the in-product GitHub App setup flow.
+- Private repos have `GITHUB_GIT_PROXY_PUBLIC_URL` or `API_PUBLIC_URL` set to a public HTTPS URL.
