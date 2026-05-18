@@ -14,9 +14,33 @@ const newsreader = Newsreader({
 });
 
 export const metadata: Metadata = {
-  title: "Open42 — Company Brain with receipts",
+  metadataBase: new URL("https://open42.ai"),
+  title: "Open42 — Turn company workflows into automations",
   description:
-    "Self-hostable Company Brain built on gbrain. Drop in your docs, chats, emails, and tools — Open42 answers with citations, flags stale info, and turns every useful answer into a one-click Skill your whole team can run.",
+    "Self-hostable company brain that connects to your docs and repos, understands how work happens, and helps turn recurring workflows into reviewable AI automations.",
+  openGraph: {
+    type: "website",
+    url: "https://open42.ai",
+    siteName: "Open42",
+    title: "Open42 — Turn company workflows into automations",
+    description:
+      "Connect company knowledge, get cited answers, and turn recurring internal workflows into reviewable AI automations.",
+    images: [
+      {
+        url: "/hero/hero-bg.png",
+        width: 1200,
+        height: 630,
+        alt: "Open42 company brain interface",
+      },
+    ],
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: "Open42 — Turn company workflows into automations",
+    description:
+      "A self-hostable company brain for cited answers and reviewable workflow automations.",
+    images: ["/hero/hero-bg.png"],
+  },
   icons: {
     icon: "/seo/favicon.png",
   },
