@@ -1,4 +1,4 @@
-import { and, desc, eq } from 'drizzle-orm';
+import { and, desc, eq, inArray } from 'drizzle-orm';
 import { Router } from 'express';
 
 import { resolveLlmKey, type LlmProvider, type ResolvedLlmKey } from '../auth/llm-keys.js';
@@ -95,13 +95,28 @@ chatRouter.post('/', requireMembership({ from: 'body' }), async (req, res, next)
     );
     const retrieval = await gbrain.query({ query, limit: 8, detail: 'chunks' });
     const chunks = normalizeChunks(retrieval.chunks ?? retrieval.results ?? []);
-    const citations = chunks.map((chunk, index) => ({
+    const sourceIds = Array.from(
+      new Set(
+        chunks
+          .map((chunk) => (typeof chunk.source_id === 'string' ? chunk.source_id : null))
+          .filter((value): value is string => Boolean(value)),
+      ),
+    );
+    const githubSources = await loadGitHubSourceHealth(workspace.id, sourceIds);
+    const citations = chunks.map((chunk, index) => {
+      const sourceId = typeof chunk.source_id === 'string' ? chunk.source_id : null;
+      const githubSource = sourceId ? githubSources.get(sourceId) : null;
+      return {
       index: index + 1,
       slug: chunk.slug ?? `source-${index + 1}`,
       version_id: chunk.version_id ?? null,
       last_updated: chunk.last_updated ?? null,
       excerpt: chunk.excerpt ?? chunk.chunk_text ?? '',
-    }));
+      source_id: sourceId,
+      source_status: githubSource?.syncStatus ?? null,
+      source_label: githubSource ? `${githubSource.owner}/${githubSource.repo}` : null,
+      };
+    });
 
     // Log one row per (turn, distinct-slug) so the Library "Most cited"
     // collection has real data to rank from. Best-effort — a write failure
@@ -212,6 +227,35 @@ async function logDocumentCitations(workspaceId: string, citations: Array<{ slug
   } catch {
     // Audit-style write — never fail the user's chat response on this path.
   }
+}
+
+async function loadGitHubSourceHealth(workspaceId: string, sourceIds: string[]) {
+  if (sourceIds.length === 0) {
+    return new Map<
+      string,
+      { owner: string; repo: string; syncStatus: string }
+    >();
+  }
+  const rows = await db
+    .select({
+      gbrainSourceId: schema.githubRepoConnections.gbrainSourceId,
+      owner: schema.githubRepoConnections.owner,
+      repo: schema.githubRepoConnections.repo,
+      syncStatus: schema.githubRepoConnections.syncStatus,
+    })
+    .from(schema.githubRepoConnections)
+    .where(
+      and(
+        eq(schema.githubRepoConnections.workspaceId, workspaceId),
+        inArray(schema.githubRepoConnections.gbrainSourceId, sourceIds),
+      ),
+    );
+  return new Map(
+    rows.map((row) => [
+      row.gbrainSourceId,
+      { owner: row.owner, repo: row.repo, syncStatus: row.syncStatus },
+    ]),
+  );
 }
 
 function normalizeChunks(chunks: GbrainCitationChunk[]): GbrainCitationChunk[] {

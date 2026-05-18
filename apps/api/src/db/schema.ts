@@ -54,7 +54,11 @@ export const ingestStatusEnum = pgEnum('ingest_status', [
   'completed',
   'failed',
 ]);
-export const connectionKindEnum = pgEnum('connection_kind', ['notion-composio', 'notion-zip']);
+export const connectionKindEnum = pgEnum('connection_kind', [
+  'notion-composio',
+  'notion-zip',
+  'github-repo',
+]);
 export const connectionStatusEnum = pgEnum('connection_status', [
   'pending_import',
   'active',
@@ -62,6 +66,20 @@ export const connectionStatusEnum = pgEnum('connection_status', [
   'completed',
   'errored',
   'disconnected',
+]);
+export const githubRepoSyncStatusEnum = pgEnum('github_repo_sync_status', [
+  'fresh',
+  'syncing',
+  'behind',
+  'stale',
+  'errored',
+  'auth_required',
+  'webhook_unhealthy',
+  'degraded',
+]);
+export const githubRepoSyncTransportEnum = pgEnum('github_repo_sync_transport', [
+  'direct-url',
+  'open42-git-proxy',
 ]);
 export const ingestModeEnum = pgEnum('ingest_mode', ['import_once', 'periodic_pull']);
 export const llmProviderEnum = pgEnum('llm_provider', ['openai', 'anthropic']);
@@ -370,6 +388,91 @@ export const connections = pgTable(
     composioAccountUniq: uniqueIndex('connections_composio_account_uniq')
       .on(t.composioConnectedAccountId)
       .where(sql`${t.composioConnectedAccountId} IS NOT NULL AND ${t.status} <> 'disconnected'`),
+  }),
+);
+
+// =====================================================================
+// github_repo_connections (GitHub App-backed Markdown/MDX repo sources)
+// =====================================================================
+
+export const githubAppConfigs = pgTable(
+  'github_app_configs',
+  {
+    workspaceId: uuid('workspace_id')
+      .primaryKey()
+      .references(() => workspaces.id, { onDelete: 'cascade' }),
+    appId: text('app_id').notNull(),
+    appSlug: text('app_slug').notNull(),
+    appName: text('app_name').notNull(),
+    appHtmlUrl: text('app_html_url'),
+    privateKeyCiphertext: bytea('private_key_ciphertext').notNull(),
+    webhookSecretCiphertext: bytea('webhook_secret_ciphertext').notNull(),
+    createdByUserId: uuid('created_by_user_id').references(() => users.id, {
+      onDelete: 'set null',
+    }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    appIdIdx: index('github_app_configs_app_id_idx').on(t.appId),
+  }),
+);
+
+export const githubRepoConnections = pgTable(
+  'github_repo_connections',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    workspaceId: uuid('workspace_id')
+      .notNull()
+      .references(() => workspaces.id, { onDelete: 'cascade' }),
+    connectionId: uuid('connection_id')
+      .notNull()
+      .references(() => connections.id, { onDelete: 'cascade' }),
+    installationId: text('installation_id').notNull(),
+    repoId: text('repo_id').notNull(),
+    owner: text('owner').notNull(),
+    repo: text('repo').notNull(),
+    branch: text('branch').notNull(),
+    repoPrivate: boolean('repo_private').notNull().default(false),
+    gbrainSourceId: text('gbrain_source_id').notNull(),
+    gbrainSourceRegisteredAt: timestamp('gbrain_source_registered_at', { withTimezone: true }),
+    syncTransport: githubRepoSyncTransportEnum('sync_transport')
+      .notNull()
+      .default('direct-url'),
+    gitProxyTokenHash: text('git_proxy_token_hash'),
+    gitProxyLastUsedAt: timestamp('git_proxy_last_used_at', { withTimezone: true }),
+    lastGbrainJobId: text('last_gbrain_job_id'),
+    pathFilters: jsonb('path_filters')
+      .notNull()
+      .default(sql`'[]'::jsonb`),
+    lastIndexedCommitSha: text('last_indexed_commit_sha'),
+    branchHeadSha: text('branch_head_sha'),
+    syncStatus: githubRepoSyncStatusEnum('sync_status').notNull().default('syncing'),
+    lastSyncedAt: timestamp('last_synced_at', { withTimezone: true }),
+    lastError: text('last_error'),
+    webhookHealth: text('webhook_health').notNull().default('unknown'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    connectionUniq: uniqueIndex('github_repo_connections_connection_uniq').on(t.connectionId),
+    gbrainSourceUniq: uniqueIndex('github_repo_connections_gbrain_source_uniq').on(
+      t.workspaceId,
+      t.gbrainSourceId,
+    ),
+    gitProxyTokenHashUniq: uniqueIndex('github_repo_connections_proxy_token_hash_uniq')
+      .on(t.gitProxyTokenHash)
+      .where(sql`${t.gitProxyTokenHash} IS NOT NULL`),
+    workspaceRepoBranchUniq: uniqueIndex('github_repo_connections_workspace_repo_branch_uniq').on(
+      t.workspaceId,
+      t.repoId,
+      t.branch,
+    ),
+    workspaceStatusIdx: index('github_repo_connections_workspace_status_idx').on(
+      t.workspaceId,
+      t.syncStatus,
+    ),
+    installationIdx: index('github_repo_connections_installation_idx').on(t.installationId),
   }),
 );
 
@@ -803,6 +906,10 @@ export type SkillRevision = typeof skillRevisions.$inferSelect;
 export type NewSkillRevision = typeof skillRevisions.$inferInsert;
 export type Connection = typeof connections.$inferSelect;
 export type NewConnection = typeof connections.$inferInsert;
+export type GithubAppConfig = typeof githubAppConfigs.$inferSelect;
+export type NewGithubAppConfig = typeof githubAppConfigs.$inferInsert;
+export type GithubRepoConnection = typeof githubRepoConnections.$inferSelect;
+export type NewGithubRepoConnection = typeof githubRepoConnections.$inferInsert;
 export type ConnectionInitState = typeof connectionInitStates.$inferSelect;
 export type NewConnectionInitState = typeof connectionInitStates.$inferInsert;
 export type ConnectorAuthProfile = typeof connectorAuthProfiles.$inferSelect;

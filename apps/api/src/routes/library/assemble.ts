@@ -32,6 +32,7 @@ interface GbrainPage {
   tags?: unknown;
   last_updated?: unknown;
   source_url?: unknown;
+  source_id?: unknown;
   author?: unknown;
 }
 
@@ -64,10 +65,9 @@ export function pageToDoc(page: GbrainPage): LibraryDocShape | null {
   return {
     id: slug,
     title: typeof page.title === 'string' ? page.title : slug,
-    // Today every connected source is Notion (notion-composio + notion-zip).
-    // When more connectors land this becomes a per-page lookup against
-    // an Open42-side connection-id → page-slug index.
-    source: 'notion',
+    source: typeof page.source_id === 'string' && page.source_id.startsWith('gh-')
+      ? 'github'
+      : 'notion',
     sourceUrl: typeof page.source_url === 'string' ? page.source_url : undefined,
     author: typeof page.author === 'string' ? page.author : undefined,
     lastModifiedAt,

@@ -5,7 +5,7 @@ import { eq, sql } from 'drizzle-orm';
 import type { ComposioClient } from '../composio/client.js';
 import type { Connector } from '../connectors/interface.js';
 import { db, schema } from '../db/client.js';
-import type { GbrainClient } from '../gbrain/client.js';
+import type { GbrainClient, GbrainSourceStatus } from '../gbrain/client.js';
 import {
   acquireWorkspaceLock,
   heartbeatLock,
@@ -210,21 +210,28 @@ export async function runWorkspaceCycle(
     }
 
     const successfulWithDocs = successfulIds.filter((id) => {
+      const connection = connections.find((item) => item.id === id);
+      if (connection?.kind === 'github-repo') return false;
       const entry = summary.find((item) => item.connection_id === id);
       return (entry?.pages ?? 0) > 0;
     });
 
-    if (successfulWithDocs.length > 0) {
-      await mergeIntoFinal(cycleDir, successfulWithDocs);
-      let gbrain: GbrainClient;
+    const needsGbrain = successfulWithDocs.length > 0;
+    let gbrain: GbrainClient | null = null;
+
+    if (needsGbrain) {
       try {
         gbrain = await deps.gbrain(workspaceId);
       } catch (err) {
         return await failJob(errorMessage(err));
       }
+    }
+
+    if (successfulWithDocs.length > 0) {
+      await mergeIntoFinal(cycleDir, successfulWithDocs);
 
       try {
-        const submitted = (await gbrain.submitJob('import', {
+        const submitted = (await gbrain!.submitJob('import', {
           dir: finalStagingDir(cycleDir),
         })) as { id?: string | number; job_id?: string | number };
         gbrainJobId = String(submitted.id ?? submitted.job_id ?? '');
@@ -236,7 +243,7 @@ export async function runWorkspaceCycle(
         return await failJob(errorMessage(err));
       }
 
-      const poll = await pollGbrain(gbrain, gbrainJobId, deps, () => aborted);
+      const poll = await pollGbrain(gbrain!, gbrainJobId, deps, () => aborted);
       if (aborted && abortReason === 'lock_lost') {
         return await abortLockLost();
       }
@@ -319,6 +326,17 @@ async function extractConnection(
   },
 ): Promise<void> {
   const { connection, cycleDir, abortController, summary, successfulIds, cursorsToCommit } = params;
+  if (connection.kind === 'github-repo') {
+    await syncGitHubConnection(deps, {
+      connection,
+      abortController,
+      summary,
+      successfulIds,
+      cursorsToCommit,
+    });
+    return;
+  }
+
   let composio = deps.composio;
   if (connection.composioConnectedAccountId && deps.resolveComposioClient) {
     try {
@@ -384,10 +402,7 @@ async function extractConnection(
     const result = connector.extract(
       {
         cursor,
-        source:
-          connection.kind === 'notion-zip'
-            ? { kind: 'notion-zip', zipPath: String(cursor.zipPath ?? '') }
-            : { kind: 'notion-composio' },
+        source: sourceForConnection(connection.kind, connection.id, cursor),
         account: connection.composioConnectedAccountId
           ? { composio_connected_account_id: connection.composioConnectedAccountId }
           : undefined,
@@ -414,6 +429,101 @@ async function extractConnection(
       .update(schema.connections)
       .set({ lastError: message })
       .where(eq(schema.connections.id, connection.id));
+  }
+}
+
+async function syncGitHubConnection(
+  deps: OrchestratorDeps,
+  params: {
+    connection: ConnectionRow;
+    abortController: AbortController;
+    summary: ConnectorSummaryEntry[];
+    successfulIds: string[];
+    cursorsToCommit: Map<string, Record<string, unknown>>;
+  },
+): Promise<void> {
+  const { connection, abortController, summary, successfulIds, cursorsToCommit } = params;
+  let pages = 0;
+  try {
+    const [repo] = await db
+      .select()
+      .from(schema.githubRepoConnections)
+      .where(eq(schema.githubRepoConnections.connectionId, connection.id))
+      .limit(1);
+    if (!repo) throw new Error('github_repo_connection_missing');
+    if (!repo.gbrainSourceRegisteredAt) {
+      throw new Error(
+        repo.syncTransport === 'open42-git-proxy'
+          ? 'github_source_needs_repair'
+          : 'github_source_not_registered',
+      );
+    }
+
+    await db
+      .update(schema.githubRepoConnections)
+      .set({ syncStatus: 'syncing', lastError: null, updatedAt: deps.now?.() ?? new Date() })
+      .where(eq(schema.githubRepoConnections.connectionId, connection.id));
+
+    abortController.signal.throwIfAborted();
+    const gbrain = await deps.gbrain(connection.workspaceId);
+    const submitted = (await gbrain.submitJob('sync', {
+      sourceId: repo.gbrainSourceId,
+      noPull: false,
+      noEmbed: false,
+    })) as { id?: string | number; job_id?: string | number };
+    const gbrainJobId = String(submitted.id ?? submitted.job_id ?? '');
+    await db
+      .update(schema.githubRepoConnections)
+      .set({ lastGbrainJobId: gbrainJobId || null, updatedAt: deps.now?.() ?? new Date() })
+      .where(eq(schema.githubRepoConnections.connectionId, connection.id));
+
+    const poll = await pollGbrain(gbrain, gbrainJobId, deps, () => abortController.signal.aborted);
+    if (!poll.ok) throw new Error(poll.error);
+
+    const sourceStatus = await gbrain.sourcesStatus(repo.gbrainSourceId);
+    pages = safePageCount(sourceStatus);
+    const syncStatus = sourceStatus.clone_state && sourceStatus.clone_state !== 'healthy'
+      ? 'degraded'
+      : 'fresh';
+    await db
+      .update(schema.githubRepoConnections)
+      .set({
+        lastIndexedCommitSha: sourceStatus.last_commit ?? null,
+        branchHeadSha: sourceStatus.last_commit ?? null,
+        syncStatus,
+        lastSyncedAt: sourceStatus.last_sync_at
+          ? new Date(sourceStatus.last_sync_at)
+          : (deps.now?.() ?? new Date()),
+        lastError: null,
+        webhookHealth: 'healthy',
+        updatedAt: deps.now?.() ?? new Date(),
+      })
+      .where(eq(schema.githubRepoConnections.connectionId, connection.id));
+
+    cursorsToCommit.set(connection.id, {
+      gbrainSourceId: repo.gbrainSourceId,
+      lastCommit: sourceStatus.last_commit ?? null,
+    });
+    successfulIds.push(connection.id);
+    summary.push({ connection_id: connection.id, kind: connection.kind, pages });
+  } catch (err) {
+    const message = errorMessage(err);
+    const repoStatus = githubStatusForError(message);
+    await db
+      .update(schema.githubRepoConnections)
+      .set({
+        syncStatus: repoStatus,
+        lastError: repoStatus === 'auth_required' ? 'github_auth_required' : 'github_sync_failed',
+        updatedAt: deps.now?.() ?? new Date(),
+      })
+      .where(eq(schema.githubRepoConnections.connectionId, connection.id))
+      .catch(() => undefined);
+    await db
+      .update(schema.connections)
+      .set({ status: 'errored', lastError: message })
+      .where(eq(schema.connections.id, connection.id))
+      .catch(() => undefined);
+    summary.push({ connection_id: connection.id, kind: connection.kind, pages: 0, error: message });
   }
 }
 
@@ -482,7 +592,7 @@ export function startScheduler(deps: OrchestratorDeps): SchedulerHandle {
               SELECT 1 FROM connections c
               WHERE c.workspace_id = w.id
                 AND c.status = 'active'
-                AND c.kind IN ('notion-composio')
+                AND c.kind IN ('notion-composio', 'github-repo')
                 AND c.deleted_at IS NULL
             )
           )
@@ -554,4 +664,27 @@ function rowsOf<T>(result: unknown): T[] {
 
 function errorMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
+}
+
+function sourceForConnection(
+  kind: string,
+  connectionId: string,
+  cursor: Record<string, unknown>,
+) {
+  if (kind === 'notion-zip') return { kind: 'notion-zip' as const, zipPath: String(cursor.zipPath ?? '') };
+  void connectionId;
+  return { kind: 'notion-composio' as const };
+}
+
+function safePageCount(status: GbrainSourceStatus): number {
+  const value = Number(status.page_count ?? 0);
+  return Number.isFinite(value) && value >= 0 ? value : 0;
+}
+
+function githubStatusForError(
+  message: string,
+): 'errored' | 'auth_required' | 'degraded' {
+  if (/auth|401|403|github_auth_required/i.test(message)) return 'auth_required';
+  if (/clone_state|corrupted|url-drift|not-a-dir|no-git/i.test(message)) return 'degraded';
+  return 'errored';
 }

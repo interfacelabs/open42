@@ -30,11 +30,21 @@ export const OPEN42_ALLOW_SHARED_KEYS = boolEnv(
 export const OPEN42_DISABLE_COMPOSIO = boolEnv(process.env.OPEN42_DISABLE_COMPOSIO, false);
 export const OPEN42_COMPOSIO_ENABLED = Boolean(COMPOSIO_API_KEY) && !OPEN42_DISABLE_COMPOSIO;
 export const OPEN42_INGEST_HMAC_SECRET = process.env.OPEN42_INGEST_HMAC_SECRET ?? '';
+export const GITHUB_APP_ID = process.env.GITHUB_APP_ID ?? '';
+export const GITHUB_APP_SLUG = process.env.GITHUB_APP_SLUG ?? '';
+export const GITHUB_APP_PRIVATE_KEY = process.env.GITHUB_APP_PRIVATE_KEY ?? '';
+export const GITHUB_WEBHOOK_SECRET = process.env.GITHUB_WEBHOOK_SECRET ?? '';
+export const OPEN42_GITHUB_ENABLED = Boolean(
+  GITHUB_APP_ID && GITHUB_APP_SLUG && GITHUB_APP_PRIVATE_KEY,
+);
 export const OPEN42_SINGLE_WORKSPACE_ID = process.env.OPEN42_SINGLE_WORKSPACE_ID ?? '';
 export const OPEN42_TENANT_PROXY_TOKEN = process.env.OPEN42_TENANT_PROXY_TOKEN ?? '';
 export const SESSION_SECRET = process.env.SESSION_SECRET ?? '';
 export const API_PUBLIC_URL = (
   process.env.API_PUBLIC_URL ?? `http://localhost:${process.env.API_PORT ?? '3001'}`
+).replace(/\/+$/, '');
+export const GITHUB_GIT_PROXY_PUBLIC_URL = (
+  process.env.GITHUB_GIT_PROXY_PUBLIC_URL ?? API_PUBLIC_URL
 ).replace(/\/+$/, '');
 export const WEB_PUBLIC_URL = (process.env.WEB_PUBLIC_URL ?? 'http://localhost:3000').replace(
   /\/+$/,

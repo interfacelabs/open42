@@ -47,6 +47,25 @@ export interface GbrainQueryResult {
   [key: string]: unknown;
 }
 
+export interface GbrainSourceStatus {
+  id: string;
+  name?: string;
+  local_path?: string | null;
+  remote_url?: string | null;
+  page_count?: number;
+  last_sync_at?: string | null;
+  last_commit?: string | null;
+  clone_state?:
+    | 'healthy'
+    | 'missing'
+    | 'not-a-dir'
+    | 'no-git'
+    | 'url-drift'
+    | 'corrupted'
+    | 'not-applicable';
+  [key: string]: unknown;
+}
+
 const tokenCache = new Map<string, TokenCacheEntry>();
 
 export function clearGbrainTokenCache(): void {
@@ -108,6 +127,10 @@ export class GbrainClient {
     return this.callTool('put_page', { slug, content });
   }
 
+  async deletePage(slug: string): Promise<unknown> {
+    return this.callTool('delete_page', { slug });
+  }
+
   async query(params: {
     query: string;
     limit?: number;
@@ -140,6 +163,33 @@ export class GbrainClient {
 
   async submitJob(name: string, params: Record<string, unknown>): Promise<unknown> {
     return this.callTool('submit_job', { name, data: params });
+  }
+
+  async sourcesAdd(params: {
+    id: string;
+    name?: string;
+    url: string;
+    federated?: boolean;
+  }): Promise<unknown> {
+    return this.callTool('sources_add', params);
+  }
+
+  async sourcesStatus(id: string): Promise<GbrainSourceStatus> {
+    return this.callTool<GbrainSourceStatus>('sources_status', { id });
+  }
+
+  async sourcesRemove(params: {
+    id: string;
+    confirmDestructive?: boolean;
+    dryRun?: boolean;
+    keepStorage?: boolean;
+  }): Promise<unknown> {
+    return this.callTool('sources_remove', {
+      id: params.id,
+      confirm_destructive: params.confirmDestructive === true,
+      dry_run: params.dryRun === true,
+      keep_storage: params.keepStorage === true,
+    });
   }
 
   async getJobProgress(id: number | string): Promise<unknown> {

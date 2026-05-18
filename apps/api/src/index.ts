@@ -12,6 +12,7 @@ import { requireRole } from './middleware/require-role.js';
 import {
   COMPOSIO_BASE_URL,
   COMPOSIO_WEBHOOK_SECRET,
+  GITHUB_WEBHOOK_SECRET,
   OPEN42_COMPOSIO_ENABLED,
   OPEN42_EDITION,
   API_PUBLIC_URL,
@@ -40,7 +41,9 @@ import { authRouter } from './routes/auth.js';
 import { chatRouter } from './routes/chat.js';
 import { buildNotionZipRouter } from './routes/connections/notion-zip.js';
 import { buildComposioRouter } from './routes/connections/composio.js';
+import { buildGitHubRouter } from './routes/connections/github.js';
 import { buildConnectionsRouter } from './routes/connections/index.js';
+import { buildGitHubGitProxyRouter } from './routes/git/github-proxy.js';
 import { buildPublicGbrainProxyRouter } from './routes/gbrain-public-proxy.js';
 import { buildAnthropicProxy, buildOpenAIProxy } from './routes/proxy/index.js';
 import { buildConnectorAuthProfilesRouter } from './routes/workspaces/connector-auth-profiles.js';
@@ -58,6 +61,7 @@ import { libraryRouter } from './routes/library/index.js';
 import { buildSharedSkillsRouter } from './routes/shared-skills.js';
 import { skillsRouter } from './routes/skills/mint.js';
 import { buildComposioWebhookRouter } from './routes/webhooks/composio.js';
+import { buildGitHubWebhookRouter } from './routes/webhooks/github.js';
 import {
   runWorkspaceCycle,
   type OrchestratorDeps,
@@ -153,12 +157,22 @@ app.use(
 app.use(buildPublicGbrainProxyRouter());
 app.use('/proxy/openai', buildOpenAIProxy());
 app.use('/proxy/anthropic', buildAnthropicProxy());
+// Private GitHub repos are cloned by gbrain through this narrow smart-HTTP
+// bridge. Mount before body parsers so git-upload-pack bodies stream through.
+app.use('/git', buildGitHubGitProxyRouter());
 // Webhook router declares its own express.raw — must mount before express.json
 // so the HMAC verification sees the unparsed bytes Composio actually signed.
 app.use(
   '/webhooks/composio',
   buildComposioWebhookRouter({
     secret: COMPOSIO_WEBHOOK_SECRET,
+    kick: kickWorkspaceIngest,
+  }),
+);
+app.use(
+  '/webhooks/github',
+  buildGitHubWebhookRouter({
+    secret: GITHUB_WEBHOOK_SECRET,
     kick: kickWorkspaceIngest,
   }),
 );
@@ -190,6 +204,11 @@ app.use(
   '/workspaces/:id/connections',
   requireMembership({ from: 'param' }),
   buildComposioRouter({ kick: kickWorkspaceIngest }),
+);
+app.use(
+  '/workspaces/:id/connections',
+  requireMembership({ from: 'param' }),
+  buildGitHubRouter({ kick: kickWorkspaceIngest, gbrain: buildGbrainForWorkspace }),
 );
 app.use(
   '/workspaces/:id/connections/notion-zip',

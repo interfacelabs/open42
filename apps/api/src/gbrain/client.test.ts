@@ -110,6 +110,25 @@ describe('GbrainClient', () => {
         if (name === 'get_chunks') {
           return json({ result: { content: [{ type: 'text', text: JSON.stringify({ not: 'an array' }) }] } });
         }
+        if (name === 'sources_add') {
+          expect(body.params.arguments).toEqual({
+            id: 'gh-a',
+            name: 'owner/repo',
+            url: 'https://github.com/owner/repo.git',
+            federated: false,
+          });
+        }
+        if (name === 'sources_status') {
+          expect(body.params.arguments).toEqual({ id: 'gh-a' });
+        }
+        if (name === 'sources_remove') {
+          expect(body.params.arguments).toEqual({
+            id: 'gh-a',
+            confirm_destructive: true,
+            dry_run: false,
+            keep_storage: false,
+          });
+        }
         return json({ result: { content: [{ type: 'text', text: JSON.stringify({ ok: name }) }] } });
       }
       throw new Error(`unexpected URL ${href}`);
@@ -129,6 +148,18 @@ describe('GbrainClient', () => {
     await expect(client.getVersions('refund-policy')).resolves.toEqual({ ok: 'get_versions' });
     await expect(client.listPages({ limit: 5 })).resolves.toEqual({ ok: 'list_pages' });
     await expect(client.submitJob('sync', { path: '/tmp/import' })).resolves.toEqual({ job_id: 42 });
+    await expect(
+      client.sourcesAdd({
+        id: 'gh-a',
+        name: 'owner/repo',
+        url: 'https://github.com/owner/repo.git',
+        federated: false,
+      }),
+    ).resolves.toEqual({ ok: 'sources_add' });
+    await expect(client.sourcesStatus('gh-a')).resolves.toEqual({ ok: 'sources_status' });
+    await expect(
+      client.sourcesRemove({ id: 'gh-a', confirmDestructive: true }),
+    ).resolves.toEqual({ ok: 'sources_remove' });
     await expect(client.getJobProgress('42')).resolves.toBe('queued');
     await expect(client.getHealth()).resolves.toEqual({ status: 'ok', version: '0.31.3' });
     await expect(client.getStats()).resolves.toEqual({ ok: 'get_stats' });
@@ -138,6 +169,9 @@ describe('GbrainClient', () => {
       'get_versions',
       'list_pages',
       'submit_job',
+      'sources_add',
+      'sources_status',
+      'sources_remove',
       'get_job_progress',
       'get_stats',
     ]);

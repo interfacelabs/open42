@@ -83,6 +83,9 @@ export interface Citation {
   version_id: number | null;
   last_updated: string | null;
   excerpt: string;
+  source_id?: string | null;
+  source_status?: string | null;
+  source_label?: string | null;
 }
 
 export interface ChatMessage {
