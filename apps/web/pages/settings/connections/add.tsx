@@ -99,6 +99,7 @@ export default function AddConnectionPage() {
   const [byokNotionAuthConfigId, setByokNotionAuthConfigId] = useState('');
   const [byokSaveState, setByokSaveState] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
   const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [githubError, setGithubError] = useState<string | null>(null);
   const [deletingProfileId, setDeletingProfileId] = useState<string | null>(null);
   const hasNotion = Boolean(
     data?.connections.some(
@@ -140,6 +141,39 @@ export default function AddConnectionPage() {
     if (response.ok && payload.redirect_url) {
       window.location.href = payload.redirect_url;
     }
+  }
+
+  async function connectGitHub() {
+    if (!workspaceId) return;
+    setGithubError(null);
+    const response = await fetch(`/api/workspaces/${workspaceId}/connections/github/init`, {
+      method: 'POST',
+      headers: { ...csrfHeaders(), 'Content-Type': 'application/json' },
+      body: '{}',
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (response.ok && payload.redirect_url) {
+      window.location.href = payload.redirect_url;
+      return;
+    }
+    if (!response.ok && payload.setup === 'github_app_manifest') {
+      const setup = await fetch(
+        `/api/workspaces/${workspaceId}/connections/github/app-manifest/init`,
+        {
+          method: 'POST',
+          headers: { ...csrfHeaders(), 'Content-Type': 'application/json' },
+          body: '{}',
+        },
+      );
+      const setupPayload = await setup.json().catch(() => ({}));
+      if (setup.ok && setupPayload.redirect_url) {
+        window.location.href = setupPayload.redirect_url;
+        return;
+      }
+      setGithubError(setupPayload.error ?? 'github_app_setup_failed');
+      return;
+    }
+    setGithubError(payload.error ?? 'github_connection_failed');
   }
 
   async function uploadZip(event: ChangeEvent<HTMLInputElement>) {
@@ -233,8 +267,20 @@ export default function AddConnectionPage() {
                 Notion is already connected. Disconnect it before switching ingestion methods.
               </div>
             ) : null}
+            {githubError ? (
+              <div className="mb-6 rounded-xl border border-red-200 bg-red-50 px-5 py-4 font-mono text-[11px] uppercase tracking-[0.06em] text-red-700">
+                {githubError}
+              </div>
+            ) : null}
 
             <section className="grid gap-3 sm:grid-cols-2">
+              <ProviderTile
+                name="GitHub"
+                detail="Markdown and MDX from repositories"
+                slug="github"
+                disabled={!workspaceId}
+                onClick={() => void connectGitHub()}
+              />
               {composioServices.map((service) => (
                 <ProviderTile
                   key={service.serviceId}

@@ -16,12 +16,26 @@ import { cn } from '@/lib/utils';
 interface Connection {
   id: string;
   workspaceId: string;
-  kind: 'notion-composio' | 'notion-zip';
+  kind: 'notion-composio' | 'notion-zip' | 'github-repo';
   status: string;
   displayName: string;
   lastPulledAt: string | null;
   lastError: string | null;
   createdAt: string;
+  github?: {
+    owner: string;
+    repo: string;
+    branch: string;
+    repoPrivate: boolean;
+    gbrainSourceId: string;
+    syncTransport: 'direct-url' | 'open42-git-proxy';
+    syncStatus: string;
+    lastIndexedCommitSha: string | null;
+    branchHeadSha: string | null;
+    lastSyncedAt: string | null;
+    lastError: string | null;
+    webhookHealth: string;
+  } | null;
 }
 
 interface ConnectionsPayload {
@@ -103,9 +117,13 @@ export default function ConnectionsPage({
     }
   }
 
-  async function syncNow() {
+  async function syncNow(connection?: Connection) {
     if (!payload.workspaceId) return;
-    await fetch(`/api/workspaces/${payload.workspaceId}/ingest/sync`, {
+    const url =
+      connection?.kind === 'github-repo'
+        ? `/api/workspaces/${payload.workspaceId}/connections/github/${connection.id}/sync`
+        : `/api/workspaces/${payload.workspaceId}/ingest/sync`;
+    await fetch(url, {
       method: 'POST',
       headers: { ...csrfHeaders(), 'Content-Type': 'application/json' },
       body: '{}',
@@ -190,24 +208,29 @@ export default function ConnectionsPage({
                             </span>
                           </Td>
                           <Td className="text-text-body">
-                            {kindLabel(connection.kind)}
+                            {kindLabel(connection)}
                           </Td>
                           <Td>
-                            <StatusPill status={connection.status} />
+                            <StatusPill status={connection.github?.syncStatus ?? connection.status} />
                           </Td>
                           <Td className="font-mono text-[11.5px] text-text-subtle">
-                            {connection.lastPulledAt
+                            {connection.github?.lastSyncedAt || connection.lastPulledAt
                               ? new Date(
-                                  connection.lastPulledAt,
+                                  connection.github?.lastSyncedAt ?? connection.lastPulledAt!,
                                 ).toLocaleString()
                               : 'Never'}
+                            {connection.github?.lastIndexedCommitSha ? (
+                              <span className="ml-2 text-text-faint">
+                                {connection.github.lastIndexedCommitSha.slice(0, 7)}
+                              </span>
+                            ) : null}
                           </Td>
                           <Td align="right">
                             <div className="flex justify-end gap-1">
                               <Button
                                 variant="ghost"
                                 size="sm"
-                                onClick={syncNow}
+                                onClick={() => void syncNow(connection)}
                                 title="Sync now"
                                 aria-label="Sync now"
                               >
@@ -291,6 +314,13 @@ function StatusPill({ status }: { status: string }) {
     completed: { label: 'Imported', tone: 'green' },
     pending_import: { label: 'Importing', tone: 'blue' },
     errored: { label: 'Reconnect', tone: 'red' },
+    fresh: { label: 'Fresh', tone: 'green' },
+    syncing: { label: 'Syncing', tone: 'blue' },
+    behind: { label: 'Behind', tone: 'orange' },
+    stale: { label: 'Stale', tone: 'orange' },
+    auth_required: { label: 'Reconnect', tone: 'red' },
+    webhook_unhealthy: { label: 'Webhook', tone: 'orange' },
+    degraded: { label: 'Review', tone: 'orange' },
   };
   const entry = map[status] ?? { label: status, tone: 'neutral' as const };
   return (
@@ -327,8 +357,12 @@ function EmptyState() {
   );
 }
 
-function kindLabel(kind: Connection['kind']) {
-  return kind === 'notion-composio' ? 'Live · Notion' : 'Upload · Notion';
+function kindLabel(connection: Connection) {
+  if (connection.kind === 'github-repo') {
+    const visibility = connection.github?.repoPrivate ? 'Private' : 'Public';
+    return `${visibility} · ${connection.github?.branch ?? 'default'}`;
+  }
+  return connection.kind === 'notion-composio' ? 'Live · Notion' : 'Upload · Notion';
 }
 
 function apiUrlServer() {

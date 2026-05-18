@@ -43,7 +43,6 @@ const COMING_SOON_SOURCES: Array<{
   { name: 'Gmail', slug: 'gmail', monogram: 'G', eta: 'Q3' },
   { name: 'Confluence', slug: 'confluence', monogram: 'C', eta: 'Q4' },
   { name: 'Linear', slug: 'linear', monogram: 'L', eta: 'Q4' },
-  { name: 'GitHub', slug: 'github', monogram: '⌥', eta: 'Q4' },
   { name: 'Box / Dropbox', slug: 'dropbox', monogram: 'B', eta: 'Q4' },
   { name: 'Markdown / files', slug: null, monogram: 'M', eta: 'soon' },
 ];
@@ -63,7 +62,7 @@ interface ConnectSourcesStepProps {
 
 export function ConnectSourcesStep({ runtime, workspaceId, mutate }: ConnectSourcesStepProps) {
   const router = useRouter();
-  const [busy, setBusy] = useState<'notion' | 'zip' | null>(null);
+  const [busy, setBusy] = useState<'notion' | 'github' | 'zip' | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [selectedProfileId, setSelectedProfileId] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
@@ -135,6 +134,50 @@ export function ConnectSourcesStep({ runtime, workspaceId, mutate }: ConnectSour
     }
   }, [busy, blocked, liveProfileReady, mutate, router, selectedProfile, workspaceId]);
 
+  const connectGitHub = useCallback(async () => {
+    if (busy || blocked || !workspaceId) return;
+    setBusy('github');
+    setError(null);
+    try {
+      const response = await fetch(`/api/workspaces/${workspaceId}/connections/github/init`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...csrfHeaders() },
+        body: '{}',
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        if (payload.setup === 'github_app_manifest') {
+          const setup = await fetch(
+            `/api/workspaces/${workspaceId}/connections/github/app-manifest/init`,
+            {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json', ...csrfHeaders() },
+              body: '{}',
+            },
+          );
+          const setupPayload = await setup.json().catch(() => ({}));
+          const setupRedirect: string | undefined =
+            setupPayload.redirect_url ?? setupPayload.redirectUrl;
+          if (setup.ok && setupRedirect) {
+            window.location.href = setupRedirect;
+            return;
+          }
+          setError(setupPayload.error ?? 'github_app_setup_failed');
+          setBusy(null);
+          return;
+        }
+        setError(payload.error ?? 'connection_failed');
+        setBusy(null);
+        return;
+      }
+      const redirectUrl: string | undefined = payload.redirect_url ?? payload.redirectUrl;
+      if (redirectUrl) window.location.href = redirectUrl;
+    } catch {
+      setError('network_error');
+      setBusy(null);
+    }
+  }, [busy, blocked, workspaceId]);
+
   const onFilePick = useCallback(() => {
     if (busy || blocked) return;
     fileInputRef.current?.click();
@@ -197,6 +240,15 @@ export function ConnectSourcesStep({ runtime, workspaceId, mutate }: ConnectSour
       </p>
 
       <div className="mt-8 grid max-w-[520px] grid-cols-1 gap-3.5 sm:grid-cols-2">
+        <SourceCard
+          name="Connect GitHub"
+          sub="Markdown and MDX from selected repos, including private repositories."
+          tag={blocked ? 'WAITING ON RUNTIME' : 'REPOS'}
+          disabled={busy !== null || blocked}
+          onClick={() => void connectGitHub()}
+          icon={<ProviderLogo slug="github" name="GitHub" />}
+          loading={busy === 'github'}
+        />
         <SourceCard
           name="Connect Notion"
           sub={notionCardSubtitle(selectedProfile, profilesUnavailable)}

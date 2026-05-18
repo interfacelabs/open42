@@ -56,6 +56,7 @@ function ReceiptCard({
   onActivate: (index: number) => void;
 }) {
   const fresh = citation.last_updated ? safeFreshness(citation.last_updated) : null;
+  const sourceWarning = warningForSourceStatus(citation.source_status);
   return (
     <li>
       <button
@@ -84,6 +85,11 @@ function ReceiptCard({
             &ldquo;{citation.excerpt}&rdquo;
           </p>
         ) : null}
+        {sourceWarning ? (
+          <p className="mt-1.5 rounded-md bg-orange-soft px-2 py-1 font-mono text-[10px] uppercase tracking-[0.04em] text-orange">
+            {sourceWarning}
+          </p>
+        ) : null}
         {citation.last_updated ? (
           <div className="mt-1.5 font-mono text-[10px] text-text-faint">
             <span
@@ -102,6 +108,20 @@ function ReceiptCard({
       </button>
     </li>
   );
+}
+
+function warningForSourceStatus(status: string | null | undefined): string | null {
+  switch (status) {
+    case 'stale':
+      return 'Repo source stale';
+    case 'errored':
+    case 'auth_required':
+      return 'Repo sync needs repair';
+    case 'degraded':
+      return 'Repo sync degraded';
+    default:
+      return null;
+  }
 }
 
 /**
