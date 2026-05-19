@@ -175,19 +175,21 @@ describe('workspace index router', () => {
       expect(create).not.toHaveBeenCalled();
     });
 
-    it('201 — calls createWorkspaceForUser and returns the workspace', async () => {
+    it('201 — creates, selects, and returns the workspace', async () => {
       setSession('user-1');
+      const repo = makeRepo();
       const create = vi.fn(async (userId: string, name: string) => ({
         id: 'ws-new',
         name,
         status: 'provisioning' as const,
       }));
-      const res = await request(makeApp({ createWorkspaceForUser: create }))
+      const res = await request(makeApp({ repo, createWorkspaceForUser: create }))
         .post('/workspaces')
         .set('Cookie', COOKIE)
         .send({ name: '  New   Workspace  ' });
       expect(res.status).toBe(201);
       expect(create).toHaveBeenCalledWith('user-1', 'New Workspace');
+      expect(repo.setCurrentWorkspace).toHaveBeenCalledWith('user-1', 'ws-new');
       expect(res.body).toEqual({
         workspace: { id: 'ws-new', name: 'New Workspace', status: 'provisioning' },
       });

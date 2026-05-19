@@ -78,9 +78,7 @@ describe('OnboardPage', () => {
       isLoading: false,
     });
     render(<OnboardPage />);
-    expect(
-      screen.getByRole('heading', { name: /who else needs this brain/i }),
-    ).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: /who else needs this brain/i })).toBeInTheDocument();
     expect(screen.getByLabelText(/email addresses/i)).toBeInTheDocument();
   });
 
@@ -112,11 +110,37 @@ describe('OnboardPage', () => {
     // to 'connect' when workspace is ready and connections.length === 0,
     // which is exactly this state. So no urlStep needed.
     render(<OnboardPage />);
-    expect(
-      screen.getByRole('heading', { name: /your brain is empty/i }),
-    ).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: /where are your docs/i })).toBeInTheDocument();
+    expect(screen.getByText(/I already have a GitHub repo/i)).toBeInTheDocument();
+    expect(screen.getByText(/I need a GitHub repo/i)).toBeInTheDocument();
     expect(screen.getByText(/Connect Notion/i)).toBeInTheDocument();
     expect(screen.getByText(/Upload Notion zip/i)).toBeInTheDocument();
+  });
+
+  it('opens GitHub repo creation from the source step', () => {
+    const openMock = vi.spyOn(window, 'open').mockImplementation(() => null);
+    (useSWR as unknown as ReturnType<typeof vi.fn>).mockReturnValue({
+      data: {
+        workspace: { id: 'ws1', name: 'Speedrun', runtime: 'ready' },
+        connections: [],
+        lastJob: null,
+        invites: [],
+        user: { id: 'u', email: 'a@x.com' },
+      },
+      error: null,
+      mutate: vi.fn(),
+      isLoading: false,
+    });
+
+    render(<OnboardPage />);
+    fireEvent.click(screen.getByRole('button', { name: /I need a GitHub repo/i }));
+
+    expect(openMock).toHaveBeenCalledWith(
+      expect.stringContaining('https://github.com/new'),
+      '_blank',
+      'noopener,noreferrer',
+    );
+    expect(screen.getByText(/Created the repo/i)).toBeInTheDocument();
   });
 
   it('sends the selected BYOK Composio profile when connecting Notion', async () => {
@@ -195,9 +219,7 @@ describe('OnboardPage', () => {
  *   - any URL with no entry → 404 { error: 'not_mocked' }
  *   - entries are matched by `startsWith`, longest-prefix first
  */
-function makeFetch(
-  routes: Record<string, { ok: boolean; status: number; body: unknown }>,
-) {
+function makeFetch(routes: Record<string, { ok: boolean; status: number; body: unknown }>) {
   return vi.fn(async (url: RequestInfo | URL, _init?: RequestInit) => {
     const key = String(url);
     const match = Object.keys(routes)
@@ -307,34 +329,40 @@ describe('OnboardPage — mode=create', () => {
 
     // After success it transitions to the provisioning step (mode=create).
     await waitFor(() => {
-      expect(mocks.replaceMock).toHaveBeenCalledWith(
-        '/onboard?mode=create&step=provisioning',
-      );
+      expect(mocks.replaceMock).toHaveBeenCalledWith('/onboard?mode=create&step=provisioning');
     });
   });
 
-  it('on ready, switches via the store and routes to / (polling /api/workspaces, not /current)', async () => {
+  it('on ready, switches via the store and routes to source connection', async () => {
     // Setup: page POSTs /api/workspaces (returns the new id w2). Then we
     // poll /api/workspaces (list endpoint) until the new workspace shows
-    // status='ready'. The new behaviour is key-aware: /workspaces/current
-    // stays stuck on the OLD workspace forever (mirrors the server bug we
-    // fixed), but the list reflects the new row, and that's what drives
-    // the switch + redirect.
+    // status='ready'. The list reflects the new row, and that's what drives
+    // the switch into the new workspace before the source-connection step.
     mockRouterQuery.current = { mode: 'create' };
-    const mutate = vi.fn();
+    const mutate = vi.fn(async () => ({
+      workspace: { id: 'w2', name: 'New', runtime: 'ready' },
+      connections: [],
+      lastJob: null,
+      invites: [],
+      user: { id: 'u', email: 'a@x.com' },
+      requiresProviderKeys: false,
+      providerKeys: { anthropicChat: true, openaiEmbed: true },
+    }));
     const swrMock = useSWR as unknown as ReturnType<typeof vi.fn>;
 
     // SWR returns shape based on the key the page passes in. The list
     // endpoint result lives in a ref so we can flip it mid-test from
     // provisioning -> ready without re-rendering manually.
-    type ListResult = { workspaces: Array<{ id: string; name: string; role: string; status: string }> };
+    type ListResult = {
+      workspaces: Array<{ id: string; name: string; role: string; status: string }>;
+    };
     const listRef: { current: ListResult | undefined } = { current: undefined };
     swrMock.mockImplementation((key: unknown) => {
       if (key === '/api/workspaces/current') {
         return {
           data: {
-            // Intentionally STILL the old workspace — mirrors the server's
-            // behaviour of not flipping current_workspace_id on create.
+            // Intentionally still old in the cached current payload; the
+            // effect must not use it to decide which workspace became ready.
             workspace: { id: 'ws1', name: 'Existing', runtime: 'ready' },
             connections: [{}],
             lastJob: null,
@@ -390,12 +418,9 @@ describe('OnboardPage — mode=create', () => {
     rerender(<OnboardPage />);
     // Allow microtasks; confirm we did NOT switch yet.
     await new Promise((r) => setTimeout(r, 0));
-    expect(fetchMock).not.toHaveBeenCalledWith(
-      '/api/workspaces/w2/switch',
-      expect.anything(),
-    );
+    expect(fetchMock).not.toHaveBeenCalledWith('/api/workspaces/w2/switch', expect.anything());
 
-    // Next poll: status flips to ready. switch + redirect fire.
+    // Next poll: status flips to ready. switch + connect-step redirect fire.
     listRef.current = {
       workspaces: [
         { id: 'ws1', name: 'Existing', role: 'owner', status: 'ready' },
@@ -409,7 +434,67 @@ describe('OnboardPage — mode=create', () => {
         '/api/workspaces/w2/switch',
         expect.objectContaining({ method: 'POST' }),
       );
-      expect(mocks.replaceMock).toHaveBeenCalledWith('/');
+      expect(mocks.replaceMock).toHaveBeenCalledWith('/onboard?step=connect');
+    });
+  });
+
+  it('on ready, routes to provider keys before sources when BYOK is missing', async () => {
+    window.sessionStorage.setItem('open42:create_pending_workspace_id', 'w2');
+    mockRouterQuery.current = { mode: 'create', step: 'provisioning' };
+    const mutate = vi.fn(async () => ({
+      workspace: { id: 'w2', name: 'New', runtime: 'ready' },
+      connections: [],
+      lastJob: null,
+      invites: [],
+      user: { id: 'u', email: 'a@x.com' },
+      requiresProviderKeys: true,
+      providerKeys: { anthropicChat: true, openaiEmbed: false },
+    }));
+    const swrMock = useSWR as unknown as ReturnType<typeof vi.fn>;
+    swrMock.mockImplementation((key: unknown) => {
+      if (key === '/api/workspaces/current') {
+        return {
+          data: {
+            workspace: { id: 'ws1', name: 'Existing', runtime: 'ready' },
+            connections: [{}],
+            lastJob: null,
+            invites: [],
+            user: { id: 'u', email: 'a@x.com' },
+          },
+          error: null,
+          mutate,
+          isLoading: false,
+        };
+      }
+      if (key === '/api/workspaces') {
+        return {
+          data: {
+            workspaces: [
+              { id: 'ws1', name: 'Existing', role: 'owner', status: 'ready' },
+              { id: 'w2', name: 'New', role: 'owner', status: 'ready' },
+            ],
+          },
+          error: null,
+          mutate,
+          isLoading: false,
+        };
+      }
+      return { data: undefined, error: null, mutate, isLoading: false };
+    });
+
+    const fetchMock = makeFetch({
+      '/api/workspaces/w2/switch': { ok: true, status: 200, body: { ok: true } },
+    });
+    global.fetch = fetchMock as unknown as typeof fetch;
+
+    render(<OnboardPage />);
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith(
+        '/api/workspaces/w2/switch',
+        expect.objectContaining({ method: 'POST' }),
+      );
+      expect(mocks.replaceMock).toHaveBeenCalledWith('/onboard?step=keys');
     });
   });
 
@@ -423,7 +508,9 @@ describe('OnboardPage — mode=create', () => {
     const mutate = vi.fn();
     const swrMock = useSWR as unknown as ReturnType<typeof vi.fn>;
 
-    type ListResult = { workspaces: Array<{ id: string; name: string; role: string; status: string }> };
+    type ListResult = {
+      workspaces: Array<{ id: string; name: string; role: string; status: string }>;
+    };
     const listRef: { current: ListResult | undefined } = { current: undefined };
     swrMock.mockImplementation((key: unknown) => {
       if (key === '/api/workspaces/current') {
@@ -497,12 +584,17 @@ describe('OnboardPage — mode=create', () => {
     // React-only createdWorkspaceId state to null, the list poll never
     // armed, and the spinner hung forever. Seeding sessionStorage and
     // mounting should reactivate the list poll for the stashed id.
-    window.sessionStorage.setItem(
-      'open42:create_pending_workspace_id',
-      'w2',
-    );
+    window.sessionStorage.setItem('open42:create_pending_workspace_id', 'w2');
     mockRouterQuery.current = { mode: 'create', step: 'provisioning' };
-    const mutate = vi.fn();
+    const mutate = vi.fn(async () => ({
+      workspace: { id: 'w2', name: 'New', runtime: 'ready' },
+      connections: [],
+      lastJob: null,
+      invites: [],
+      user: { id: 'u', email: 'a@x.com' },
+      requiresProviderKeys: false,
+      providerKeys: { anthropicChat: true, openaiEmbed: true },
+    }));
     const swrMock = useSWR as unknown as ReturnType<typeof vi.fn>;
     type ListResult = {
       workspaces: Array<{ id: string; name: string; role: string; status: string }>;
@@ -549,20 +641,18 @@ describe('OnboardPage — mode=create', () => {
     // sessionStorage, which arms the second SWR key ('/api/workspaces').
     expect(seenKeys).toContain('/api/workspaces');
 
-    // Polling sees the new workspace as 'ready' → switch + redirect fire
+    // Polling sees the new workspace as 'ready' → switch + source handoff
     // without the user ever re-submitting the workspace form.
     await waitFor(() => {
       expect(fetchMock).toHaveBeenCalledWith(
         '/api/workspaces/w2/switch',
         expect.objectContaining({ method: 'POST' }),
       );
-      expect(mocks.replaceMock).toHaveBeenCalledWith('/');
+      expect(mocks.replaceMock).toHaveBeenCalledWith('/onboard?step=connect');
     });
 
     // And the stash is cleared after resolution so a future visit doesn't
     // re-arm against a stale id.
-    expect(
-      window.sessionStorage.getItem('open42:create_pending_workspace_id'),
-    ).toBeNull();
+    expect(window.sessionStorage.getItem('open42:create_pending_workspace_id')).toBeNull();
   });
 });

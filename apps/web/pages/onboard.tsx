@@ -71,6 +71,13 @@ function deriveOnboardRefreshStep(
   return mode === 'create' ? 'workspace' : null;
 }
 
+function hasRequiredProviderKeys(current: CurrentPayload): boolean {
+  return (
+    !current.requiresProviderKeys ||
+    Boolean(current.providerKeys?.anthropicChat && current.providerKeys?.openaiEmbed)
+  );
+}
+
 export default function OnboardPage() {
   const router = useRouter();
   const urlStep = typeof router.query.step === 'string' ? router.query.step : null;
@@ -91,15 +98,13 @@ export default function OnboardPage() {
   const seededFromServerRef = useRef(false);
   const [inviteText, setInviteText] = useState<string>('');
   // mode=create: id of the workspace we just POST'd /api/workspaces for. We
-  // poll /api/workspaces (the list endpoint) for THIS workspace's status —
-  // /api/workspaces/current can't be used because POST /workspaces does not
-  // change users.current_workspace_id on the server, so /current keeps
-  // returning the OLD workspace forever and our previous condition never
-  // fired (users got stuck on the provisioning step).
+  // poll /api/workspaces (the list endpoint) for THIS workspace's status by
+  // id, so route decisions are tied to the newly-created workspace rather
+  // than whatever /workspaces/current had cached before submit.
   //
   // Initialise from sessionStorage so a reload during provisioning doesn't
   // strand the user on the spinner (round-6 P2). Cleared once the create
-  // flow resolves (ready → home, or failed → switched + retry UI).
+  // flow resolves (ready → source connection, or failed → switched + retry UI).
   const [createdWorkspaceId, setCreatedWorkspaceIdState] = useState<string | null>(() => {
     if (typeof window === 'undefined') return null;
     return window.sessionStorage.getItem(CREATE_PENDING_KEY);
@@ -170,10 +175,9 @@ export default function OnboardPage() {
     if (mode === 'create') return;
     if (!current) return;
     if (step === 'provisioning' && runtime === 'ready') {
-      const hasProviderKeys =
-        !current.requiresProviderKeys ||
-        (current.providerKeys?.anthropicChat && current.providerKeys?.openaiEmbed);
-      void router.replace(hasProviderKeys ? '/onboard?step=connect' : '/onboard?step=keys');
+      void router.replace(
+        hasRequiredProviderKeys(current) ? '/onboard?step=connect' : '/onboard?step=keys',
+      );
       return;
     }
     if (step === null) {
@@ -182,11 +186,8 @@ export default function OnboardPage() {
   }, [current, step, runtime, router, mode]);
 
   // mode='create' flow: poll /api/workspaces (the list) for the new
-  // workspace and, once *its* status flips to 'ready', switch + redirect.
-  // Using the list endpoint avoids /workspaces/current's staleness — the
-  // server never updates current_workspace_id from POST /workspaces, so
-  // the previous condition (current.workspace?.id === newId) could never
-  // become true and users were stranded on the provisioning step.
+  // workspace and, once *its* status flips to 'ready', switch into it and
+  // continue onboarding with provider keys or source connection.
   //
   // If the new workspace flips to 'failed' instead, switch into it so the
   // ProvisioningStep (which reads current.workspace.runtime from
@@ -206,12 +207,26 @@ export default function OnboardPage() {
           // best-effort; the refresh below reconciles store state regardless
         }
         await useWorkspaceStore.getState().refresh();
+        const refreshed = (await mutate().catch(() => undefined)) as
+          | OnboardCurrentPayload
+          | undefined;
+        // If we could not confirm that /workspaces/current now points at the
+        // new workspace, stay on provisioning rather than risk connecting
+        // sources to the previously-selected workspace.
+        if (refreshed?.workspace?.id !== createdWorkspaceId) {
+          return;
+        }
+
+        const nextPath =
+          refreshed && !hasRequiredProviderKeys(refreshed)
+            ? '/onboard?step=keys'
+            : '/onboard?step=connect';
         // Resolution reached — clear the per-tab create marker so a future
         // visit to /auth/onboard?mode=create doesn't re-read a stale id.
         if (typeof window !== 'undefined') {
           window.sessionStorage.removeItem(CREATE_PENDING_KEY);
         }
-        void router.replace('/');
+        void router.replace(nextPath);
       })();
       return;
     }
@@ -485,10 +500,11 @@ function WorkspaceStep({
       setError(null);
       try {
         // In `mode='create'` we hit the new POST /api/workspaces endpoint
-        // (Chunk 5) — it creates an additional workspace + owner membership
-        // for the already-onboarded user. In the legacy first-time flow we
-        // keep using the onboarding alias to preserve its specific semantics
-        // (idempotent rename of the user's bootstrap workspace).
+        // (Chunk 5) — it creates an additional workspace, owner membership,
+        // and current-workspace selection for the already-onboarded user. In
+        // the legacy first-time flow we keep using the onboarding alias to
+        // preserve its specific semantics (idempotent rename of the user's
+        // bootstrap workspace).
         const url = mode === 'create' ? '/api/workspaces' : '/api/workspaces/onboarding/workspace';
         const response = await fetch(url, {
           method: 'POST',

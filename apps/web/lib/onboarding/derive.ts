@@ -24,11 +24,11 @@ export interface CurrentPayload {
  *   state: workspace exists? runtime ready? at least one connection?
  * - Returns `null` when onboarding is fully complete — callers redirect to `/`.
  *
- * In `mode='create'` (the in-app "+ Create new workspace" flow), the page must
- * always show the workspace-name step regardless of any existing workspace,
- * because the user already has one and is explicitly creating another. The
- * only transition is to the provisioning step (via `?step=provisioning`) while
- * the newly-created workspace spins up; there is no invite/connect step.
+ * In `mode='create'` (the in-app "+ Create new workspace" flow), the default
+ * screen is always the workspace-name step regardless of any existing
+ * workspace, because the user is explicitly creating another one. Once that
+ * workspace exists, URL steps drive the handoff through provisioning and into
+ * provider-key/source connection setup for the newly-selected workspace.
  */
 export function deriveOnboardStep(
   current: CurrentPayload,
@@ -37,6 +37,8 @@ export function deriveOnboardStep(
 ): OnboardStep | null {
   if (mode === 'create') {
     if (urlStep === 'provisioning') return 'provisioning';
+    if (urlStep === 'keys') return 'keys';
+    if (urlStep === 'connect') return 'connect';
     return 'workspace';
   }
   if (!current.workspace) return 'workspace';

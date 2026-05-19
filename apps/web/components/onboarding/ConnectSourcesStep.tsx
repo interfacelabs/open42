@@ -16,7 +16,6 @@ import { motion } from 'motion/react';
 import { ArrowRight } from 'lucide-react';
 import useSWR from 'swr';
 
-import { OnboardingMcpPanel } from '@/components/onboarding/OnboardingMcpPanel';
 import { fetcher as apiFetcher, type FetchError } from '@/lib/api';
 import {
   authProfileIdForRequest,
@@ -32,20 +31,8 @@ import type { WorkspaceRuntime } from '@/lib/onboarding/derive';
 import { providerLogo } from '@/lib/provider-logos';
 import { cn } from '@/lib/utils';
 
-const COMING_SOON_SOURCES: Array<{
-  name: string;
-  slug: string | null;
-  monogram: string;
-  eta: string;
-}> = [
-  { name: 'Google Docs', slug: 'googledocs', monogram: 'D', eta: 'Q3' },
-  { name: 'Slack', slug: 'slack', monogram: 'S', eta: 'Q3' },
-  { name: 'Gmail', slug: 'gmail', monogram: 'G', eta: 'Q3' },
-  { name: 'Confluence', slug: 'confluence', monogram: 'C', eta: 'Q4' },
-  { name: 'Linear', slug: 'linear', monogram: 'L', eta: 'Q4' },
-  { name: 'Box / Dropbox', slug: 'dropbox', monogram: 'B', eta: 'Q4' },
-  { name: 'Markdown / files', slug: null, monogram: 'M', eta: 'soon' },
-];
+const GITHUB_NEW_REPO_URL =
+  'https://github.com/new?name=company-brain&description=Company%20docs%20for%20Open42&visibility=private';
 
 const FALLBACK_MANAGED_PROFILE: ConnectorAuthProfile = {
   id: OPEN42_MANAGED_PROFILE_ID,
@@ -65,6 +52,7 @@ export function ConnectSourcesStep({ runtime, workspaceId, mutate }: ConnectSour
   const [busy, setBusy] = useState<'notion' | 'github' | 'zip' | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [selectedProfileId, setSelectedProfileId] = useState<string | null>(null);
+  const [repoCreateStarted, setRepoCreateStarted] = useState(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const profilesUrl = workspaceId
     ? `/api/workspaces/${encodeURIComponent(workspaceId)}/connector-auth-profiles`
@@ -178,6 +166,12 @@ export function ConnectSourcesStep({ runtime, workspaceId, mutate }: ConnectSour
     }
   }, [busy, blocked, workspaceId]);
 
+  const createGitHubRepo = useCallback(() => {
+    if (busy || blocked) return;
+    setRepoCreateStarted(true);
+    window.open(GITHUB_NEW_REPO_URL, '_blank', 'noopener,noreferrer');
+  }, [busy, blocked]);
+
   const onFilePick = useCallback(() => {
     if (busy || blocked) return;
     fileInputRef.current?.click();
@@ -231,42 +225,67 @@ export function ConnectSourcesStep({ runtime, workspaceId, mutate }: ConnectSour
       }}
     >
       <h1 className="text-[38px] font-medium leading-[1.06] tracking-[-0.025em] text-text-primary">
-        Your brain{' '}
-        <em className="font-newsreader font-normal italic text-text-primary">is empty.</em>
+        Where are{' '}
+        <em className="font-newsreader font-normal italic text-text-primary">your docs?</em>
       </h1>
       <p className="mt-3.5 max-w-[42ch] text-sm leading-body text-text-body">
-        Drop in a source &mdash; we&rsquo;ll read it, index it, and cite it for every answer it
-        produces. You can add more later.
+        Start with GitHub. Open42 will sync Markdown and MDX, keep it fresh, and cite the files in
+        every answer.
       </p>
 
       <div className="mt-8 grid max-w-[520px] grid-cols-1 gap-3.5 sm:grid-cols-2">
         <SourceCard
-          name="Connect GitHub"
-          sub="Markdown and MDX from selected repos, including private repositories."
-          tag={blocked ? 'WAITING ON RUNTIME' : 'REPOS'}
+          name="I already have a GitHub repo"
+          sub="Connect GitHub and choose the repos or docs folders to sync."
+          tag={blocked ? 'WAITING ON RUNTIME' : 'CONNECT'}
           disabled={busy !== null || blocked}
           onClick={() => void connectGitHub()}
           icon={<ProviderLogo slug="github" name="GitHub" />}
           loading={busy === 'github'}
         />
         <SourceCard
-          name="Connect Notion"
-          sub={notionCardSubtitle(selectedProfile, profilesUnavailable)}
-          tag={blocked ? 'WAITING ON RUNTIME' : liveProfileReady ? 'RECOMMENDED' : 'SETUP NEEDED'}
-          disabled={busy !== null || blocked || !liveProfileReady}
-          onClick={() => void connectNotion()}
-          icon={<ProviderLogo slug="notion" name="Notion" />}
-          loading={busy === 'notion'}
-        />
-        <SourceCard
-          name="Upload Notion zip"
-          sub="Drop in a workspace export. Faster, no OAuth — but no live sync."
-          tag={blocked ? 'WAITING ON RUNTIME' : 'FILE \u00b7 ZIP'}
+          name="I need a GitHub repo"
+          sub="Create a private docs repo first, then connect it here."
+          tag={blocked ? 'WAITING ON RUNTIME' : 'CREATE'}
           disabled={busy !== null || blocked}
-          onClick={onFilePick}
-          icon={<ProviderLogo slug="notion" name="Notion" />}
-          loading={busy === 'zip'}
+          onClick={createGitHubRepo}
+          icon={<ProviderLogo slug="github" name="GitHub" />}
         />
+      </div>
+
+      {repoCreateStarted ? (
+        <div className="mt-3 max-w-[520px] rounded-xl border border-blue-line bg-blue-soft/35 px-4 py-3">
+          <p className="text-[13px] font-medium text-text-primary">Created the repo?</p>
+          <p className="mt-0.5 text-[12.5px] leading-[1.55] text-text-subtle">
+            Come back here, connect GitHub, and select that repo.
+          </p>
+        </div>
+      ) : null}
+
+      <div className="mt-7 max-w-[520px]">
+        <p className="font-mono text-[10px] uppercase tracking-[0.04em] text-text-faint">
+          OTHER SOURCES
+        </p>
+        <div className="mt-2.5 grid grid-cols-1 gap-3.5 sm:grid-cols-2">
+          <SourceCard
+            name="Connect Notion"
+            sub={notionCardSubtitle(selectedProfile, profilesUnavailable)}
+            tag={blocked ? 'WAITING ON RUNTIME' : liveProfileReady ? 'LIVE SYNC' : 'SETUP NEEDED'}
+            disabled={busy !== null || blocked || !liveProfileReady}
+            onClick={() => void connectNotion()}
+            icon={<ProviderLogo slug="notion" name="Notion" />}
+            loading={busy === 'notion'}
+          />
+          <SourceCard
+            name="Upload Notion zip"
+            sub="Use a Notion export when OAuth is not ready."
+            tag={blocked ? 'WAITING ON RUNTIME' : 'ZIP FILE'}
+            disabled={busy !== null || blocked}
+            onClick={onFilePick}
+            icon={<ProviderLogo slug="notion" name="Notion" />}
+            loading={busy === 'zip'}
+          />
+        </div>
       </div>
 
       <ConnectionProfileChooser
@@ -275,10 +294,6 @@ export function ConnectSourcesStep({ runtime, workspaceId, mutate }: ConnectSour
         profilesUnavailable={profilesUnavailable}
         onSelect={setSelectedProfileId}
       />
-
-      <ComingSoonSources />
-
-      <OnboardingMcpPanel runtime={runtime} workspaceId={workspaceId} />
 
       <div className="mt-7">
         <button
@@ -324,52 +339,6 @@ export function ConnectSourcesStep({ runtime, workspaceId, mutate }: ConnectSour
         </p>
       ) : null}
     </motion.div>
-  );
-}
-
-function ComingSoonSources() {
-  return (
-    <section className="mt-7" aria-label="Sources coming soon">
-      <p className="font-mono text-[10px] uppercase tracking-[0.04em] text-text-faint">
-        COMING SOON
-      </p>
-      <div className="mt-2.5 grid grid-cols-2 gap-2 md:grid-cols-4">
-        {COMING_SOON_SOURCES.map((s) => {
-          const logo = providerLogo(s.slug);
-          return (
-            <div
-              key={s.name}
-              aria-disabled="true"
-              title={`${s.name} — ${s.eta}`}
-              className="rounded-xl border border-border bg-white px-3 py-2.5 opacity-60"
-            >
-              <div className="flex items-center gap-1.5">
-                {logo ? (
-                  <img
-                    src={logo}
-                    alt=""
-                    aria-hidden="true"
-                    width={16}
-                    height={16}
-                    className="h-4 w-4 rounded"
-                    loading="lazy"
-                  />
-                ) : (
-                  <span
-                    aria-hidden="true"
-                    className="inline-flex h-4 w-4 items-center justify-center rounded bg-muted font-mono text-[10px] text-text-faint"
-                  >
-                    {s.monogram}
-                  </span>
-                )}
-                <span className="truncate text-[12px] text-text-faint">{s.name}</span>
-              </div>
-              <div className="mt-0.5 font-mono text-[10px] text-text-faint">{s.eta}</div>
-            </div>
-          );
-        })}
-      </div>
-    </section>
   );
 }
 

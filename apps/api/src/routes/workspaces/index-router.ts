@@ -131,7 +131,8 @@ function defaultRepo(): IndexRouterRepo {
  * router in order and falls through on 404.
  *
  *   - GET  /            — any signed-in user; returns all their memberships
- *   - POST /            — any signed-in user; creates a workspace + enqueues
+ *   - POST /            — any signed-in user; creates a workspace, selects it
+ *                         as the current UI workspace, and enqueues
  *                         provisioning (multi-workspace per B2 spec)
  *   - POST /:id/switch  — any member of `:id` (gated by requireMembership);
  *                         sets users.current_workspace_id to `:id`
@@ -179,6 +180,7 @@ export function buildWorkspaceIndexRouter(deps: IndexRouterDeps = {}) {
         return;
       }
       const workspace = await createWorkspaceForUser(session.userId, name);
+      await repo.setCurrentWorkspace(session.userId, workspace.id);
       logger.info({ workspace_id: workspace.id, user_id: session.userId }, 'workspace_created');
       res.status(201).json({ workspace });
     } catch (err) {

@@ -6,17 +6,15 @@ describe('deriveOnboardStep', () => {
     expect(deriveOnboardStep({ workspace: null } as any, null)).toBe('workspace');
   });
   it('returns workspace when workspace exists but URL says workspace (back-button)', () => {
-    expect(deriveOnboardStep({ workspace: { id: 'x' } } as any, 'workspace')).toBe(
-      'workspace',
-    );
+    expect(deriveOnboardStep({ workspace: { id: 'x' } } as any, 'workspace')).toBe('workspace');
   });
   it('returns invite when URL says invite', () => {
     expect(deriveOnboardStep({ workspace: { id: 'x' } } as any, 'invite')).toBe('invite');
   });
   it('returns provisioning when URL says provisioning', () => {
-    expect(
-      deriveOnboardStep({ workspace: { id: 'x' } } as any, 'provisioning'),
-    ).toBe('provisioning');
+    expect(deriveOnboardStep({ workspace: { id: 'x' } } as any, 'provisioning')).toBe(
+      'provisioning',
+    );
   });
   it('returns connect when URL says connect', () => {
     expect(deriveOnboardStep({ workspace: { id: 'x' } } as any, 'connect')).toBe('connect');
@@ -34,10 +32,7 @@ describe('deriveOnboardStep', () => {
   });
   it('falls through to connect when ready but no connections', () => {
     expect(
-      deriveOnboardStep(
-        { workspace: { id: 'x', runtime: 'ready' }, connections: [] } as any,
-        null,
-      ),
+      deriveOnboardStep({ workspace: { id: 'x', runtime: 'ready' }, connections: [] } as any, null),
     ).toBe('connect');
   });
   it('falls through to keys when BYOK is required and provider keys are missing', () => {
@@ -80,13 +75,14 @@ describe('deriveOnboardStep — mode=create', () => {
     };
     expect(deriveOnboardStep(current, 'provisioning', 'create')).toBe('provisioning');
   });
-  it('ignores connections + connect step (no connect step in create mode)', () => {
+  it('honors post-create keys/connect steps', () => {
     const current = {
       workspace: { id: 'w1', name: 'Existing', runtime: 'ready' as const },
       connections: [{}],
       lastJob: null,
     };
-    expect(deriveOnboardStep(current, 'connect', 'create')).toBe('workspace');
+    expect(deriveOnboardStep(current, 'keys', 'create')).toBe('keys');
+    expect(deriveOnboardStep(current, 'connect', 'create')).toBe('connect');
   });
   it('returns workspace step even when current.workspace is null', () => {
     const current = { workspace: null, connections: [], lastJob: null };
