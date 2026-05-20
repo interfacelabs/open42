@@ -63,6 +63,23 @@ provider keys in Settings -> API Keys before using chat or ingest. Community
 edition does not use shared Open42 provider keys unless you explicitly set
 `OPEN42_ALLOW_SHARED_KEYS=true`.
 
+### Supabase Auth URLs
+
+Supabase Auth must point back to the Open42 web app. In Supabase Dashboard ->
+Authentication -> URL Configuration:
+
+- Set Site URL to your deployed `WEB_PUBLIC_URL`.
+- Add `WEB_PUBLIC_URL/sign_in` to Redirect URLs.
+- Add `WEB_PUBLIC_URL/auth/invite/accept**` to Redirect URLs for invite links
+  that carry an `invite_id`.
+- Keep `http://localhost:3000/**` only as an additional local-development
+  redirect URL, not as the production Site URL.
+
+If you customize the Supabase Magic Link email template, keep the link based on
+`{{ .ConfirmationURL }}`. For a custom token-hash link, build it from
+`{{ .RedirectTo }}` instead of `{{ .SiteURL }}` so production emails do not use
+the local Site URL.
+
 ### Managed Env Or Secret Store
 
 For container platforms or external secret stores:
@@ -213,7 +230,7 @@ points Open42 at the shared `gbrain` service.
 | `npm run setup` | Generate or upsert self-host secrets into `.env` |
 | `npm run setup -- --print` | Print generated env without writing a file |
 | `npm run dev` | Run web and API together |
-| `npm run db:up` | Start local Postgres for development |
+| `npm run db:up` | Start local Postgres and Redis for development |
 | `npm run db:push` | Apply the current Drizzle schema in development |
 | `npm run db:migrate` | Run committed Drizzle migrations |
 | `npm run tenant:build` | Build the gbrain tenant image |

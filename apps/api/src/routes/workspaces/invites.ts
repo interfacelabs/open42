@@ -4,6 +4,7 @@ import pino from 'pino';
 
 import { generateInviteLink as defaultGenerateInviteLink } from '../../auth/supabase.js';
 import { db, schema } from '../../db/client.js';
+import { WEB_PUBLIC_URL } from '../../env.js';
 import { renderInviteEmail } from '../../integrations/email-templates/invite.js';
 import { sendEmail as defaultSendEmail } from '../../integrations/resend.js';
 import {
@@ -310,7 +311,7 @@ export function buildInvitesRouter(deps: InvitesRouterDeps = {}) {
           inviterEmail,
           emails,
           role,
-          webBaseUrl: process.env.WEB_PUBLIC_URL ?? 'http://localhost:3000',
+          webBaseUrl: WEB_PUBLIC_URL,
         },
         {
           generateInviteLink,
@@ -395,7 +396,7 @@ export function buildInvitesRouter(deps: InvitesRouterDeps = {}) {
         return;
       }
 
-      const webBase = (process.env.WEB_PUBLIC_URL ?? 'http://localhost:3000').replace(/\/+$/, '');
+      const webBase = WEB_PUBLIC_URL;
       try {
         const { actionLink } = await generateInviteLink({
           email: invite.email,

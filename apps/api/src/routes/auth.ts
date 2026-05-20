@@ -14,6 +14,7 @@ import {
   type SupabaseIdentity,
 } from '../auth/supabase.js';
 import { db, schema } from '../db/client.js';
+import { WEB_PUBLIC_URL } from '../env.js';
 import { clearSessionCookies, setSessionCookies } from '../middleware/csrf.js';
 
 export const authRouter = Router();
@@ -32,10 +33,9 @@ authRouter.post('/signin', async (req, res, next) => {
     const email = normalizeSigninEmail(String(req.body?.email ?? ''));
     assertSigninRateLimit(req.ip, email);
     await assertSigninAllowed(email);
-    const webUrl = process.env.WEB_PUBLIC_URL ?? 'http://localhost:3000';
     const link = await sendSupabaseMagicLink({
       email,
-      redirectTo: `${webUrl.replace(/\/+$/, '')}/sign_in`,
+      redirectTo: `${WEB_PUBLIC_URL}/sign_in`,
     });
     res.json({
       ok: true,

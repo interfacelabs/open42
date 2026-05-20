@@ -13,6 +13,7 @@ import {
   OPEN42_ALLOW_MULTI_WORKSPACE,
   OPEN42_ALLOW_SHARED_KEYS,
   OPEN42_SINGLE_WORKSPACE_ID,
+  WEB_PUBLIC_URL,
 } from '../../env.js';
 import { sendInvitesForWorkspace } from '../../invites/send-invites.js';
 import { sendEmail as defaultSendEmail } from '../../integrations/resend.js';
@@ -302,7 +303,7 @@ export function buildWorkspaceProvisionRouter(
           inviterEmail: upserted.inviterEmail,
           emails,
           role: 'member',
-          webBaseUrl: process.env.WEB_PUBLIC_URL ?? 'http://localhost:3000',
+          webBaseUrl: WEB_PUBLIC_URL,
         },
         {
           generateInviteLink,
