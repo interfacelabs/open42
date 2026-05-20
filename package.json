@@ -15,7 +15,7 @@
     "dev:landing": "node scripts/dev-landing.mjs",
     "dev:web": "node scripts/dev-web.mjs",
     "dev:api": "npm run dev -w @open42/api",
-    "db:up": "docker compose --env-file .env.local up -d postgres",
+    "db:up": "docker compose --env-file .env.local up -d postgres redis",
     "docs:install": "python3 -m venv .venv-docs && .venv-docs/bin/python -m pip install -U pip && .venv-docs/bin/python -m pip install -r requirements-docs.txt",
     "docs:serve": ".venv-docs/bin/python -m mkdocs serve",
     "docs:build": ".venv-docs/bin/python -m mkdocs build --strict",
