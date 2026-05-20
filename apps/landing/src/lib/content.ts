@@ -18,13 +18,21 @@ export const HERO = {
   secondaryCta: { label: 'See how it works', href: '#how' },
 };
 
+export const DEMO_ACCESS = {
+  label: 'Open demo access',
+  cta: 'Start the demo',
+  note:
+    'No waitlist. Sign in with any email and try Open42 with a small docs repo or sample workflow.',
+  disclaimer: "It's a live demo, not a production workspace yet.",
+};
+
 export const WAITLIST = {
-  label: 'Request beta access',
+  label: 'Get demo help',
   placeholder: 'you@company.com',
-  cta: 'Request access',
+  cta: 'Ask for setup help',
   submitting: 'Sending...',
-  note: "Private beta. Drop your work email and we'll reach out before opening your workspace.",
-  success: "Request received. We'll be in touch before opening your workspace.",
+  note: "Already trying the demo? Drop your work email and we'll help with setup.",
+  success: "Request received. We'll be in touch about demo setup.",
   invalid: 'Use a valid work email.',
   error: "Couldn't send that request. Email support@open42.ai and we'll add you.",
 };
@@ -259,7 +267,7 @@ export const OPEN42_REPO_URL = 'https://github.com/interfacelabs/open42';
 export const CTA = {
   heading: 'Give your AI the company memory it keeps pretending to have.',
   subhead:
-    "Open42 Cloud is in private beta. Request access and we'll help you set up the first private company brain.",
+    'Open42 Cloud demo access is open. Start with a small docs repo, ask questions with receipts, and turn useful answers into reusable automations.',
   secondary: {
     label: 'GitHub',
     href: OPEN42_REPO_URL,
@@ -297,5 +305,5 @@ export const FOOTER = {
     },
   ],
   copyright: '© 2026 Open42. Built in the open.',
-  status: 'All systems operational',
+  status: 'Demo environment live',
 };

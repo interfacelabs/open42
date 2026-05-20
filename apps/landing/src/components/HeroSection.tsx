@@ -3,7 +3,7 @@ import Image from 'next/image';
 import { HERO, PROOF } from '@/lib/content';
 import { ChevronRight, OcularLogoMark } from '@/components/icons';
 import { MarkdownAnswerCard } from '@/components/MarkdownAnswerCard';
-import { EmailCaptureForm } from '@/components/EmailCaptureForm';
+import { DemoSignupCta } from '@/components/DemoSignupCta';
 
 export function HeroSection() {
   return (
@@ -24,8 +24,8 @@ export function HeroSection() {
           {HERO.subhead}
         </p>
 
-        <div id="request-access" className="mt-8 max-w-[560px] scroll-mt-28">
-          <EmailCaptureForm />
+        <div id="open-demo" className="mt-8 max-w-[620px] scroll-mt-28">
+          <DemoSignupCta />
         </div>
 
         <div className="mt-3 flex flex-wrap items-center gap-3">

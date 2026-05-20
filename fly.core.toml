@@ -9,6 +9,7 @@ kill_timeout = "30s"
 [env]
   OPEN42_EDITION = "cloud"
   NEXT_PUBLIC_OPEN42_EDITION = "cloud"
+  OPEN42_ENABLE_OPEN_SIGNUPS = "true"
   API_PUBLIC_URL = "https://api.open42.ai"
   WEB_PUBLIC_URL = "https://app.open42.ai"
   NEXT_PUBLIC_OPEN42_APP_URL = "https://app.open42.ai"

@@ -29,17 +29,17 @@ export function SiteNav() {
               >
                 <span>GitHub</span>
                 <span className="rounded-full border border-line bg-surface px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-wider text-muted-ink">
-                  Beta
+                  Source
                 </span>
               </Link>
             </li>
           </ul>
 
           <Link
-            href="#request-access"
+            href="#open-demo"
             className="inline-flex h-[35px] items-center rounded-lg bg-ink px-4 font-mono text-[14px] text-white transition-opacity hover:opacity-90"
           >
-            Request access
+            Open demo
           </Link>
         </div>
       </div>

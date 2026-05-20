@@ -23,7 +23,7 @@ export function SiteFooter() {
               >
                 <span>GitHub</span>
                 <span className="rounded-full border border-line bg-surface px-1.5 py-0.5 font-mono text-[9px] uppercase tracking-wider text-muted-ink">
-                  Beta
+                  Source
                 </span>
               </Link>
               <Link
@@ -60,7 +60,7 @@ export function SiteFooter() {
                       >
                         <span>{link.label}</span>
                         <span className="rounded-full border border-line bg-surface px-1.5 py-0.5 font-mono text-[9px] uppercase tracking-wider text-muted-ink">
-                          Beta
+                          Source
                         </span>
                       </Link>
                     ) : (

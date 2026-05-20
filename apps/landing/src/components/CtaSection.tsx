@@ -1,6 +1,6 @@
 import Link from 'next/link';
 import { CTA } from '@/lib/content';
-import { EmailCaptureForm } from '@/components/EmailCaptureForm';
+import { DemoSignupCta } from '@/components/DemoSignupCta';
 
 export function CtaSection() {
   return (
@@ -24,8 +24,8 @@ export function CtaSection() {
               {CTA.subhead}
             </p>
 
-            <div className="mx-auto mt-8 max-w-[560px] text-left">
-              <EmailCaptureForm variant="dark" />
+            <div className="mx-auto mt-8 max-w-[620px] text-left">
+              <DemoSignupCta variant="dark" />
             </div>
 
             <div className="mt-5 flex flex-wrap items-center justify-center gap-3">
@@ -37,7 +37,7 @@ export function CtaSection() {
               >
                 <span>{CTA.secondary.label}</span>
                 <span className="rounded-full border border-white/10 bg-white/[0.06] px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-wider text-white/60">
-                  Beta
+                  Source
                 </span>
               </Link>
             </div>

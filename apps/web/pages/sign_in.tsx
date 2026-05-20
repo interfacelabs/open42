@@ -503,7 +503,7 @@ function humanizeError(code: string): string {
     case 'signin_rate_limited':
       return 'Too many attempts. Try again in a moment.';
     case 'signin_not_allowed':
-      return 'This email is not authorized for the private beta yet. Use your invite link if you were invited.';
+      return 'Demo sign-in is not open for this email right now. Use your invite link if you were invited.';
     case 'verify_failed':
     case 'invalid_code':
       return 'That code didn\u2019t match. Try again or resend.';
