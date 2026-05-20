@@ -122,4 +122,30 @@ describe('GitHubCallbackPage', () => {
     expect(screen.getByText('1 selected')).toBeInTheDocument();
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
+
+  it('explains local workspace session mismatches', async () => {
+    const stateToken = makeStateToken({ workspaceId: 'ws-1' });
+    mocks.routerQuery.current = {
+      state: stateToken,
+      installation_id: '123',
+    };
+    fetchMock.mockResolvedValue(
+      new Response(JSON.stringify({ error: 'workspace_membership_required' }), {
+        status: 403,
+        headers: { 'Content-Type': 'application/json' },
+      }),
+    );
+
+    render(<GitHubCallbackPage />);
+
+    expect(await screen.findByText('Sign in to the matching workspace.')).toBeInTheDocument();
+    expect(
+      screen.getByText(/different Open42 session, workspace, or environment/i),
+    ).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Sign in again' })).toHaveAttribute('href', '/sign_in');
+    expect(screen.getByRole('link', { name: 'Start over' })).toHaveAttribute(
+      'href',
+      '/settings/connections/add',
+    );
+  });
 });

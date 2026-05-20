@@ -260,6 +260,15 @@ export default function GitHubCallbackPage() {
                         Retry after selecting repos
                       </Button>
                     </div>
+                  ) : isSessionMismatchError(pageState.code) ? (
+                    <div className="mt-4 flex flex-wrap items-center gap-2">
+                      <Button asChild size="sm">
+                        <a href="/sign_in">Sign in again</a>
+                      </Button>
+                      <Button asChild size="sm" variant="secondary">
+                        <a href="/settings/connections/add">Start over</a>
+                      </Button>
+                    </div>
                   ) : (
                     <p className="mt-2 font-mono text-[10.5px] uppercase tracking-[0.06em] text-text-faint">
                       {pageState.code}
@@ -282,6 +291,9 @@ function statusText(state: PageState): string {
   if (state.kind === 'error' && state.code === 'github_selected_repositories_required') {
     return 'Select specific repositories in GitHub.';
   }
+  if (state.kind === 'error' && isSessionMismatchError(state.code)) {
+    return 'Sign in to the matching workspace.';
+  }
   return 'GitHub connection failed.';
 }
 
@@ -289,7 +301,14 @@ function errorDetail(state: Extract<PageState, { kind: 'error' }>): string {
   if (state.code === 'github_selected_repositories_required') {
     return 'Open42 requires selected repository access so it only syncs the docs you choose. Change the GitHub App access from all repositories to selected repositories, then retry here.';
   }
+  if (isSessionMismatchError(state.code)) {
+    return 'This GitHub install was started from a different Open42 session, workspace, or environment. On localhost, sign in to the same workspace that started the install, then start the GitHub connection again.';
+  }
   return 'The GitHub callback could not be completed. Try reconnecting GitHub from workspace settings.';
+}
+
+function isSessionMismatchError(code: string): boolean {
+  return code === 'workspace_membership_required' || code === 'unauthorized';
 }
 
 async function finalizeInstallation(input: {
