@@ -19,9 +19,8 @@ export const HERO = {
 };
 
 export const DEMO_ACCESS = {
-  label: 'Open demo access',
   cta: 'Get Started',
-  note: 'No waitlist. Sign in with any email and try Open42.',
+  note: 'No waitlist BS. Sign in with any email and try Open42.',
   disclaimer: 'We are in beta.',
 };
 
