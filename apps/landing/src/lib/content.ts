@@ -20,10 +20,9 @@ export const HERO = {
 
 export const DEMO_ACCESS = {
   label: 'Open demo access',
-  cta: 'Start the demo',
-  note:
-    'No waitlist. Sign in with any email and try Open42 with a small docs repo or sample workflow.',
-  disclaimer: "It's a live demo, not a production workspace yet.",
+  cta: 'Get Started',
+  note: 'No waitlist. Sign in with any email and try Open42.',
+  disclaimer: 'We are in beta.',
 };
 
 export const WAITLIST = {
