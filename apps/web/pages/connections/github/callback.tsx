@@ -1,7 +1,7 @@
 import Head from 'next/head';
 import { useRouter } from 'next/router';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { GitBranch, Lock, Unlock } from 'lucide-react';
+import { ExternalLink, GitBranch, Lock, RefreshCw, Unlock } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import { csrfHeaders } from '@/lib/csrf';
@@ -22,10 +22,23 @@ interface CurrentResponse {
 
 type PageState =
   | { kind: 'loading' }
-  | { kind: 'selecting'; workspaceId: string; stateToken: string; installationId: string; repos: Repository[] }
+  | {
+      kind: 'selecting';
+      workspaceId: string;
+      stateToken: string;
+      installationId: string;
+      repos: Repository[];
+    }
   | { kind: 'saving' }
   | { kind: 'done' }
-  | { kind: 'error'; code: string };
+  | {
+      kind: 'error';
+      code: string;
+      configureUrl?: string | null;
+      workspaceId?: string;
+      stateToken?: string;
+      installationId?: string;
+    };
 
 export default function GitHubCallbackPage() {
   const router = useRouter();
@@ -53,23 +66,31 @@ export default function GitHubCallbackPage() {
       if (!workspaceId) {
         const currentRes = await fetch('/api/workspaces/current').catch(() => null);
         const current =
-          currentRes && currentRes.ok
-            ? ((await currentRes.json()) as CurrentResponse)
-            : null;
+          currentRes && currentRes.ok ? ((await currentRes.json()) as CurrentResponse) : null;
         workspaceId = current?.workspace?.id ?? null;
       }
       if (!workspaceId) throw new Error('no_workspace');
-      const response = await fetch(`/api/workspaces/${workspaceId}/connections/github/finalize`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', ...csrfHeaders() },
-        body: JSON.stringify({ state: stateToken, installationId }),
-      });
-      const body = await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error(body.error ?? 'github_finalize_failed');
-      const repos = Array.isArray(body.repositories) ? (body.repositories as Repository[]) : [];
+      const result = await finalizeInstallation({ workspaceId, stateToken, installationId });
       if (!cancelled) {
-        setSelectedIds(new Set(repos.slice(0, 3).map((repo) => repo.id)));
-        setPageState({ kind: 'selecting', workspaceId, stateToken, installationId, repos });
+        if (result.kind === 'error') {
+          setPageState({
+            kind: 'error',
+            code: result.code,
+            configureUrl: result.configureUrl,
+            workspaceId,
+            stateToken,
+            installationId,
+          });
+          return;
+        }
+        setSelectedIds(new Set(result.repos.slice(0, 3).map((repo) => repo.id)));
+        setPageState({
+          kind: 'selecting',
+          workspaceId,
+          stateToken,
+          installationId,
+          repos: result.repos,
+        });
       }
     })().catch((err) => {
       if (!cancelled) setPageState({ kind: 'error', code: errorCode(err) });
@@ -113,6 +134,41 @@ export default function GitHubCallbackPage() {
     }
     setPageState({ kind: 'done' });
     await router.replace('/');
+  }
+
+  async function retryFinalize() {
+    if (
+      pageState.kind !== 'error' ||
+      !pageState.workspaceId ||
+      !pageState.stateToken ||
+      !pageState.installationId
+    ) {
+      return;
+    }
+    const { workspaceId, stateToken, installationId } = pageState;
+    setPageState({ kind: 'loading' });
+    const result = await finalizeInstallation({ workspaceId, stateToken, installationId }).catch(
+      (err) => ({ kind: 'error' as const, code: errorCode(err), configureUrl: null }),
+    );
+    if (result.kind === 'error') {
+      setPageState({
+        kind: 'error',
+        code: result.code,
+        configureUrl: result.configureUrl,
+        workspaceId,
+        stateToken,
+        installationId,
+      });
+      return;
+    }
+    setSelectedIds(new Set(result.repos.slice(0, 3).map((repo) => repo.id)));
+    setPageState({
+      kind: 'selecting',
+      workspaceId,
+      stateToken,
+      installationId,
+      repos: result.repos,
+    });
   }
 
   return (
@@ -175,9 +231,7 @@ export default function GitHubCallbackPage() {
                 })}
               </div>
               <div className="mt-5 flex items-center justify-between">
-                <p className="text-[12.5px] text-text-subtle">
-                  {selectedRepos.length} selected
-                </p>
+                <p className="text-[12.5px] text-text-subtle">{selectedRepos.length} selected</p>
                 <Button onClick={() => void saveSelection()} disabled={selectedRepos.length === 0}>
                   Connect selected
                 </Button>
@@ -185,13 +239,33 @@ export default function GitHubCallbackPage() {
             </>
           ) : (
             <div className="mt-8 rounded-xl border border-border-soft bg-white px-5 py-4">
-              <p className="text-[13px] font-medium text-text-primary">
-                {statusText(pageState)}
-              </p>
+              <p className="text-[13px] font-medium text-text-primary">{statusText(pageState)}</p>
               {pageState.kind === 'error' ? (
-                <p className="mt-2 font-mono text-[10.5px] uppercase tracking-[0.06em] text-text-faint">
-                  {pageState.code}
-                </p>
+                <>
+                  <p className="mt-2 text-[12.5px] leading-5 text-text-subtle">
+                    {errorDetail(pageState)}
+                  </p>
+                  {pageState.code === 'github_selected_repositories_required' ? (
+                    <div className="mt-4 flex flex-wrap items-center gap-2">
+                      {pageState.configureUrl ? (
+                        <Button asChild size="sm" variant="secondary">
+                          <a href={pageState.configureUrl}>
+                            Open GitHub settings
+                            <ExternalLink className="h-3.5 w-3.5" strokeWidth={1.5} />
+                          </a>
+                        </Button>
+                      ) : null}
+                      <Button size="sm" onClick={() => void retryFinalize()}>
+                        <RefreshCw className="h-3.5 w-3.5" strokeWidth={1.5} />
+                        Retry after selecting repos
+                      </Button>
+                    </div>
+                  ) : (
+                    <p className="mt-2 font-mono text-[10.5px] uppercase tracking-[0.06em] text-text-faint">
+                      {pageState.code}
+                    </p>
+                  )}
+                </>
               ) : null}
             </div>
           )}
@@ -205,10 +279,48 @@ function statusText(state: PageState): string {
   if (state.kind === 'loading') return 'Loading repositories...';
   if (state.kind === 'saving') return 'Connecting repositories...';
   if (state.kind === 'done') return 'GitHub is connected.';
+  if (state.kind === 'error' && state.code === 'github_selected_repositories_required') {
+    return 'Select specific repositories in GitHub.';
+  }
   return 'GitHub connection failed.';
 }
 
-function extractWorkspaceIdFromState(stateToken: string): string | null {
+function errorDetail(state: Extract<PageState, { kind: 'error' }>): string {
+  if (state.code === 'github_selected_repositories_required') {
+    return 'Open42 requires selected repository access so it only syncs the docs you choose. Change the GitHub App access from all repositories to selected repositories, then retry here.';
+  }
+  return 'The GitHub callback could not be completed. Try reconnecting GitHub from workspace settings.';
+}
+
+async function finalizeInstallation(input: {
+  workspaceId: string;
+  stateToken: string;
+  installationId: string;
+}): Promise<
+  | { kind: 'selecting'; repos: Repository[] }
+  | { kind: 'error'; code: string; configureUrl: string | null }
+> {
+  const response = await fetch(`/api/workspaces/${input.workspaceId}/connections/github/finalize`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...csrfHeaders() },
+    body: JSON.stringify({
+      state: input.stateToken,
+      installationId: input.installationId,
+    }),
+  });
+  const body = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    return {
+      kind: 'error',
+      code: typeof body.error === 'string' ? body.error : 'github_finalize_failed',
+      configureUrl: typeof body.configureUrl === 'string' ? body.configureUrl : null,
+    };
+  }
+  const repos = Array.isArray(body.repositories) ? (body.repositories as Repository[]) : [];
+  return { kind: 'selecting', repos };
+}
+
+export function extractWorkspaceIdFromState(stateToken: string): string | null {
   const parts = stateToken.split('.');
   if (parts.length !== 2) return null;
   const [b64] = parts as [string, string];

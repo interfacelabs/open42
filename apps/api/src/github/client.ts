@@ -1,10 +1,6 @@
 import { createSign } from 'node:crypto';
 
-import {
-  GITHUB_APP_ID,
-  GITHUB_APP_PRIVATE_KEY,
-  GITHUB_APP_SLUG,
-} from '../env.js';
+import { GITHUB_APP_ID, GITHUB_APP_PRIVATE_KEY, GITHUB_APP_SLUG } from '../env.js';
 
 type Fetch = typeof fetch;
 
@@ -25,6 +21,12 @@ export interface GitHubInstallationRepository {
   private: boolean;
   default_branch: string;
   owner: { login: string };
+}
+
+export interface GitHubInstallation {
+  id: number;
+  repositorySelection: 'all' | 'selected';
+  htmlUrl: string | null;
 }
 
 export interface GitHubTreeEntry {
@@ -107,7 +109,37 @@ export class GitHubAppClient {
     return payload.token;
   }
 
-  async listInstallationRepositories(installationId: string): Promise<GitHubInstallationRepository[]> {
+  async getInstallation(installationId: string): Promise<GitHubInstallation> {
+    const payload = await this.requestJson<{
+      id?: number;
+      repository_selection?: string;
+      html_url?: string;
+    }>(`/app/installations/${encodeURIComponent(installationId)}`, {
+      headers: {
+        Authorization: `Bearer ${this.createAppJwt()}`,
+      },
+    });
+    const repositorySelection =
+      payload.repository_selection === 'all' || payload.repository_selection === 'selected'
+        ? payload.repository_selection
+        : null;
+    if (!payload.id || !repositorySelection) {
+      throw new GitHubApiError(
+        'github installation payload invalid',
+        502,
+        'github_installation_invalid',
+      );
+    }
+    return {
+      id: payload.id,
+      repositorySelection,
+      htmlUrl: typeof payload.html_url === 'string' ? payload.html_url : null,
+    };
+  }
+
+  async listInstallationRepositories(
+    installationId: string,
+  ): Promise<GitHubInstallationRepository[]> {
     const token = await this.createInstallationToken(installationId);
     const repos: GitHubInstallationRepository[] = [];
     let page = 1;
@@ -199,7 +231,11 @@ export class GitHubAppClient {
       if ([401, 403, 404].includes(response.status)) {
         throw new GitHubAuthRequiredError(response.status);
       }
-      throw new GitHubApiError('github request failed', response.status, `github_${response.status}`);
+      throw new GitHubApiError(
+        'github request failed',
+        response.status,
+        `github_${response.status}`,
+      );
     }
     return (await response.json()) as T;
   }

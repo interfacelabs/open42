@@ -236,6 +236,14 @@ export function buildGitHubRouter(deps: GitHubRouterDeps = {}) {
         res.status(503).json({ error: 'github_not_configured' });
         return;
       }
+      const installation = await github.getInstallation(installationId);
+      if (installation.repositorySelection === 'all') {
+        res.status(422).json({
+          error: 'github_selected_repositories_required',
+          configureUrl: installation.htmlUrl,
+        });
+        return;
+      }
       const repos = await github.listInstallationRepositories(installationId);
       await db
         .update(schema.connectionInitStates)
@@ -264,6 +272,10 @@ export function buildGitHubRouter(deps: GitHubRouterDeps = {}) {
         res.status(401).json({ error: 'github_auth_required' });
         return;
       }
+      if (err instanceof GitHubApiError) {
+        res.status(err.status ?? 502).json({ error: sanitizeGithubError(err) });
+        return;
+      }
       next(err);
     }
   });
@@ -288,6 +300,14 @@ export function buildGitHubRouter(deps: GitHubRouterDeps = {}) {
       const github = await resolveGitHubAppClientForWorkspace(req.workspace!.id, deps.github);
       if (!github?.isConfigured()) {
         res.status(503).json({ error: 'github_not_configured' });
+        return;
+      }
+      const installation = await github.getInstallation(installationId);
+      if (installation.repositorySelection === 'all') {
+        res.status(422).json({
+          error: 'github_selected_repositories_required',
+          configureUrl: installation.htmlUrl,
+        });
         return;
       }
       const installationRepos = await github.listInstallationRepositories(installationId);
@@ -349,6 +369,14 @@ export function buildGitHubRouter(deps: GitHubRouterDeps = {}) {
     } catch (err) {
       if (isUniqueViolation(err)) {
         res.status(409).json({ error: 'github_repo_connection_exists' });
+        return;
+      }
+      if (err instanceof GitHubAuthRequiredError) {
+        res.status(401).json({ error: 'github_auth_required' });
+        return;
+      }
+      if (err instanceof GitHubApiError) {
+        res.status(err.status ?? 502).json({ error: sanitizeGithubError(err) });
         return;
       }
       next(err);
