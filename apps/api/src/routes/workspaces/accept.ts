@@ -18,7 +18,7 @@ const INVITE_TTL_MS = 24 * 60 * 60 * 1000;
 export interface AcceptedWorkspace {
   id: string;
   name: string;
-  status: 'provisioning' | 'ready' | 'failed';
+  status: 'billing_required' | 'provisioning' | 'ready' | 'failed';
 }
 
 /**
@@ -108,10 +108,7 @@ export function defaultRepo(): AcceptRouterRepo {
           .select({ userId: schema.memberships.userId })
           .from(schema.memberships)
           .where(
-            and(
-              eq(schema.memberships.userId, userId),
-              eq(schema.memberships.workspaceId, ws.id),
-            ),
+            and(eq(schema.memberships.userId, userId), eq(schema.memberships.workspaceId, ws.id)),
           )
           .limit(1);
         if (existing) {
@@ -139,7 +136,7 @@ export function defaultRepo(): AcceptRouterRepo {
             workspace: {
               id: ws.id,
               name: ws.name,
-              status: ws.status as 'provisioning' | 'ready' | 'failed',
+              status: ws.status as 'billing_required' | 'provisioning' | 'ready' | 'failed',
             },
           };
         }
@@ -178,7 +175,7 @@ export function defaultRepo(): AcceptRouterRepo {
           workspace: {
             id: ws.id,
             name: ws.name,
-            status: ws.status as 'provisioning' | 'ready' | 'failed',
+            status: ws.status as 'billing_required' | 'provisioning' | 'ready' | 'failed',
           },
         };
       });

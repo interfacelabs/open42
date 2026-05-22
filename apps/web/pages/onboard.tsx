@@ -1,4 +1,5 @@
 import Head from 'next/head';
+import type { GetServerSideProps } from 'next';
 import { useRouter } from 'next/router';
 import {
   FormEvent,
@@ -32,7 +33,13 @@ import { EASE_STANDARD } from '@/lib/motion';
 import { useWorkspaceStore, type WorkspaceSummary } from '@/lib/workspaces/store';
 
 interface OnboardCurrentPayload extends CurrentPayload {
-  workspace: { id: string; name: string; runtime: WorkspaceRuntime } | null;
+  workspace: {
+    id: string;
+    name: string;
+    plan?: WorkspacePlan | null;
+    status?: string;
+    runtime: WorkspaceRuntime;
+  } | null;
   invites: Array<{ id: string; email: string; status: string }>;
   user: { id: string; email: string };
   requiresProviderKeys?: boolean;
@@ -41,6 +48,52 @@ interface OnboardCurrentPayload extends CurrentPayload {
     openaiEmbed: boolean;
   };
 }
+
+type WorkspacePlan = 'starter' | 'team';
+
+interface OnboardPageProps {
+  billingUpgradesEnabled?: boolean;
+}
+
+const getWorkspacePlanOptions = (
+  billingUpgradesEnabled: boolean,
+): Array<{
+  value: WorkspacePlan;
+  label: string;
+  detail: string;
+  disabled?: boolean;
+}> => [
+  {
+    value: 'starter',
+    label: 'Free',
+    detail: 'Shared demo pool. Good for trying Open42.',
+  },
+  {
+    value: 'team',
+    label: 'Paid',
+    detail: billingUpgradesEnabled
+      ? 'Private Fly runtime for production teams.'
+      : 'Paid upgrades are paused while Stripe approval is pending.',
+    disabled: !billingUpgradesEnabled,
+  },
+];
+
+function readBillingUpgradesEnabled(env: NodeJS.ProcessEnv): boolean {
+  return (
+    !isDisabledEnvFlag(env.OPEN42_BILLING_UPGRADES_ENABLED) &&
+    !isDisabledEnvFlag(env.NEXT_PUBLIC_OPEN42_BILLING_UPGRADES_ENABLED)
+  );
+}
+
+function isDisabledEnvFlag(value: string | undefined): boolean {
+  return ['0', 'false', 'no', 'off'].includes((value ?? '').trim().toLowerCase());
+}
+
+export const getServerSideProps: GetServerSideProps<OnboardPageProps> = async () => ({
+  props: {
+    billingUpgradesEnabled: readBillingUpgradesEnabled(process.env),
+  },
+});
 
 /**
  * Codex round-6 P2: when the user reloads (or navigates back) mid-provisioning
@@ -78,7 +131,7 @@ function hasRequiredProviderKeys(current: CurrentPayload): boolean {
   );
 }
 
-export default function OnboardPage() {
+export default function OnboardPage({ billingUpgradesEnabled = true }: OnboardPageProps) {
   const router = useRouter();
   const urlStep = typeof router.query.step === 'string' ? router.query.step : null;
   const mode: OnboardMode = router.query.mode === 'create' ? 'create' : 'first';
@@ -143,7 +196,7 @@ export default function OnboardPage() {
   // In create mode the existing workspace name should NOT pre-fill the form —
   // the user is creating a brand-new workspace.
   useEffect(() => {
-    if (mode === 'create') return;
+    if (mode === 'create' && current?.workspace?.runtime !== 'billing_required') return;
     if (!seededFromServerRef.current && current?.workspace?.name) {
       seededFromServerRef.current = true;
       queueMicrotask(() => setWorkspaceName(current.workspace!.name));
@@ -199,6 +252,10 @@ export default function OnboardPage() {
     if (!createdWorkspaceId) return;
     const newWs = wsList?.workspaces?.find((w) => w.id === createdWorkspaceId);
     if (!newWs) return;
+    if (newWs.status === 'billing_required') {
+      void router.replace('/onboard?mode=create&step=billing');
+      return;
+    }
     if (newWs.status === 'ready') {
       void (async () => {
         try {
@@ -266,7 +323,9 @@ export default function OnboardPage() {
 
             <div className="mt-12 flex flex-1 items-start md:mt-16 md:items-center">
               <div className={`w-full ${step === 'connect' ? 'max-w-[560px]' : 'max-w-[460px]'}`}>
-                {mode === 'create' && step === 'workspace' ? (
+                {mode === 'create' &&
+                step === 'workspace' &&
+                (!createdWorkspaceId || current?.workspace?.id === createdWorkspaceId) ? (
                   // In create mode the workspace-name step renders even before
                   // SWR settles — the user is creating a new workspace and
                   // doesn't need any state from /workspaces/current to start.
@@ -275,6 +334,8 @@ export default function OnboardPage() {
                     setName={setWorkspaceName}
                     mutate={mutate}
                     mode={mode}
+                    currentWorkspace={current?.workspace ?? null}
+                    billingUpgradesEnabled={billingUpgradesEnabled}
                     onCreated={setCreatedWorkspaceId}
                   />
                 ) : isLoading || !current ? (
@@ -289,7 +350,16 @@ export default function OnboardPage() {
                     setName={setWorkspaceName}
                     mutate={mutate}
                     mode={mode}
+                    currentWorkspace={current.workspace}
+                    billingUpgradesEnabled={billingUpgradesEnabled}
                     onCreated={setCreatedWorkspaceId}
+                  />
+                ) : step === 'billing' ? (
+                  <BillingStep
+                    current={current}
+                    mutate={mutate}
+                    mode={mode}
+                    billingUpgradesEnabled={billingUpgradesEnabled}
                   />
                 ) : step === 'provisioning' ? (
                   <ProvisioningStep current={current} mutate={mutate} />
@@ -331,6 +401,18 @@ export default function OnboardPage() {
               }
               attribution="— OPEN42 OPERATING PRINCIPLE №2"
               illustration={<EnvelopeStage lines={inviteLines} isValid={isValidInviteEmail} />}
+            />
+          ) : step === 'billing' ? (
+            <EditorialPane
+              quote={
+                <>
+                  Hard things stay hard
+                  <br />
+                  <em>behind the curtain.</em>
+                </>
+              }
+              attribution="— OPEN42 OPERATING PRINCIPLE №2"
+              illustration={<PaperBoats />}
             />
           ) : step === 'provisioning' ? (
             <EditorialPane
@@ -404,26 +486,30 @@ type DotState = 'active' | 'done' | 'pending';
 
 function ProgressIndicator({ step }: { step: OnboardStep | null }) {
   const dots: DotState[] = useMemo(() => {
-    if (step === 'workspace') return ['active', 'pending', 'pending', 'pending', 'pending'];
-    if (step === 'invite') return ['done', 'active', 'pending', 'pending', 'pending'];
-    if (step === 'provisioning') return ['done', 'done', 'active', 'pending', 'pending'];
-    if (step === 'keys') return ['done', 'done', 'done', 'active', 'pending'];
-    if (step === 'connect') return ['done', 'done', 'done', 'done', 'active'];
-    return ['pending', 'pending', 'pending', 'pending', 'pending'];
+    if (step === 'workspace')
+      return ['active', 'pending', 'pending', 'pending', 'pending', 'pending'];
+    if (step === 'billing') return ['done', 'active', 'pending', 'pending', 'pending', 'pending'];
+    if (step === 'invite') return ['done', 'done', 'active', 'pending', 'pending', 'pending'];
+    if (step === 'provisioning') return ['done', 'done', 'done', 'active', 'pending', 'pending'];
+    if (step === 'keys') return ['done', 'done', 'done', 'done', 'active', 'pending'];
+    if (step === 'connect') return ['done', 'done', 'done', 'done', 'done', 'active'];
+    return ['pending', 'pending', 'pending', 'pending', 'pending', 'pending'];
   }, [step]);
 
   const label =
     step === 'workspace'
       ? 'Workspace'
-      : step === 'invite'
-        ? 'Invite'
-        : step === 'provisioning'
-          ? 'Spinning up'
-          : step === 'keys'
-            ? 'API keys'
-            : step === 'connect'
-              ? 'Connect a source'
-              : '';
+      : step === 'billing'
+        ? 'Billing'
+        : step === 'invite'
+          ? 'Invite'
+          : step === 'provisioning'
+            ? 'Spinning up'
+            : step === 'keys'
+              ? 'API keys'
+              : step === 'connect'
+                ? 'Connect a source'
+                : '';
 
   return (
     <div className="flex items-center gap-2.5 font-mono text-[11px] text-text-subtle">
@@ -479,37 +565,56 @@ function WorkspaceStep({
   setName,
   mutate,
   mode,
+  currentWorkspace,
+  billingUpgradesEnabled,
   onCreated,
 }: {
   name: string;
   setName: (value: string) => void;
   mutate: () => Promise<unknown>;
   mode: OnboardMode;
+  currentWorkspace: OnboardCurrentPayload['workspace'];
+  billingUpgradesEnabled: boolean;
   onCreated: (id: string) => void;
 }) {
   const router = useRouter();
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const initialPlan =
+    currentWorkspace?.runtime === 'billing_required' && currentWorkspace.plan === 'team'
+      ? 'team'
+      : 'starter';
+  const [selectedPlan, setSelectedPlan] = useState<WorkspacePlan>(initialPlan);
+  const workspacePlanOptions = useMemo(
+    () => getWorkspacePlanOptions(billingUpgradesEnabled),
+    [billingUpgradesEnabled],
+  );
 
   const submit = useCallback(
     async (event: FormEvent<HTMLFormElement>) => {
       event.preventDefault();
       const trimmed = name.trim();
       if (!trimmed || submitting) return;
+      if (selectedPlan === 'team' && !billingUpgradesEnabled) {
+        setError('billing_upgrades_disabled');
+        return;
+      }
       setSubmitting(true);
       setError(null);
       try {
-        // In `mode='create'` we hit the new POST /api/workspaces endpoint
-        // (Chunk 5) — it creates an additional workspace, owner membership,
-        // and current-workspace selection for the already-onboarded user. In
-        // the legacy first-time flow we keep using the onboarding alias to
-        // preserve its specific semantics (idempotent rename of the user's
-        // bootstrap workspace).
-        const url = mode === 'create' ? '/api/workspaces' : '/api/workspaces/onboarding/workspace';
+        const editingBillingRequired = currentWorkspace?.runtime === 'billing_required';
+        // mode=create normally uses POST /api/workspaces. If the user goes
+        // back from the billing checkpoint, they already have a paid metadata
+        // workspace, so the onboarding alias safely updates that workspace
+        // instead of creating a duplicate.
+        const url =
+          mode === 'create' && !editingBillingRequired
+            ? '/api/workspaces'
+            : '/api/workspaces/onboarding/workspace';
         const response = await fetch(url, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', ...csrfHeaders() },
-          body: JSON.stringify({ name: trimmed }),
+          body: JSON.stringify({ name: trimmed, plan: selectedPlan }),
         });
         if (!response.ok) {
           const payload = await response.json().catch(() => ({}));
@@ -517,14 +622,26 @@ function WorkspaceStep({
           setSubmitting(false);
           return;
         }
+        const payload = (await response.json().catch(() => ({}))) as {
+          workspace?: { id?: string; status?: string; runtime?: WorkspaceRuntime };
+        };
+        const savedWorkspace = payload.workspace;
+        if (mode === 'create' && savedWorkspace?.id) onCreated(savedWorkspace.id);
+        const requiresBilling =
+          savedWorkspace?.status === 'billing_required' ||
+          savedWorkspace?.runtime === 'billing_required';
+
+        if (requiresBilling) {
+          await mutate();
+          await router.replace(
+            mode === 'create' ? '/onboard?mode=create&step=billing' : '/onboard?step=billing',
+          );
+          return;
+        }
+
         if (mode === 'create') {
           // Capture the new workspace id so the parent's effect can detect
           // when its runtime flips to 'ready' and route home.
-          const payload = (await response.json().catch(() => ({}))) as {
-            workspace?: { id?: string };
-          };
-          const newId = payload.workspace?.id;
-          if (newId) onCreated(newId);
           await mutate();
           await router.replace('/onboard?mode=create&step=provisioning');
           return;
@@ -536,7 +653,17 @@ function WorkspaceStep({
         setSubmitting(false);
       }
     },
-    [name, submitting, mutate, router, mode, onCreated],
+    [
+      billingUpgradesEnabled,
+      currentWorkspace,
+      mode,
+      mutate,
+      name,
+      onCreated,
+      router,
+      selectedPlan,
+      submitting,
+    ],
   );
 
   return (
@@ -577,6 +704,45 @@ function WorkspaceStep({
         <p className="mt-2 text-xs text-text-subtle">
           80 characters max. Letters, numbers, spaces.
         </p>
+        <fieldset className="mt-5">
+          <legend className="mb-2 block text-[13px] font-medium text-text-primary">
+            Choose a plan
+          </legend>
+          <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+            {workspacePlanOptions.map((option) => {
+              const selected = selectedPlan === option.value;
+              const disabled = Boolean(option.disabled);
+              return (
+                <label
+                  key={option.value}
+                  className={`rounded-xl border p-3 transition-[border-color,background-color,box-shadow] duration-140 ${
+                    disabled ? 'cursor-not-allowed opacity-55' : 'cursor-pointer'
+                  } ${
+                    selected
+                      ? 'border-accent bg-accent-soft'
+                      : 'border-input bg-white hover:border-accent/50'
+                  }`}
+                >
+                  <input
+                    type="radio"
+                    name="workspace-plan"
+                    value={option.value}
+                    checked={selected}
+                    disabled={disabled}
+                    onChange={() => setSelectedPlan(option.value)}
+                    className="sr-only"
+                  />
+                  <span className="block text-sm font-medium text-text-primary">
+                    {option.label}
+                  </span>
+                  <span className="mt-1 block text-xs leading-[1.5] text-text-subtle">
+                    {option.detail}
+                  </span>
+                </label>
+              );
+            })}
+          </div>
+        </fieldset>
         <button
           type="submit"
           disabled={submitting || !name.trim()}
@@ -590,7 +756,173 @@ function WorkspaceStep({
           </p>
         ) : null}
       </form>
-      <PulsingNote>We&rsquo;ll prepare your private brain runtime in the background.</PulsingNote>
+      <PulsingNote>We&rsquo;ll create the runtime after this choice is saved.</PulsingNote>
+    </motion.div>
+  );
+}
+
+function BillingStep({
+  current,
+  mutate,
+  mode,
+  billingUpgradesEnabled,
+}: {
+  current: OnboardCurrentPayload;
+  mutate: () => Promise<unknown>;
+  mode: OnboardMode;
+  billingUpgradesEnabled: boolean;
+}) {
+  const router = useRouter();
+  const workspaceId = current.workspace?.id ?? null;
+  const checkoutState = typeof router.query.checkout === 'string' ? router.query.checkout : null;
+  const [submitting, setSubmitting] = useState(false);
+  const [provisioning, setProvisioning] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const backToPlan = useCallback(() => {
+    void router.push(
+      mode === 'create' ? '/onboard?mode=create&step=workspace' : '/onboard?step=workspace',
+    );
+  }, [mode, router]);
+
+  const startCheckout = useCallback(async () => {
+    if (!workspaceId || submitting) return;
+    setSubmitting(true);
+    setError(null);
+    try {
+      const response = await fetch(`/api/workspaces/${workspaceId}/billing/checkout`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...csrfHeaders() },
+        body: JSON.stringify({ billingMode: 'platform', context: 'onboarding' }),
+      });
+      if (!response.ok) {
+        const payload = await response.json().catch(() => ({}));
+        setError(payload.error ?? 'checkout_failed');
+        setSubmitting(false);
+        return;
+      }
+      const payload = (await response.json().catch(() => ({}))) as { url?: string };
+      if (!payload.url) {
+        setError('checkout_failed');
+        setSubmitting(false);
+        return;
+      }
+      window.location.assign(payload.url);
+    } catch {
+      setError('network_error');
+      setSubmitting(false);
+    }
+  }, [submitting, workspaceId]);
+
+  const startProvisioning = useCallback(async () => {
+    if (!workspaceId || provisioning) return;
+    setProvisioning(true);
+    setError(null);
+    try {
+      const response = await fetch(`/api/workspaces/${workspaceId}/billing/provision`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...csrfHeaders() },
+        body: JSON.stringify({}),
+      });
+      if (!response.ok && response.status !== 202) {
+        const payload = await response.json().catch(() => ({}));
+        setError(payload.error ?? 'provision_after_billing_failed');
+        setProvisioning(false);
+        return;
+      }
+      await mutate();
+      await router.replace(
+        mode === 'create' ? '/onboard?mode=create&step=provisioning' : '/onboard?step=invite',
+      );
+    } catch {
+      setError('network_error');
+      setProvisioning(false);
+    }
+  }, [mode, mutate, provisioning, router, workspaceId]);
+
+  useEffect(() => {
+    if (checkoutState !== 'success') return;
+    const timer = window.setTimeout(() => {
+      void startProvisioning();
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, [checkoutState, startProvisioning]);
+
+  return (
+    <motion.div
+      key="billing"
+      initial={{ opacity: 0, y: 4 }}
+      animate={{
+        opacity: 1,
+        y: 0,
+        transition: { duration: 0.2, ease: EASE_STANDARD },
+      }}
+    >
+      <p className="font-mono text-[11px] uppercase tracking-[0.06em] text-text-subtle">
+        BILLING CHECKPOINT
+      </p>
+      <h1 className="mt-3 text-[38px] font-medium leading-[1.06] tracking-[-0.025em] text-text-primary">
+        Confirm the paid plan before{' '}
+        <em className="font-newsreader font-normal italic text-text-primary">we spin it up.</em>
+      </h1>
+      <p className="mt-3.5 max-w-[45ch] text-sm leading-body text-text-body">
+        {billingUpgradesEnabled
+          ? 'We won\u2019t create the private runtime until Stripe confirms the subscription. You can go back and change the workspace name or plan before checkout.'
+          : 'Paid upgrades are paused while Stripe approval is pending. Go back and choose the free demo workspace for now.'}
+      </p>
+
+      <div className="mt-7 rounded-2xl border border-border bg-white p-5">
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <p className="text-sm font-medium text-text-primary">Paid workspace</p>
+            <p className="mt-1 text-xs leading-[1.6] text-text-subtle">
+              Private tenant runtime, provisioned only after payment is active.
+            </p>
+          </div>
+          <span className="rounded-full bg-accent-soft px-2.5 py-1 font-mono text-[10px] font-medium text-accent-deep">
+            {current.workspace?.name ?? 'Workspace'}
+          </span>
+        </div>
+      </div>
+
+      <div className="mt-6 flex flex-wrap items-center gap-2">
+        <button
+          type="button"
+          onClick={checkoutState === 'success' ? () => void startProvisioning() : startCheckout}
+          disabled={submitting || provisioning || !workspaceId || !billingUpgradesEnabled}
+          className="inline-flex h-11 items-center justify-center rounded-xl bg-accent px-5 text-[15px] font-medium tracking-[-0.01em] text-white transition-[filter,transform] duration-140 hover:brightness-110 active:translate-y-px disabled:cursor-not-allowed disabled:opacity-60"
+        >
+          {provisioning
+            ? 'Starting runtime\u2026'
+            : checkoutState === 'success'
+              ? 'Start runtime'
+              : submitting
+                ? 'Opening Stripe\u2026'
+                : billingUpgradesEnabled
+                  ? 'Continue to Stripe \u2192'
+                  : 'Upgrades paused'}
+        </button>
+        <button
+          type="button"
+          onClick={backToPlan}
+          disabled={submitting || provisioning}
+          className="inline-flex h-11 items-center justify-center rounded-xl bg-transparent px-4 text-sm font-medium text-text-subtle transition-colors duration-140 hover:bg-panel-soft hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-60"
+        >
+          Back
+        </button>
+      </div>
+
+      {checkoutState === 'cancelled' ? (
+        <p role="status" className="mt-3 text-[13px] font-medium text-text-subtle">
+          Checkout was cancelled. No runtime was created.
+        </p>
+      ) : null}
+      {error ? (
+        <p role="alert" className="mt-3 text-[13px] font-medium text-destructive">
+          {humanizeError(error)}
+        </p>
+      ) : null}
+      <PulsingNote>Stripe clears the gate; then provisioning starts.</PulsingNote>
     </motion.div>
   );
 }
@@ -1108,6 +1440,22 @@ function humanizeError(code: string): string {
   switch (code) {
     case 'workspace_name_invalid':
       return 'That workspace name isn\u2019t valid. 80 characters max.';
+    case 'workspace_plan_invalid':
+      return 'Choose free or paid to continue.';
+    case 'billing_required':
+      return 'Finish billing before starting the paid runtime.';
+    case 'billing_upgrades_disabled':
+      return 'Paid upgrades are paused while Stripe approval is pending.';
+    case 'subscription_not_active':
+      return 'Stripe has not confirmed the subscription yet. Try again in a moment.';
+    case 'stripe_not_configured':
+    case 'base_price_not_configured':
+    case 'metered_price_not_configured':
+      return 'Billing is not configured yet.';
+    case 'checkout_failed':
+      return 'Couldn\u2019t start Stripe checkout. Try again.';
+    case 'provision_after_billing_failed':
+      return 'Payment cleared, but runtime start failed. Try again.';
     case 'owner_signup_not_allowed':
       return 'This email is not authorized to create a cloud workspace yet.';
     case 'invite_emails_invalid':

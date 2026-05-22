@@ -11,6 +11,9 @@ describe('deriveOnboardStep', () => {
   it('returns invite when URL says invite', () => {
     expect(deriveOnboardStep({ workspace: { id: 'x' } } as any, 'invite')).toBe('invite');
   });
+  it('returns billing when URL says billing', () => {
+    expect(deriveOnboardStep({ workspace: { id: 'x' } } as any, 'billing')).toBe('billing');
+  });
   it('returns provisioning when URL says provisioning', () => {
     expect(deriveOnboardStep({ workspace: { id: 'x' } } as any, 'provisioning')).toBe(
       'provisioning',
@@ -29,6 +32,14 @@ describe('deriveOnboardStep', () => {
         null,
       ),
     ).toBe('provisioning');
+  });
+  it('falls through to billing when the workspace is waiting on payment', () => {
+    expect(
+      deriveOnboardStep(
+        { workspace: { id: 'x', runtime: 'billing_required' }, connections: [] } as any,
+        null,
+      ),
+    ).toBe('billing');
   });
   it('falls through to connect when ready but no connections', () => {
     expect(
@@ -83,6 +94,14 @@ describe('deriveOnboardStep — mode=create', () => {
     };
     expect(deriveOnboardStep(current, 'keys', 'create')).toBe('keys');
     expect(deriveOnboardStep(current, 'connect', 'create')).toBe('connect');
+  });
+  it('honors the create-mode billing checkpoint', () => {
+    const current = {
+      workspace: { id: 'w1', name: 'Existing', runtime: 'billing_required' as const },
+      connections: [],
+      lastJob: null,
+    };
+    expect(deriveOnboardStep(current, 'billing', 'create')).toBe('billing');
   });
   it('returns workspace step even when current.workspace is null', () => {
     const current = { workspace: null, connections: [], lastJob: null };

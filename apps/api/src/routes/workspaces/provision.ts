@@ -12,6 +12,7 @@ import { db, schema } from '../../db/client.js';
 import {
   OPEN42_ALLOW_MULTI_WORKSPACE,
   OPEN42_ALLOW_SHARED_KEYS,
+  OPEN42_BILLING_UPGRADES_ENABLED,
   OPEN42_SINGLE_WORKSPACE_ID,
   WEB_PUBLIC_URL,
 } from '../../env.js';
@@ -26,6 +27,11 @@ import {
   provisionTenant as defaultProvisionTenant,
   safelyProvisionTenant as defaultSafelyProvisionTenant,
 } from '../../tenants/provision.js';
+import {
+  normalizeWorkspacePlan,
+  workspacePlanRequiresBilling,
+  type WorkspacePlan,
+} from '../../workspaces/plan.js';
 
 const WORKSPACE_NAME_MAX = 80;
 const INVITE_LIMIT = 10;
@@ -40,9 +46,7 @@ const SAFE_PROVISIONING_ERROR_CODES = new Set([
   'provisioning_failed',
 ]);
 
-type WorkspacePlan = 'starter' | 'team' | 'business';
-
-type WorkspaceRuntime = 'provisioning' | 'overdue' | 'ready' | 'failed';
+type WorkspaceRuntime = 'billing_required' | 'provisioning' | 'overdue' | 'ready' | 'failed';
 
 const PROVISIONING_OVERDUE_MS = 60 * 1000;
 
@@ -65,6 +69,7 @@ export function deriveRuntime(input: {
   provisioningStartedAt: Date;
   now?: Date;
 }): WorkspaceRuntime {
+  if (input.status === 'billing_required') return 'billing_required';
   if (input.status === 'failed') return 'failed';
   if (input.status === 'ready' && input.gbrainReady) return 'ready';
   const elapsed = (input.now ?? new Date()).getTime() - input.provisioningStartedAt.getTime();
@@ -108,7 +113,8 @@ interface WorkspaceLifecycleRepo {
   saveWorkspaceName(
     userId: string,
     name: string,
-  ): Promise<{ payload: CurrentPayload; wasCreated: boolean }>;
+    plan: WorkspacePlan,
+  ): Promise<{ payload: CurrentPayload; wasCreated: boolean; shouldEnqueueProvision: boolean }>;
   upsertInvites(userId: string, emails: string[]): Promise<UpsertInvitesResult>;
   /**
    * Fetch a non-soft-deleted workspace row by id for the retry endpoint.
@@ -174,8 +180,21 @@ export function buildWorkspaceProvisionRouter(
         res.status(400).json({ error: 'workspace_name_invalid' });
         return;
       }
-      const { payload, wasCreated } = await repo.saveWorkspaceName(session.userId, name);
-      if (wasCreated && payload.workspace) {
+      const plan = normalizeWorkspacePlan(req.body?.plan);
+      if (!plan) {
+        res.status(400).json({ error: 'workspace_plan_invalid' });
+        return;
+      }
+      if (workspacePlanRequiresBilling(plan) && !OPEN42_BILLING_UPGRADES_ENABLED) {
+        res.status(503).json({ error: 'billing_upgrades_disabled' });
+        return;
+      }
+      const { payload, shouldEnqueueProvision } = await repo.saveWorkspaceName(
+        session.userId,
+        name,
+        plan,
+      );
+      if (shouldEnqueueProvision && payload.workspace) {
         // Provisioning runs as a BullMQ job (Redis-backed). The job survives
         // process death — if the API restarts mid-provision, BullMQ's
         // stalled-job recovery picks it up. Fire-and-forget over an in-process
@@ -234,6 +253,10 @@ export function buildWorkspaceProvisionRouter(
         }
         if (workspace.status === 'ready') {
           res.json({ ok: true, status: 'ready' });
+          return;
+        }
+        if (workspace.status === 'billing_required') {
+          res.status(409).json({ error: 'billing_required' });
           return;
         }
 
@@ -380,8 +403,8 @@ function createDrizzleWorkspaceLifecycleRepo(): WorkspaceLifecycleRepo {
     async current(userId) {
       return currentPayload(userId);
     },
-    async saveWorkspaceName(userId, name) {
-      const wasCreated = await db.transaction(async (tx) => {
+    async saveWorkspaceName(userId, name, plan) {
+      const result = await db.transaction(async (tx) => {
         const [user] = await tx
           .select()
           .from(schema.users)
@@ -393,7 +416,10 @@ function createDrizzleWorkspaceLifecycleRepo(): WorkspaceLifecycleRepo {
         // `users.currentWorkspaceId`. See apps/api/src/auth/membership.ts
         // (Codex ship-blocker #1).
         const [ownerRow] = await tx
-          .select({ workspaceId: schema.memberships.workspaceId })
+          .select({
+            workspaceId: schema.memberships.workspaceId,
+            status: schema.workspaces.status,
+          })
           .from(schema.memberships)
           .innerJoin(schema.workspaces, eq(schema.workspaces.id, schema.memberships.workspaceId))
           .where(
@@ -403,17 +429,42 @@ function createDrizzleWorkspaceLifecycleRepo(): WorkspaceLifecycleRepo {
               sql`${schema.workspaces.deletedAt} IS NULL`,
             ),
           )
+          .orderBy(
+            sql`CASE WHEN ${schema.memberships.workspaceId} = ${user.currentWorkspaceId} THEN 0 ELSE 1 END`,
+            desc(schema.workspaces.createdAt),
+          )
           .limit(1);
 
         if (ownerRow?.workspaceId) {
+          if (ownerRow.status === 'billing_required') {
+            const nextStatus = workspacePlanRequiresBilling(plan)
+              ? 'billing_required'
+              : 'provisioning';
+            await tx
+              .update(schema.workspaces)
+              .set({
+                name,
+                plan,
+                status: nextStatus,
+                lastError: null,
+                lastErrorDetail: null,
+                provisioningStartedAt: new Date(),
+              })
+              .where(eq(schema.workspaces.id, ownerRow.workspaceId));
+            return {
+              wasCreated: false,
+              shouldEnqueueProvision: nextStatus === 'provisioning',
+            };
+          }
           await tx
             .update(schema.workspaces)
             .set({ name })
             .where(eq(schema.workspaces.id, ownerRow.workspaceId));
-          return false;
+          return { wasCreated: false, shouldEnqueueProvision: false };
         }
 
         assertOwnerSignupAllowed(user.email);
+        const requiresBilling = workspacePlanRequiresBilling(plan);
 
         const [workspaceCount] = await tx
           .select({ count: sql<number>`COUNT(*)::int` })
@@ -432,8 +483,9 @@ function createDrizzleWorkspaceLifecycleRepo(): WorkspaceLifecycleRepo {
             id: fixedWorkspaceId,
             ownerUserId: userId,
             name,
+            plan,
             gbrainVersion: process.env.GBRAIN_VERSION ?? '0.31.3',
-            status: 'provisioning',
+            status: requiresBilling ? 'billing_required' : 'provisioning',
           })
           .returning({ id: schema.workspaces.id });
         if (!workspace) throw new Error('workspace_insert_failed');
@@ -446,11 +498,11 @@ function createDrizzleWorkspaceLifecycleRepo(): WorkspaceLifecycleRepo {
           .insert(schema.memberships)
           .values({ userId, workspaceId: workspace.id, role: 'owner' })
           .onConflictDoNothing();
-        return true;
+        return { wasCreated: true, shouldEnqueueProvision: !requiresBilling };
       });
       const current = await currentPayload(userId);
       if (!current) throw new Error('user_not_found');
-      return { payload: current, wasCreated };
+      return { payload: current, ...result };
     },
     async upsertInvites(userId, emails) {
       const ownerWorkspaceId = await resolveOwnerWorkspaceId(userId);
@@ -510,6 +562,7 @@ function createDrizzleWorkspaceLifecycleRepo(): WorkspaceLifecycleRepo {
         .set({
           status: 'provisioning',
           lastError: null,
+          lastErrorDetail: null,
           provisioningStartedAt: new Date(),
         })
         .where(eq(schema.workspaces.id, workspaceId));

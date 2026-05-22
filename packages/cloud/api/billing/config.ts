@@ -9,6 +9,7 @@ export interface BillingConfig {
   platformRequestMeteredPriceId: string;
   platformRequestMeterEventName: string;
   basicIncludedRequests: number;
+  upgradesEnabled: boolean;
 }
 
 let cachedProcessConfig: BillingConfig | null = null;
@@ -29,6 +30,7 @@ function readBillingConfig(env: NodeJS.ProcessEnv): BillingConfig {
     platformRequestMeteredPriceId: env.STRIPE_PLATFORM_REQUEST_METERED_PRICE_ID?.trim() || '',
     platformRequestMeterEventName: env.STRIPE_PLATFORM_REQUEST_METER_EVENT_NAME?.trim() || '',
     basicIncludedRequests: positiveInt(env.OPEN42_BASIC_INCLUDED_REQUESTS, 0),
+    upgradesEnabled: boolEnv(env.OPEN42_BILLING_UPGRADES_ENABLED, true),
   };
 }
 
@@ -53,6 +55,10 @@ export function hasBasePrice(config: BillingConfig): boolean {
   return hasStripeSecret(config) && Boolean(config.basicMonthlyPriceId);
 }
 
+export function hasCheckoutConfigured(config: BillingConfig): boolean {
+  return config.upgradesEnabled && hasBasePrice(config);
+}
+
 export function hasMeteredPrice(config: BillingConfig): boolean {
   return hasStripeSecret(config) && Boolean(config.platformRequestMeteredPriceId);
 }
@@ -69,4 +75,11 @@ function positiveInt(value: string | undefined, fallback: number): number {
   if (!value) return fallback;
   const parsed = Number.parseInt(value, 10);
   return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback;
+}
+
+function boolEnv(value: string | undefined, fallback: boolean): boolean {
+  if (value === undefined || value === '') return fallback;
+  if (['1', 'true', 'yes', 'on'].includes(value.toLowerCase())) return true;
+  if (['0', 'false', 'no', 'off'].includes(value.toLowerCase())) return false;
+  throw new Error(`Invalid boolean env value: ${value}`);
 }

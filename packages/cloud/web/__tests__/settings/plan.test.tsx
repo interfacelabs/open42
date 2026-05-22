@@ -39,6 +39,7 @@ describe('PlanSettingsPage', () => {
     usedRequests: 42,
     includedRequestsRemaining: 58,
     meteredRequests: 0,
+    upgradesEnabled: true,
     checkoutConfigured: true,
     overageMeterConfigured: true,
     portalAvailable: true,
@@ -102,6 +103,32 @@ describe('PlanSettingsPage', () => {
       screen.getByText(/Add a workspace provider key before subscribing to BYOK/i),
     ).toBeInTheDocument();
     expect(screen.queryByText('Selected')).not.toBeInTheDocument();
+  });
+
+  it('disables paid upgrade actions while upgrades are paused', () => {
+    (useSWR as unknown as ReturnType<typeof vi.fn>).mockReturnValue({
+      data: {
+        billing: {
+          ...billing,
+          subscriptionStatus: null,
+          subscriptionActive: false,
+          hasStripeCustomer: false,
+          hasStripeSubscription: false,
+          upgradesEnabled: false,
+          checkoutConfigured: false,
+          portalAvailable: false,
+        },
+      },
+      error: null,
+      mutate: vi.fn(),
+    });
+
+    render(<PlanSettingsPage />);
+    const subscribeButtons = screen.getAllByRole('button', { name: /Subscribe/i });
+    expect(subscribeButtons).toHaveLength(2);
+    expect(subscribeButtons[0]).toBeDisabled();
+    expect(subscribeButtons[1]).toBeDisabled();
+    expect(screen.getByText(/Paid upgrades are paused/i)).toBeInTheDocument();
   });
 
   it('shows a checkout return banner', () => {

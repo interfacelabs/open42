@@ -61,7 +61,7 @@ describe('workspace provision route', () => {
     const res = await request(app)
       .post('/workspaces/onboarding/workspace')
       .set('Cookie', 'open42_session=session-missing')
-      .send({ name: 'Speedrun Labs' });
+      .send({ name: 'Speedrun Labs', plan: 'starter' });
 
     expect(res.status).toBe(401);
     expect(res.body).toEqual({ error: 'unauthorized' });
@@ -81,7 +81,7 @@ describe('workspace provision route', () => {
     await request(app)
       .post('/workspaces/onboarding/workspace')
       .set('Cookie', 'open42_session=session-1')
-      .send({ name: 'Speedrun Labs' })
+      .send({ name: 'Speedrun Labs', plan: 'team' })
       .expect(200);
     await request(app)
       .post('/workspaces/onboarding/invites')
@@ -89,7 +89,7 @@ describe('workspace provision route', () => {
       .send({ emails: ['founder@example.com', 'Founder@example.com '] })
       .expect(200);
 
-    expect(repo.saveWorkspaceName).toHaveBeenCalledWith('user-1', 'Speedrun Labs');
+    expect(repo.saveWorkspaceName).toHaveBeenCalledWith('user-1', 'Speedrun Labs', 'team');
     expect(repo.upsertInvites).toHaveBeenCalledWith('user-1', ['founder@example.com']);
   });
 
@@ -119,6 +119,26 @@ describe('workspace provision route', () => {
   });
 
   describe('POST /workspaces/onboarding/workspace (idempotent)', () => {
+    it('returns 400 when plan is missing or invalid', async () => {
+      mocks.validateSession.mockResolvedValue({ userId: 'user-1' });
+      const repo = makeRepo();
+      const app = makeApp(repo);
+
+      const missing = await request(app)
+        .post('/workspaces/onboarding/workspace')
+        .set('Cookie', 'open42_session=session-1')
+        .send({ name: 'Speedrun Labs' });
+      expect(missing.status).toBe(400);
+      expect(missing.body).toEqual({ error: 'workspace_plan_invalid' });
+
+      const invalid = await request(app)
+        .post('/workspaces/onboarding/workspace')
+        .set('Cookie', 'open42_session=session-1')
+        .send({ name: 'Speedrun Labs', plan: 'enterprise' });
+      expect(invalid.status).toBe(400);
+      expect(repo.saveWorkspaceName).not.toHaveBeenCalled();
+    });
+
     it('creates workspace + kicks off provisioning on first call', async () => {
       mocks.validateSession.mockResolvedValue({ userId: 'user-1' });
       mocks.safelyProvisionTenant.mockResolvedValue({
@@ -163,13 +183,14 @@ describe('workspace provision route', () => {
           providerKeys: { anthropicChat: false, openaiEmbed: false },
         },
         wasCreated: true,
+        shouldEnqueueProvision: true,
       });
       const app = makeApp(repo);
 
       const res = await request(app)
         .post('/workspaces/onboarding/workspace')
         .set('Cookie', 'open42_session=session-1')
-        .send({ name: 'Speedrun Labs' });
+        .send({ name: 'Speedrun Labs', plan: 'starter' });
 
       expect(res.status).toBe(200);
       await new Promise((r) => setImmediate(r));
@@ -178,6 +199,46 @@ describe('workspace provision route', () => {
         workspaceId: 'workspace-1',
         ownerUserId: 'user-1',
       });
+      expect(repo.saveWorkspaceName).toHaveBeenCalledWith('user-1', 'Speedrun Labs', 'starter');
+    });
+
+    it('holds paid workspaces at billing_required without provisioning', async () => {
+      mocks.validateSession.mockResolvedValue({ userId: 'user-1' });
+      const repo = makeRepo();
+      repo.saveWorkspaceName.mockResolvedValueOnce({
+        payload: {
+          user: { id: 'user-1', email: 'user@example.com' },
+          workspace: {
+            id: 'workspace-1',
+            name: 'Speedrun Labs',
+            plan: 'team',
+            status: 'billing_required',
+            gbrainReady: false,
+            runtime: 'billing_required',
+            lastError: null,
+            provisionAttempts: 0,
+            provisioningStartedAt: new Date('2026-05-07T10:00:00Z'),
+            createdAt: new Date('2026-05-07T10:00:00Z'),
+          },
+          invites: [],
+          connections: [],
+          lastJob: null,
+          requiresProviderKeys: true,
+          providerKeys: { anthropicChat: false, openaiEmbed: false },
+        },
+        wasCreated: true,
+        shouldEnqueueProvision: false,
+      });
+      const app = makeApp(repo);
+
+      const res = await request(app)
+        .post('/workspaces/onboarding/workspace')
+        .set('Cookie', 'open42_session=session-1')
+        .send({ name: 'Speedrun Labs', plan: 'team' });
+
+      expect(res.status).toBe(200);
+      expect(res.body.workspace.runtime).toBe('billing_required');
+      expect(mocks.safelyProvisionTenant).not.toHaveBeenCalled();
     });
 
     it('returns 403 when cloud owner signup is not authorized', async () => {
@@ -189,7 +250,7 @@ describe('workspace provision route', () => {
       const res = await request(app)
         .post('/workspaces/onboarding/workspace')
         .set('Cookie', 'open42_session=session-1')
-        .send({ name: 'Blocked Workspace' });
+        .send({ name: 'Blocked Workspace', plan: 'starter' });
 
       expect(res.status).toBe(403);
       expect(res.body).toEqual({ error: 'owner_signup_not_allowed' });
@@ -205,7 +266,7 @@ describe('workspace provision route', () => {
       const res = await request(app)
         .post('/workspaces/onboarding/workspace')
         .set('Cookie', 'open42_session=session-1')
-        .send({ name: 'Speedrun Labs' });
+        .send({ name: 'Speedrun Labs', plan: 'team' });
 
       expect(res.status).toBe(200);
       await new Promise((r) => setImmediate(r));
@@ -237,19 +298,20 @@ describe('workspace provision route', () => {
           providerKeys: { anthropicChat: false, openaiEmbed: false },
         },
         wasCreated: false,
+        shouldEnqueueProvision: false,
       });
       const app = makeApp(repo);
 
       const res = await request(app)
         .post('/workspaces/onboarding/workspace')
         .set('Cookie', 'open42_session=session-1')
-        .send({ name: 'New Name' });
+        .send({ name: 'New Name', plan: 'team' });
 
       expect(res.status).toBe(200);
       expect(res.body.workspace.name).toBe('New Name');
       await new Promise((r) => setImmediate(r));
       expect(mocks.safelyProvisionTenant).not.toHaveBeenCalled();
-      expect(repo.saveWorkspaceName).toHaveBeenCalledWith('user-1', 'New Name');
+      expect(repo.saveWorkspaceName).toHaveBeenCalledWith('user-1', 'New Name', 'team');
     });
   });
 
@@ -451,6 +513,22 @@ describe('workspace provision route', () => {
       expect(mocks.safelyProvisionTenant).not.toHaveBeenCalled();
     });
 
+    it('does not retry a paid workspace before billing clears', async () => {
+      const repo = makeRepo();
+      repo.findRetryableWorkspace.mockResolvedValueOnce({ id: 'ws-1', status: 'billing_required' });
+      const app = makeApp(repo);
+
+      const res = await request(app)
+        .post('/workspaces/onboarding/retry-provision')
+        .set('Cookie', 'open42_session=session-1')
+        .send({ workspace_id: 'ws-1' });
+
+      expect(res.status).toBe(409);
+      expect(res.body).toEqual({ error: 'billing_required' });
+      expect(repo.markWorkspaceProvisioning).not.toHaveBeenCalled();
+      expect(mocks.safelyProvisionTenant).not.toHaveBeenCalled();
+    });
+
     it('retries the specific workspace_id passed in the body (multi-workspace)', async () => {
       // Codex round-4 P2 regression guard: pre-fix the handler ignored the
       // body and used resolveOwnerWorkspaceId with LIMIT 1. Confirm the
@@ -608,6 +686,17 @@ describe('deriveRuntime', () => {
     ).toBe('provisioning');
   });
 
+  it("returns 'billing_required' before Stripe clears paid onboarding", () => {
+    expect(
+      deriveRuntime({
+        status: 'billing_required',
+        gbrainReady: false,
+        provisioningStartedAt: fresh,
+        now,
+      }),
+    ).toBe('billing_required');
+  });
+
   it("returns 'overdue' once provisioning has run past the threshold", () => {
     expect(
       deriveRuntime({
@@ -691,7 +780,7 @@ function makeApp(repo = makeRepo()) {
 }
 
 type WorkspacePlan = 'starter' | 'team' | 'business';
-type WorkspaceRuntime = 'provisioning' | 'overdue' | 'ready' | 'failed';
+type WorkspaceRuntime = 'billing_required' | 'provisioning' | 'overdue' | 'ready' | 'failed';
 
 interface MockWorkspace {
   id: string;
@@ -743,7 +832,11 @@ function makeRepo(currentOverride: Partial<MockCurrent> = {}) {
   };
   return {
     current: vi.fn(async () => current),
-    saveWorkspaceName: vi.fn(async () => ({ payload: current, wasCreated: false })),
+    saveWorkspaceName: vi.fn(async () => ({
+      payload: current,
+      wasCreated: false,
+      shouldEnqueueProvision: false,
+    })),
     upsertInvites: vi.fn(async (_userId: string, emails: string[]) => ({
       workspaceId: current.workspace?.id ?? 'workspace-1',
       workspaceName: current.workspace?.name ?? 'Speedrun Labs',

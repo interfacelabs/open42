@@ -2,11 +2,13 @@ import { and, eq, gte, sql } from 'drizzle-orm';
 import type Stripe from 'stripe';
 
 import { db as defaultDb, schema as coreSchema } from '@open42/api/db/client';
+import { enqueueProvisionJob as defaultEnqueueProvisionJob } from '@open42/api/queue/provision-queue';
 import { billingUsageEvents, workspaceBilling } from '../schema-cloud.js';
 import {
   billingModeLabel,
   getBillingConfig,
   hasBasePrice,
+  hasCheckoutConfigured,
   hasOverageMeter,
   parseBillingMode,
   type BillingConfig,
@@ -21,7 +23,9 @@ export class BillingError extends Error {
       | 'base_price_not_configured'
       | 'metered_price_not_configured'
       | 'workspace_not_found'
+      | 'billing_upgrades_disabled'
       | 'subscription_exists'
+      | 'subscription_not_active'
       | 'stripe_customer_missing'
       | 'byok_key_required',
     message = code,
@@ -57,6 +61,7 @@ export interface BillingDeps {
   stripe?: StripeClient | null;
   config?: BillingConfig;
   now?: () => Date;
+  enqueueProvisionJob?: typeof defaultEnqueueProvisionJob;
 }
 
 export async function getWorkspaceBilling(workspaceId: string, deps: BillingDeps = {}) {
@@ -123,7 +128,8 @@ export async function getWorkspaceBilling(workspaceId: string, deps: BillingDeps
       usedRequests,
       includedRequestsRemaining,
       meteredRequests,
-      checkoutConfigured: hasBasePrice(config),
+      upgradesEnabled: config.upgradesEnabled,
+      checkoutConfigured: hasCheckoutConfigured(config),
       overageMeterConfigured: hasOverageMeter(config),
       portalAvailable: Boolean(workspace.stripeCustomerId),
     },
@@ -135,6 +141,7 @@ export async function createCheckoutSession(
     workspaceId: string;
     userId: string;
     billingMode: BillingMode;
+    context?: 'settings' | 'onboarding';
   },
   deps: BillingDeps = {},
 ): Promise<{ url: string }> {
@@ -142,10 +149,8 @@ export async function createCheckoutSession(
   const config = deps.config ?? getBillingConfig();
   const stripe = deps.stripe === undefined ? getStripeClient() : deps.stripe;
   if (!stripe) throw new BillingError('stripe_not_configured');
+  if (!config.upgradesEnabled) throw new BillingError('billing_upgrades_disabled');
   if (!hasBasePrice(config)) throw new BillingError('base_price_not_configured');
-  if (input.billingMode === 'platform' && !hasOverageMeter(config)) {
-    throw new BillingError('metered_price_not_configured');
-  }
 
   const [row] = await db
     .select({
@@ -197,7 +202,7 @@ export async function createCheckoutSession(
   const lineItems: Array<{ price: string; quantity?: number }> = [
     { price: config.basicMonthlyPriceId, quantity: 1 },
   ];
-  if (config.platformRequestMeteredPriceId) {
+  if (hasOverageMeter(config)) {
     lineItems.push({ price: config.platformRequestMeteredPriceId });
   }
 
@@ -207,8 +212,14 @@ export async function createCheckoutSession(
     client_reference_id: input.workspaceId,
     line_items: lineItems,
     allow_promotion_codes: true,
-    success_url: `${config.webPublicUrl}/settings/plan?checkout=success&session_id={CHECKOUT_SESSION_ID}`,
-    cancel_url: `${config.webPublicUrl}/settings/plan?checkout=cancelled`,
+    success_url:
+      input.context === 'onboarding'
+        ? `${config.webPublicUrl}/onboard?step=billing&checkout=success&session_id={CHECKOUT_SESSION_ID}`
+        : `${config.webPublicUrl}/settings/plan?checkout=success&session_id={CHECKOUT_SESSION_ID}`,
+    cancel_url:
+      input.context === 'onboarding'
+        ? `${config.webPublicUrl}/onboard?step=billing&checkout=cancelled`
+        : `${config.webPublicUrl}/settings/plan?checkout=cancelled`,
     metadata: {
       workspace_id: input.workspaceId,
       owner_user_id: input.userId,
@@ -305,6 +316,9 @@ export async function syncSubscription(
 
   if (workspaceId) {
     await upsertWorkspaceBilling(workspaceId, set, db);
+    if (isSubscriptionUsable(subscription.status)) {
+      await startProvisioningAfterPayment({ workspaceId }, deps);
+    }
     return;
   }
   if (customerId) {
@@ -319,11 +333,68 @@ export function isSubscriptionUsable(status: string | null | undefined): boolean
   return status === 'active' || status === 'trialing' || status === 'past_due';
 }
 
+export async function startProvisioningAfterPayment(
+  input: { workspaceId: string },
+  deps: BillingDeps = {},
+): Promise<{ status: 'billing_required' | 'provisioning' | 'ready' | 'failed' | 'deleted' }> {
+  const db = deps.db ?? defaultDb;
+  const enqueueProvisionJob = deps.enqueueProvisionJob ?? defaultEnqueueProvisionJob;
+
+  const [row] = await db
+    .select({
+      workspaceId: coreSchema.workspaces.id,
+      ownerUserId: coreSchema.workspaces.ownerUserId,
+      status: coreSchema.workspaces.status,
+      subscriptionStatus: workspaceBilling.stripeSubscriptionStatus,
+    })
+    .from(coreSchema.workspaces)
+    .leftJoin(workspaceBilling, eq(workspaceBilling.workspaceId, coreSchema.workspaces.id))
+    .where(eq(coreSchema.workspaces.id, input.workspaceId))
+    .limit(1);
+  if (!row) throw new BillingError('workspace_not_found');
+  if (!isSubscriptionUsable(row.subscriptionStatus)) {
+    throw new BillingError('subscription_not_active');
+  }
+  if (row.status !== 'billing_required') {
+    return {
+      status: row.status as 'billing_required' | 'provisioning' | 'ready' | 'failed' | 'deleted',
+    };
+  }
+
+  const updated = await db
+    .update(coreSchema.workspaces)
+    .set({
+      status: 'provisioning',
+      lastError: null,
+      lastErrorDetail: null,
+      provisioningStartedAt: new Date(),
+    })
+    .where(
+      and(
+        eq(coreSchema.workspaces.id, input.workspaceId),
+        eq(coreSchema.workspaces.status, 'billing_required'),
+      ),
+    )
+    .returning({ id: coreSchema.workspaces.id });
+
+  if (updated.length > 0) {
+    await enqueueProvisionJob({
+      workspaceId: input.workspaceId,
+      ownerUserId: row.ownerUserId,
+    });
+  }
+
+  return { status: 'provisioning' };
+}
+
 export function mapBillingErrorStatus(error: BillingError): number {
   switch (error.code) {
     case 'workspace_not_found':
       return 404;
+    case 'billing_upgrades_disabled':
+      return 503;
     case 'subscription_exists':
+    case 'subscription_not_active':
     case 'stripe_customer_missing':
     case 'byok_key_required':
       return 409;

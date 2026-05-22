@@ -37,6 +37,7 @@ const bytea = customType<{ data: Buffer; default: false }>({
 
 export const membershipRoleEnum = pgEnum('membership_role', ['owner', 'admin', 'member']);
 export const workspaceStatusEnum = pgEnum('workspace_status', [
+  'billing_required',
   'provisioning',
   'ready',
   'failed',

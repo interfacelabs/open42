@@ -178,21 +178,45 @@ describe('workspace index router', () => {
     it('201 — creates, selects, and returns the workspace', async () => {
       setSession('user-1');
       const repo = makeRepo();
-      const create = vi.fn(async (userId: string, name: string) => ({
+      const create = vi.fn(async (userId: string, name: string, plan: string) => ({
         id: 'ws-new',
         name,
-        status: 'provisioning' as const,
+        plan,
+        status: 'billing_required' as const,
       }));
       const res = await request(makeApp({ repo, createWorkspaceForUser: create }))
         .post('/workspaces')
         .set('Cookie', COOKIE)
-        .send({ name: '  New   Workspace  ' });
+        .send({ name: '  New   Workspace  ', plan: 'team' });
       expect(res.status).toBe(201);
-      expect(create).toHaveBeenCalledWith('user-1', 'New Workspace');
+      expect(create).toHaveBeenCalledWith('user-1', 'New Workspace', 'team');
       expect(repo.setCurrentWorkspace).toHaveBeenCalledWith('user-1', 'ws-new');
       expect(res.body).toEqual({
-        workspace: { id: 'ws-new', name: 'New Workspace', status: 'provisioning' },
+        workspace: {
+          id: 'ws-new',
+          name: 'New Workspace',
+          plan: 'team',
+          status: 'billing_required',
+        },
       });
+    });
+
+    it('400 when plan is missing or invalid', async () => {
+      setSession('user-1');
+      const create = vi.fn();
+      const missing = await request(makeApp({ createWorkspaceForUser: create }))
+        .post('/workspaces')
+        .set('Cookie', COOKIE)
+        .send({ name: 'New Workspace' });
+      expect(missing.status).toBe(400);
+      expect(missing.body).toEqual({ error: 'workspace_plan_invalid' });
+
+      const invalid = await request(makeApp({ createWorkspaceForUser: create }))
+        .post('/workspaces')
+        .set('Cookie', COOKIE)
+        .send({ name: 'New Workspace', plan: 'enterprise' });
+      expect(invalid.status).toBe(400);
+      expect(create).not.toHaveBeenCalled();
     });
 
     it('403 when cloud owner signup is not authorized', async () => {
@@ -204,7 +228,7 @@ describe('workspace index router', () => {
       const res = await request(makeApp({ createWorkspaceForUser: create }))
         .post('/workspaces')
         .set('Cookie', COOKIE)
-        .send({ name: 'Blocked Workspace' });
+        .send({ name: 'Blocked Workspace', plan: 'starter' });
 
       expect(res.status).toBe(403);
       expect(res.body).toEqual({ error: 'owner_signup_not_allowed' });
@@ -221,7 +245,7 @@ describe('workspace index router', () => {
       const res = await request(makeApp({ repo, createWorkspaceForUser: create }))
         .post('/workspaces')
         .set('Cookie', COOKIE)
-        .send({ name: 'Second WS' });
+        .send({ name: 'Second WS', plan: 'starter' });
       expect(res.status).toBe(403);
       expect(res.body).toEqual({ error: 'multi_workspace_disabled' });
       expect(create).not.toHaveBeenCalled();

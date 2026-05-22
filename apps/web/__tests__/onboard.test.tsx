@@ -61,6 +61,26 @@ describe('OnboardPage', () => {
     render(<OnboardPage />);
     expect(screen.getByRole('heading', { name: /name your brain/i })).toBeInTheDocument();
     expect(screen.getByLabelText(/workspace name/i)).toBeInTheDocument();
+    expect(screen.getByRole('radio', { name: /free/i })).toBeChecked();
+    expect(screen.getByRole('radio', { name: /paid/i })).toBeInTheDocument();
+  });
+
+  it('disables the paid workspace option when upgrades are paused', () => {
+    (useSWR as unknown as ReturnType<typeof vi.fn>).mockReturnValue({
+      data: {
+        workspace: null,
+        connections: [],
+        lastJob: null,
+        invites: [],
+        user: { id: 'u', email: 'a@x.com' },
+      },
+      error: null,
+      mutate: vi.fn(),
+      isLoading: false,
+    });
+    render(<OnboardPage billingUpgradesEnabled={false} />);
+    expect(screen.getByRole('radio', { name: /paid/i })).toBeDisabled();
+    expect(screen.getByText(/Paid upgrades are paused/i)).toBeInTheDocument();
   });
 
   it('renders InviteStep when ?step=invite', () => {
@@ -80,6 +100,98 @@ describe('OnboardPage', () => {
     render(<OnboardPage />);
     expect(screen.getByRole('heading', { name: /who else needs this brain/i })).toBeInTheDocument();
     expect(screen.getByLabelText(/email addresses/i)).toBeInTheDocument();
+  });
+
+  it('renders BillingStep when a workspace requires billing', () => {
+    (useSWR as unknown as ReturnType<typeof vi.fn>).mockReturnValue({
+      data: {
+        workspace: {
+          id: 'ws1',
+          name: 'Speedrun',
+          plan: 'team',
+          status: 'billing_required',
+          runtime: 'billing_required',
+        },
+        connections: [],
+        lastJob: null,
+        invites: [],
+        user: { id: 'u', email: 'a@x.com' },
+      },
+      error: null,
+      mutate: vi.fn(),
+      isLoading: false,
+    });
+    render(<OnboardPage />);
+    expect(screen.getByRole('heading', { name: /confirm the paid plan/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /continue to stripe/i })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: /^back$/i }));
+    expect(mocks.pushMock).toHaveBeenCalledWith('/onboard?step=workspace');
+  });
+
+  it('disables checkout from the billing step when upgrades are paused', () => {
+    (useSWR as unknown as ReturnType<typeof vi.fn>).mockReturnValue({
+      data: {
+        workspace: {
+          id: 'ws1',
+          name: 'Speedrun',
+          plan: 'team',
+          status: 'billing_required',
+          runtime: 'billing_required',
+        },
+        connections: [],
+        lastJob: null,
+        invites: [],
+        user: { id: 'u', email: 'a@x.com' },
+      },
+      error: null,
+      mutate: vi.fn(),
+      isLoading: false,
+    });
+    render(<OnboardPage billingUpgradesEnabled={false} />);
+    expect(screen.getByRole('button', { name: /upgrades paused/i })).toBeDisabled();
+    expect(screen.getByText(/choose the free demo workspace/i)).toBeInTheDocument();
+  });
+
+  it('starts provisioning after Stripe returns to onboarding', async () => {
+    mockRouterQuery.current = { step: 'billing', checkout: 'success' };
+    const mutate = vi.fn();
+    (useSWR as unknown as ReturnType<typeof vi.fn>).mockReturnValue({
+      data: {
+        workspace: {
+          id: 'ws1',
+          name: 'Speedrun',
+          plan: 'team',
+          status: 'billing_required',
+          runtime: 'billing_required',
+        },
+        connections: [],
+        lastJob: null,
+        invites: [],
+        user: { id: 'u', email: 'a@x.com' },
+      },
+      error: null,
+      mutate,
+      isLoading: false,
+    });
+    const fetchMock = makeFetch({
+      '/api/workspaces/ws1/billing/provision': {
+        ok: true,
+        status: 202,
+        body: { ok: true, status: 'provisioning' },
+      },
+    });
+    global.fetch = fetchMock as unknown as typeof fetch;
+
+    render(<OnboardPage />);
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith(
+        '/api/workspaces/ws1/billing/provision',
+        expect.objectContaining({ method: 'POST' }),
+      );
+      expect(mutate).toHaveBeenCalled();
+      expect(mocks.replaceMock).toHaveBeenCalledWith('/onboard?step=invite');
+    });
   });
 
   it('shows a loading placeholder while SWR is loading', () => {
@@ -322,6 +434,11 @@ describe('OnboardPage — mode=create', () => {
         expect.objectContaining({ method: 'POST' }),
       );
     });
+    const postCall = fetchMock.mock.calls.find((call) => String(call[0]) === '/api/workspaces');
+    expect(JSON.parse(String((postCall?.[1] as RequestInit | undefined)?.body))).toMatchObject({
+      name: 'New Brain',
+      plan: 'starter',
+    });
 
     // Should NOT have hit the legacy alias.
     const calledUrls = fetchMock.mock.calls.map((c) => String(c[0]));
@@ -330,6 +447,46 @@ describe('OnboardPage — mode=create', () => {
     // After success it transitions to the provisioning step (mode=create).
     await waitFor(() => {
       expect(mocks.replaceMock).toHaveBeenCalledWith('/onboard?mode=create&step=provisioning');
+    });
+  });
+
+  it('paid create routes to billing before provisioning', async () => {
+    mockRouterQuery.current = { mode: 'create' };
+    const mutate = vi.fn();
+    (useSWR as unknown as ReturnType<typeof vi.fn>).mockReturnValue({
+      data: {
+        workspace: { id: 'ws1', name: 'Existing', runtime: 'ready' },
+        connections: [{}],
+        lastJob: null,
+        invites: [],
+        user: { id: 'u', email: 'a@x.com' },
+      },
+      error: null,
+      mutate,
+      isLoading: false,
+    });
+    const fetchMock = makeFetch({
+      '/api/workspaces': {
+        ok: true,
+        status: 200,
+        body: { workspace: { id: 'w2', name: 'New', status: 'billing_required' } },
+      },
+    });
+    global.fetch = fetchMock as unknown as typeof fetch;
+
+    render(<OnboardPage />);
+    fireEvent.change(screen.getByLabelText(/workspace name/i), {
+      target: { value: 'New Brain' },
+    });
+    fireEvent.click(screen.getByRole('radio', { name: /paid/i }));
+    fireEvent.click(screen.getByRole('button', { name: /continue/i }));
+
+    await waitFor(() => {
+      expect(mocks.replaceMock).toHaveBeenCalledWith('/onboard?mode=create&step=billing');
+    });
+    const postCall = fetchMock.mock.calls.find((call) => String(call[0]) === '/api/workspaces');
+    expect(JSON.parse(String((postCall?.[1] as RequestInit | undefined)?.body))).toMatchObject({
+      plan: 'team',
     });
   });
 

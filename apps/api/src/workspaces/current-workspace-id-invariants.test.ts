@@ -119,7 +119,7 @@ describeDb('users.current_workspace_id invariants (DB integration)', () => {
         `invariants-create-null-${Date.now()}-${Math.random()}@open42.test`,
       );
       const enqueue = vi.fn(async () => ({ jobId: 'ignored', alreadyEnqueued: false }));
-      const result = await createMod.createWorkspaceForUser(user.id, 'X', {
+      const result = await createMod.createWorkspaceForUser(user.id, 'X', 'starter', {
         enqueueProvisionJob: enqueue as never,
         env: openOwnerSignupEnv(),
       });
@@ -134,7 +134,7 @@ describeDb('users.current_workspace_id invariants (DB integration)', () => {
         `invariants-create-guard-${Date.now()}-${Math.random()}@open42.test`,
       );
       const enqueue = vi.fn(async () => ({ jobId: 'ignored', alreadyEnqueued: false }));
-      const wsA = await createMod.createWorkspaceForUser(user.id, 'A', {
+      const wsA = await createMod.createWorkspaceForUser(user.id, 'A', 'starter', {
         enqueueProvisionJob: enqueue as never,
         env: openOwnerSignupEnv(),
       });
@@ -142,7 +142,7 @@ describeDb('users.current_workspace_id invariants (DB integration)', () => {
       // Sanity: current_workspace_id is now wsA.
       expect((await readUser(user.id))?.currentWorkspaceId).toBe(wsA.id);
 
-      const wsB = await createMod.createWorkspaceForUser(user.id, 'B', {
+      const wsB = await createMod.createWorkspaceForUser(user.id, 'B', 'team', {
         enqueueProvisionJob: enqueue as never,
         env: openOwnerSignupEnv(),
       });

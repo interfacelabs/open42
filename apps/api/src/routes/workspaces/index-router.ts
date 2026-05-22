@@ -6,9 +6,10 @@ import { type MembershipRole } from '../../auth/membership.js';
 import { readSession } from '../../auth/session-helpers.js';
 import { OWNER_SIGNUP_NOT_ALLOWED_ERROR } from '../../auth/signup-gate.js';
 import { db, schema } from '../../db/client.js';
-import { OPEN42_ALLOW_MULTI_WORKSPACE } from '../../env.js';
+import { OPEN42_ALLOW_MULTI_WORKSPACE, OPEN42_BILLING_UPGRADES_ENABLED } from '../../env.js';
 import { requireMembership } from '../../middleware/require-membership.js';
 import { createWorkspaceForUser as defaultCreateWorkspaceForUser } from '../../workspaces/create.js';
+import { normalizeWorkspacePlan, workspacePlanRequiresBilling } from '../../workspaces/plan.js';
 
 const logger = pino({
   name: 'routes/workspaces/index-router',
@@ -16,6 +17,8 @@ const logger = pino({
 });
 
 const WORKSPACE_NAME_MAX = 80;
+
+type WorkspaceStatus = 'billing_required' | 'provisioning' | 'ready' | 'failed';
 
 function normalizeWorkspaceName(value: unknown): string | null {
   if (typeof value !== 'string') return null;
@@ -39,7 +42,7 @@ export interface IndexRouterRepo {
       id: string;
       name: string;
       role: MembershipRole;
-      status: 'provisioning' | 'ready' | 'failed';
+      status: WorkspaceStatus;
     }>
   >;
   /**
@@ -53,7 +56,7 @@ export interface IndexRouterRepo {
    */
   findWorkspace(
     workspaceId: string,
-  ): Promise<{ id: string; name: string; status: 'provisioning' | 'ready' | 'failed' } | null>;
+  ): Promise<{ id: string; name: string; status: WorkspaceStatus } | null>;
   countActiveWorkspaces?(): Promise<number>;
 }
 
@@ -85,7 +88,7 @@ function defaultRepo(): IndexRouterRepo {
         id: r.id,
         name: r.name,
         role: r.role as MembershipRole,
-        status: r.status as 'provisioning' | 'ready' | 'failed',
+        status: r.status as WorkspaceStatus,
       }));
     },
     async setCurrentWorkspace(userId, workspaceId) {
@@ -110,7 +113,7 @@ function defaultRepo(): IndexRouterRepo {
       return {
         id: row.id,
         name: row.name,
-        status: row.status as 'provisioning' | 'ready' | 'failed',
+        status: row.status as WorkspaceStatus,
       };
     },
     async countActiveWorkspaces() {
@@ -131,9 +134,11 @@ function defaultRepo(): IndexRouterRepo {
  * router in order and falls through on 404.
  *
  *   - GET  /            — any signed-in user; returns all their memberships
- *   - POST /            — any signed-in user; creates a workspace, selects it
- *                         as the current UI workspace, and enqueues
- *                         provisioning (multi-workspace per B2 spec)
+ *   - POST /            — any signed-in user; creates a workspace with the
+ *                         selected plan, selects it as the current UI
+ *                         workspace, and either enqueues provisioning or
+ *                         waits for Stripe when billing is required
+ *                         (multi-workspace per B2 spec)
  *   - POST /:id/switch  — any member of `:id` (gated by requireMembership);
  *                         sets users.current_workspace_id to `:id`
  *
@@ -175,11 +180,20 @@ export function buildWorkspaceIndexRouter(deps: IndexRouterDeps = {}) {
         res.status(400).json({ error: 'workspace_name_invalid' });
         return;
       }
+      const plan = normalizeWorkspacePlan(req.body?.plan);
+      if (!plan) {
+        res.status(400).json({ error: 'workspace_plan_invalid' });
+        return;
+      }
+      if (workspacePlanRequiresBilling(plan) && !OPEN42_BILLING_UPGRADES_ENABLED) {
+        res.status(503).json({ error: 'billing_upgrades_disabled' });
+        return;
+      }
       if (!OPEN42_ALLOW_MULTI_WORKSPACE && ((await repo.countActiveWorkspaces?.()) ?? 0) > 0) {
         res.status(403).json({ error: 'multi_workspace_disabled' });
         return;
       }
-      const workspace = await createWorkspaceForUser(session.userId, name);
+      const workspace = await createWorkspaceForUser(session.userId, name, plan);
       await repo.setCurrentWorkspace(session.userId, workspace.id);
       logger.info({ workspace_id: workspace.id, user_id: session.userId }, 'workspace_created');
       res.status(201).json({ workspace });

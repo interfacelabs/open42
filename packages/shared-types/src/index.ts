@@ -1,7 +1,7 @@
 export type WorkspaceRole = 'owner' | 'admin' | 'member';
-export type WorkspaceStatus = 'provisioning' | 'ready' | 'failed';
+export type WorkspaceStatus = 'billing_required' | 'provisioning' | 'ready' | 'failed';
 export type WorkspacePlan = 'starter' | 'team' | 'business';
-export type WorkspaceRuntime = 'provisioning' | 'overdue' | 'ready' | 'failed';
+export type WorkspaceRuntime = 'billing_required' | 'provisioning' | 'overdue' | 'ready' | 'failed';
 
 export interface UserSummary {
   id: string;

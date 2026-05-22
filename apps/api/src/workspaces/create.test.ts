@@ -62,13 +62,14 @@ describeDb('createWorkspaceForUser', () => {
       alreadyEnqueued: false,
     }));
 
-    const result = await createMod.createWorkspaceForUser(user.id, 'Acme', {
+    const result = await createMod.createWorkspaceForUser(user.id, 'Acme', 'starter', {
       enqueueProvisionJob: enqueue as never,
       env: openOwnerSignupEnv(),
     });
     workspaceIds.push(result.id);
 
     expect(result.name).toBe('Acme');
+    expect(result.plan).toBe('starter');
     expect(result.status).toBe('provisioning');
 
     // Workspace row exists with the expected fields.
@@ -79,6 +80,7 @@ describeDb('createWorkspaceForUser', () => {
       .limit(1);
     expect(ws).toBeDefined();
     expect(ws?.ownerUserId).toBe(user.id);
+    expect(ws?.plan).toBe('starter');
     expect(ws?.status).toBe('provisioning');
 
     // Owner membership row exists.
@@ -107,12 +109,37 @@ describeDb('createWorkspaceForUser', () => {
     });
   });
 
+  it('creates paid workspaces in billing_required without enqueueing provisioning', async () => {
+    const user = await seedUser(`create-paid-${Date.now()}-${Math.random()}@open42.test`);
+    const enqueue = vi.fn(async (data: { workspaceId: string; ownerUserId: string }) => ({
+      jobId: data.workspaceId,
+      alreadyEnqueued: false,
+    }));
+
+    const result = await createMod.createWorkspaceForUser(user.id, 'Acme Paid', 'team', {
+      enqueueProvisionJob: enqueue as never,
+      env: openOwnerSignupEnv(),
+    });
+    workspaceIds.push(result.id);
+
+    expect(result.plan).toBe('team');
+    expect(result.status).toBe('billing_required');
+
+    const [ws] = await dbMod.db
+      .select()
+      .from(dbMod.schema.workspaces)
+      .where(eq(dbMod.schema.workspaces.id, result.id))
+      .limit(1);
+    expect(ws?.status).toBe('billing_required');
+    expect(enqueue).not.toHaveBeenCalled();
+  });
+
   it('does NOT overwrite a non-null users.current_workspace_id (UI hint NULL-guard)', async () => {
     const user = await seedUser(`create-guard-${Date.now()}-${Math.random()}@open42.test`);
 
     // First create — sets current_workspace_id from NULL → ws1.
     const enqueue1 = vi.fn(async () => ({ jobId: 'ignored', alreadyEnqueued: false }));
-    const ws1 = await createMod.createWorkspaceForUser(user.id, 'First', {
+    const ws1 = await createMod.createWorkspaceForUser(user.id, 'First', 'starter', {
       enqueueProvisionJob: enqueue1 as never,
       env: openOwnerSignupEnv(),
     });
@@ -128,7 +155,7 @@ describeDb('createWorkspaceForUser', () => {
 
     // Second create — must NOT overwrite (user is "actively working in" ws1).
     const enqueue2 = vi.fn(async () => ({ jobId: 'ignored', alreadyEnqueued: false }));
-    const ws2 = await createMod.createWorkspaceForUser(user.id, 'Second', {
+    const ws2 = await createMod.createWorkspaceForUser(user.id, 'Second', 'team', {
       enqueueProvisionJob: enqueue2 as never,
       env: openOwnerSignupEnv(),
     });
@@ -156,7 +183,7 @@ describeDb('createWorkspaceForUser', () => {
     const enqueue = vi.fn(async () => ({ jobId: 'ignored', alreadyEnqueued: false }));
 
     await expect(
-      createMod.createWorkspaceForUser(user.id, 'Blocked', {
+      createMod.createWorkspaceForUser(user.id, 'Blocked', 'starter', {
         enqueueProvisionJob: enqueue as never,
         env: {
           ...process.env,

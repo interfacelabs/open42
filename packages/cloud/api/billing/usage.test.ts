@@ -56,15 +56,17 @@ describe('billing usage allocation', () => {
         if (selectCount === 1) {
           return {
             from: () => ({
-              where: () => ({
-                limit: async () => [
-                  {
-                    id: 'workspace-1',
-                    stripeCustomerId: null,
-                    stripeSubscriptionStatus: null,
-                    stripeSubscriptionCurrentPeriodStart: null,
-                  },
-                ],
+              leftJoin: () => ({
+                where: () => ({
+                  limit: async () => [
+                    {
+                      id: 'workspace-1',
+                      stripeCustomerId: null,
+                      stripeSubscriptionStatus: null,
+                      stripeSubscriptionCurrentPeriodStart: null,
+                    },
+                  ],
+                }),
               }),
             }),
           };
@@ -103,6 +105,7 @@ describe('billing usage allocation', () => {
           platformRequestMeteredPriceId: 'price_metered',
           platformRequestMeterEventName: 'open42_request',
           basicIncludedRequests: 0,
+          upgradesEnabled: true,
         },
       },
     );
@@ -165,6 +168,7 @@ describe('billing usage allocation', () => {
         platformRequestMeteredPriceId: 'price_metered',
         platformRequestMeterEventName: 'open42_request',
         basicIncludedRequests: 10,
+        upgradesEnabled: true,
       },
     });
 

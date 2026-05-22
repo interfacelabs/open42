@@ -7,7 +7,7 @@ export interface WorkspaceSummary {
   id: string;
   name: string;
   role: 'owner' | 'admin' | 'member';
-  status: 'provisioning' | 'ready' | 'failed';
+  status: 'billing_required' | 'provisioning' | 'ready' | 'failed';
 }
 
 export interface WorkspaceStoreState {
@@ -25,8 +25,7 @@ export interface WorkspaceStoreState {
    * that the user has none left.
    */
   recoverFromForbidden: () => Promise<
-    | { kind: 'switched'; workspaceId: string }
-    | { kind: 'no_workspaces' }
+    { kind: 'switched'; workspaceId: string } | { kind: 'no_workspaces' }
   >;
 }
 
@@ -62,10 +61,7 @@ export function createWorkspaceStore(
         // so a fresh page load honors the user's last server-known choice
         // instead of falling back to "first owned" — owner-first hydration
         // surfaced the wrong workspace after invite-accept (codex round-3 P1).
-        const [listRes, meRes] = await Promise.all([
-          f('/api/workspaces'),
-          f('/api/auth/me'),
-        ]);
+        const [listRes, meRes] = await Promise.all([f('/api/workspaces'), f('/api/auth/me')]);
         if (!listRes.ok) {
           const msg = `workspaces_fetch_failed:${listRes.status}`;
           console.warn('[useWorkspaceStore] refresh non-ok', { status: listRes.status });
@@ -117,10 +113,10 @@ export function createWorkspaceStore(
       // POST /switch is a state-changing request (mutates users.current_workspace_id)
       // and is gated by CSRF middleware on the API. csrfHeaders() reads the
       // open42_csrf cookie set during sign-in.
-      const res = await f(
-        `/api/workspaces/${encodeURIComponent(workspaceId)}/switch`,
-        { method: 'POST', headers: csrfHeaders() },
-      );
+      const res = await f(`/api/workspaces/${encodeURIComponent(workspaceId)}/switch`, {
+        method: 'POST',
+        headers: csrfHeaders(),
+      });
       if (!res.ok) throw new Error('switch_failed');
       set({ currentWorkspaceId: workspaceId });
     },

@@ -44,6 +44,10 @@
       "types": "./dist/middleware/require-role.d.ts",
       "default": "./dist/middleware/require-role.js"
     },
+    "./queue/provision-queue": {
+      "types": "./dist/queue/provision-queue.d.ts",
+      "default": "./dist/queue/provision-queue.js"
+    },
     "./tenants/provision": {
       "types": "./dist/tenants/provision.d.ts",
       "default": "./dist/tenants/provision.js"

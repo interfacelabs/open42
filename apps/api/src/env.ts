@@ -27,6 +27,10 @@ export const OPEN42_ALLOW_SHARED_KEYS = boolEnv(
   process.env.OPEN42_ALLOW_SHARED_KEYS,
   OPEN42_EDITION === 'cloud',
 );
+export const OPEN42_BILLING_UPGRADES_ENABLED = boolEnv(
+  process.env.OPEN42_BILLING_UPGRADES_ENABLED,
+  true,
+);
 export const OPEN42_DISABLE_COMPOSIO = boolEnv(process.env.OPEN42_DISABLE_COMPOSIO, false);
 export const OPEN42_COMPOSIO_ENABLED = Boolean(COMPOSIO_API_KEY) && !OPEN42_DISABLE_COMPOSIO;
 export const OPEN42_INGEST_HMAC_SECRET = process.env.OPEN42_INGEST_HMAC_SECRET ?? '';

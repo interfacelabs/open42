@@ -32,6 +32,7 @@ interface BillingPayload {
     usedRequests: number;
     includedRequestsRemaining: number;
     meteredRequests: number;
+    upgradesEnabled: boolean;
     checkoutConfigured: boolean;
     overageMeterConfigured: boolean;
     portalAvailable: boolean;
@@ -260,8 +261,7 @@ function BillingActions({
 }) {
   const busy = pendingAction !== null;
   const baseCheckoutDisabled = !billing.checkoutConfigured || busy;
-  const platformCheckoutDisabled =
-    !billing.checkoutConfigured || !billing.overageMeterConfigured || busy;
+  const platformCheckoutDisabled = baseCheckoutDisabled;
   const byokCheckoutDisabled = baseCheckoutDisabled || !billing.hasByokKeys;
 
   return (
@@ -269,7 +269,7 @@ function BillingActions({
       <BillingOption
         icon={<CreditCard className="h-4 w-4" strokeWidth={1.5} />}
         title="Open42 keys"
-        body="Monthly base plan with included shared-key requests, then request overage billing."
+        body="Beta monthly plan processed by Stripe. No free trial; cancel before the next renewal."
         active={billing.subscriptionActive && billing.mode === 'platform'}
         disabled={platformCheckoutDisabled}
         button={
@@ -315,12 +315,13 @@ function BillingActions({
 
       {!billing.checkoutConfigured ? (
         <p className="text-[12.5px] text-destructive">
-          Stripe is missing STRIPE_SECRET_KEY or STRIPE_BASIC_MONTHLY_PRICE_ID.
+          {billing.upgradesEnabled
+            ? 'Stripe is missing STRIPE_SECRET_KEY or STRIPE_BASIC_MONTHLY_PRICE_ID.'
+            : 'Paid upgrades are paused while Stripe approval is pending.'}
         </p>
       ) : !billing.overageMeterConfigured ? (
         <p className="text-[12.5px] text-text-subtle">
-          Overage price is not configured yet; Open42-key checkout is disabled, and BYOK can still
-          use the base monthly plan.
+          Overage price is not configured; checkout will use the flat monthly beta plan.
         </p>
       ) : null}
 
@@ -441,7 +442,10 @@ function actionErrorCopy(error: string | undefined, status: number): string {
   if (error === 'byok_key_required')
     return 'Add a workspace provider key before subscribing to BYOK.';
   if (error === 'metered_price_not_configured') {
-    return 'Stripe overage price is not configured for Open42-key billing.';
+    return 'Stripe overage price is not configured.';
+  }
+  if (error === 'billing_upgrades_disabled') {
+    return 'Paid upgrades are paused while Stripe approval is pending.';
   }
   if (error === 'base_price_not_configured' || error === 'stripe_not_configured') {
     return 'Stripe is not configured for this environment.';

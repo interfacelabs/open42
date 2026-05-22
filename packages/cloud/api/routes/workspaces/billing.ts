@@ -6,6 +6,7 @@ import {
   createPortalSession,
   getWorkspaceBilling,
   mapBillingErrorStatus,
+  startProvisioningAfterPayment,
 } from '../../billing/service.js';
 import { parseBillingMode } from '../../billing/config.js';
 
@@ -34,6 +35,7 @@ export function buildWorkspaceBillingRouter() {
         workspaceId: req.workspace!.id,
         userId: req.session!.userId,
         billingMode,
+        context: req.body?.context === 'onboarding' ? 'onboarding' : 'settings',
       });
       res.json(session);
     } catch (err) {
@@ -45,6 +47,16 @@ export function buildWorkspaceBillingRouter() {
     try {
       const session = await createPortalSession(req.workspace!.id);
       res.json(session);
+    } catch (err) {
+      handleBillingError(err, res, next);
+    }
+  });
+
+  router.post('/provision', async (req, res, next) => {
+    try {
+      const result = await startProvisioningAfterPayment({ workspaceId: req.workspace!.id });
+      const statusCode = result.status === 'provisioning' ? 202 : 200;
+      res.status(statusCode).json({ ok: true, status: result.status });
     } catch (err) {
       handleBillingError(err, res, next);
     }

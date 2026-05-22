@@ -10,12 +10,19 @@
  *                                             first workspace")
  *
  * Both want the same invariants:
- *   1. INSERT into `workspaces` with status='provisioning'.
+ *   1. INSERT into `workspaces` with the chosen plan. Free workspaces enter
+ *      status='provisioning'; paid workspaces enter status='billing_required'
+ *      and wait for Stripe before any tenant job is queued.
  *   2. INSERT into `memberships` with role='owner' (membership is the only
  *      authorization claim — see apps/api/src/auth/membership.ts).
  *   3. Best-effort set `users.current_workspace_id` IF the user has none
  *      (the UI hint; never trusted for authorization).
- *   4. Enqueue a tenant-provisioning job into BullMQ.
+ *   4. Enqueue a tenant-provisioning job into BullMQ only when billing is not
+ *      required.
+ *
+ * The plan is captured before enqueue so the hybrid provisioner can route
+ * starter/free workspaces to the free pool and paid workspaces to private Fly
+ * after the paid gate has cleared.
  *
  * The transaction wraps steps 1–3 so a partial workspace (no owner
  * membership) is impossible. Step 4 happens after the transaction commits —
@@ -28,11 +35,13 @@ import { assertOwnerSignupAllowed } from '../auth/signup-gate.js';
 import { db, schema } from '../db/client.js';
 import { OPEN42_ALLOW_MULTI_WORKSPACE, OPEN42_SINGLE_WORKSPACE_ID } from '../env.js';
 import { enqueueProvisionJob as defaultEnqueueProvisionJob } from '../queue/provision-queue.js';
+import { workspacePlanRequiresBilling, type WorkspacePlan } from './plan.js';
 
 export interface CreateWorkspaceResult {
   id: string;
   name: string;
-  status: 'provisioning' | 'ready' | 'failed';
+  plan: WorkspacePlan | null;
+  status: 'billing_required' | 'provisioning' | 'ready' | 'failed';
 }
 
 export interface CreateWorkspaceDeps {
@@ -49,9 +58,11 @@ export interface CreateWorkspaceDeps {
 export async function createWorkspaceForUser(
   ownerUserId: string,
   name: string,
+  plan: WorkspacePlan,
   deps: CreateWorkspaceDeps = {},
 ): Promise<CreateWorkspaceResult> {
   const enqueue = deps.enqueueProvisionJob ?? defaultEnqueueProvisionJob;
+  const requiresBilling = workspacePlanRequiresBilling(plan);
 
   const workspace = await db.transaction(async (tx) => {
     const [owner] = await tx
@@ -76,13 +87,15 @@ export async function createWorkspaceForUser(
       .values({
         id: fixedWorkspaceId,
         name,
+        plan,
         ownerUserId,
         gbrainVersion: process.env.GBRAIN_VERSION ?? '0.31.3',
-        status: 'provisioning',
+        status: requiresBilling ? 'billing_required' : 'provisioning',
       })
       .returning({
         id: schema.workspaces.id,
         name: schema.workspaces.name,
+        plan: schema.workspaces.plan,
         status: schema.workspaces.status,
       });
     if (!ws) throw new Error('workspace_insert_failed');
@@ -106,7 +119,7 @@ export async function createWorkspaceForUser(
     return ws;
   });
 
-  if (!deps.skipEnqueue) {
+  if (!deps.skipEnqueue && !requiresBilling) {
     await enqueue({
       workspaceId: workspace.id,
       ownerUserId,
@@ -116,6 +129,7 @@ export async function createWorkspaceForUser(
   return {
     id: workspace.id,
     name: workspace.name,
-    status: workspace.status as 'provisioning' | 'ready' | 'failed',
+    plan: workspace.plan,
+    status: workspace.status as 'billing_required' | 'provisioning' | 'ready' | 'failed',
   };
 }

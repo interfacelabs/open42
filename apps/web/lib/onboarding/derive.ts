@@ -1,6 +1,6 @@
-export type OnboardStep = 'workspace' | 'invite' | 'provisioning' | 'keys' | 'connect';
+export type OnboardStep = 'workspace' | 'billing' | 'invite' | 'provisioning' | 'keys' | 'connect';
 
-export type WorkspaceRuntime = 'provisioning' | 'overdue' | 'ready' | 'failed';
+export type WorkspaceRuntime = 'billing_required' | 'provisioning' | 'overdue' | 'ready' | 'failed';
 
 export type OnboardMode = 'first' | 'create';
 
@@ -36,6 +36,7 @@ export function deriveOnboardStep(
   mode: OnboardMode = 'first',
 ): OnboardStep | null {
   if (mode === 'create') {
+    if (urlStep === 'billing') return 'billing';
     if (urlStep === 'provisioning') return 'provisioning';
     if (urlStep === 'keys') return 'keys';
     if (urlStep === 'connect') return 'connect';
@@ -43,11 +44,13 @@ export function deriveOnboardStep(
   }
   if (!current.workspace) return 'workspace';
   if (urlStep === 'workspace') return 'workspace';
+  if (urlStep === 'billing') return 'billing';
   if (urlStep === 'invite') return 'invite';
   if (urlStep === 'provisioning') return 'provisioning';
   if (urlStep === 'keys') return 'keys';
   if (urlStep === 'connect') return 'connect';
   // No explicit step — derive from state.
+  if (current.workspace.runtime === 'billing_required') return 'billing';
   if (current.workspace.runtime !== 'ready') return 'provisioning';
   if (
     current.requiresProviderKeys &&
