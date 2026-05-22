@@ -1,4 +1,5 @@
 import Head from 'next/head';
+import Link from 'next/link';
 import { useRouter } from 'next/router';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { ExternalLink, GitBranch, Lock, RefreshCw, Unlock } from 'lucide-react';
@@ -263,10 +264,10 @@ export default function GitHubCallbackPage() {
                   ) : isSessionMismatchError(pageState.code) ? (
                     <div className="mt-4 flex flex-wrap items-center gap-2">
                       <Button asChild size="sm">
-                        <a href="/sign_in">Sign in again</a>
+                        <Link href="/sign_in">Sign in again</Link>
                       </Button>
                       <Button asChild size="sm" variant="secondary">
-                        <a href="/settings/connections/add">Start over</a>
+                        <Link href="/settings/connections/add">Start over</Link>
                       </Button>
                     </div>
                   ) : (
