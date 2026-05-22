@@ -1,3 +1,4 @@
+import Link from 'next/link';
 import { DEMO_ACCESS } from '@/lib/content';
 import { ChevronRight } from '@/components/icons';
 
@@ -40,6 +41,24 @@ export function DemoSignupCta({ variant = 'light', className = '' }: Props) {
           </span>
         </p>
       </div>
+      <p
+        className={`mt-2 max-w-[560px] font-mono text-[11px] leading-[18px] ${
+          dark ? 'text-white/45' : 'text-muted-ink'
+        }`}
+      >
+        {DEMO_ACCESS.billing}{' '}
+        <Link href="/terms" className="underline underline-offset-4">
+          Terms
+        </Link>
+        {' · '}
+        <Link href="/privacy" className="underline underline-offset-4">
+          Privacy
+        </Link>
+        {' · '}
+        <Link href="/refund-policy" className="underline underline-offset-4">
+          Refund policy
+        </Link>
+      </p>
     </div>
   );
 }

@@ -13,6 +13,15 @@ export function SiteFooter() {
             <p className="mt-6 max-w-[360px] font-mono text-[14px] leading-[22px] text-muted-ink">
               {FOOTER.tagline}
             </p>
+            <p className="mt-4 max-w-[380px] font-mono text-[12px] leading-[20px] text-muted-ink">
+              Interface Labs Ltd · 124 City Road, London, England, EC1V 2NX ·{' '}
+              <Link
+                href="mailto:support@open42.ai"
+                className="text-ink underline-offset-4 hover:underline"
+              >
+                support@open42.ai
+              </Link>
+            </p>
             <div className="mt-6 flex items-center gap-4 text-ink">
               <Link
                 href={OPEN42_REPO_URL}

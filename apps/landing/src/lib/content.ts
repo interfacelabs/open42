@@ -22,6 +22,8 @@ export const DEMO_ACCESS = {
   cta: 'Get Started',
   note: 'No waitlist BS. Sign in with any email and try Open42.',
   disclaimer: 'We are in beta.',
+  billing:
+    '$20/month for Open42 Cloud. No free trial. Payments are processed by Stripe and are non-refundable except where required by law.',
 };
 
 export const WAITLIST = {
@@ -257,6 +259,10 @@ export const FAQ = {
       q: 'Do my API keys ever leave my control?',
       a: "No. Your workspace brain never sees your real Anthropic or OpenAI key. It calls a proxy with a proxy token, and the proxy swaps in the real key on the way out — yours if you brought one, otherwise ours. The brain itself can't read or leak your keys.",
     },
+    {
+      q: 'How does billing work?',
+      a: 'Open42 Cloud is $20/month, billed monthly through Stripe. There is no free trial. You can cancel before the next renewal from workspace settings; payments already made are non-refundable except where required by law.',
+    },
   ],
 };
 
@@ -299,9 +305,10 @@ export const FOOTER = {
         { label: 'About us', href: '/about' },
         { label: 'Terms of Service', href: '/terms' },
         { label: 'Privacy Policy', href: '/privacy' },
+        { label: 'Refund Policy', href: '/refund-policy' },
       ],
     },
   ],
-  copyright: '© 2026 Open42. Built in the open.',
-  status: 'Demo environment live',
+  copyright: '© 2026 Interface Labs Ltd. Open42 is in beta.',
+  status: 'Stripe checkout ready',
 };
