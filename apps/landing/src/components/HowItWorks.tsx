@@ -1,30 +1,24 @@
-import { PROCESS } from "@/lib/content";
-import { SectionEyebrow } from "@/components/SectionEyebrow";
-import {
-  CommandIcon,
-  LinkChain,
-  CheckIcon,
-  RocketIcon,
-  ChevronRight,
-} from "@/components/icons";
+import { PROCESS } from '@/lib/content';
+import { SectionEyebrow } from '@/components/SectionEyebrow';
+import { CommandIcon, LinkChain, CheckIcon, RocketIcon, ChevronRight } from '@/components/icons';
 
 const STEP_ICONS = [LinkChain, CheckIcon, RocketIcon];
 
 export function HowItWorks() {
   return (
     <section id="how" className="relative bg-page">
-      <div className="page-frame mx-auto w-full max-w-[1320px] px-6 pt-24 pb-24">
+      <div className="page-frame mx-auto w-full max-w-[1320px] px-4 pt-16 pb-16 sm:px-6 md:pt-24 md:pb-24">
         <SectionEyebrow icon={<CommandIcon className="h-3.5 w-3.5" />}>
           {PROCESS.eyebrow}
         </SectionEyebrow>
 
-        <h2 className="mt-6 max-w-[760px] font-sans text-[40px] font-medium leading-[1.0] tracking-[-0.025em] text-ink md:text-[56px]">
+        <h2 className="mt-6 max-w-[760px] font-sans text-[34px] font-medium leading-[1.0] text-ink md:text-[56px] md:tracking-[-0.025em]">
           {PROCESS.heading}
         </h2>
 
-        <div className="mt-16 grid grid-cols-1 gap-12 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.05fr)]">
+        <div className="mt-10 grid grid-cols-1 gap-10 md:mt-16 md:gap-12 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.05fr)]">
           {/* Left: steps. */}
-          <ul className="space-y-10">
+          <ul className="space-y-8 md:space-y-10">
             {PROCESS.steps.map((step, i) => {
               const Icon = STEP_ICONS[i] ?? LinkChain;
               const isActive = i === 1;
@@ -41,9 +35,7 @@ export function HowItWorks() {
                   </p>
                   {i < PROCESS.steps.length - 1 ? (
                     <div className="mt-7 h-px w-full bg-line">
-                      {isActive ? (
-                        <div className="h-px w-1/3 bg-ink" />
-                      ) : null}
+                      {isActive ? <div className="h-px w-1/3 bg-ink" /> : null}
                     </div>
                   ) : null}
                 </li>
@@ -84,8 +76,8 @@ function SkillCard() {
           Summarize this week&apos;s customer calls
         </h4>
         <p className="mt-2 font-mono text-[13px] leading-[20px] text-muted-ink">
-          Reads transcripts from Gmail + Drive, groups by account, surfaces
-          three product themes per account, and drafts the Monday digest.
+          Reads transcripts from Gmail + Drive, groups by account, surfaces three product themes per
+          account, and drafts the Monday digest.
         </p>
 
         <div className="mt-5 flex flex-wrap items-center gap-2 font-mono text-[12px]">

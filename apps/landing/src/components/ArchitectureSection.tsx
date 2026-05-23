@@ -1,6 +1,6 @@
-import Link from "next/link";
-import { ARCHITECTURE, GBRAIN } from "@/lib/content";
-import { SectionEyebrow } from "@/components/SectionEyebrow";
+import Link from 'next/link';
+import { ARCHITECTURE, GBRAIN } from '@/lib/content';
+import { SectionEyebrow } from '@/components/SectionEyebrow';
 import {
   PuzzleIcon,
   CommandIcon,
@@ -8,7 +8,7 @@ import {
   LinkChain,
   ChevronRight,
   StarIcon,
-} from "@/components/icons";
+} from '@/components/icons';
 
 // Two-boundary architecture band. Visual is a 5-node lane: user → Open42 →
 // metadata DB on one side, gbrain tenant → tenant DB on the other. The
@@ -18,13 +18,13 @@ const NODE_ICONS = [PuzzleIcon, CommandIcon, GridIcon, LinkChain, GridIcon];
 export function ArchitectureSection() {
   return (
     <section id="architecture" className="relative bg-page">
-      <div className="page-frame mx-auto w-full max-w-[1320px] px-6 pt-24 pb-24">
+      <div className="page-frame mx-auto w-full max-w-[1320px] px-4 pt-16 pb-16 sm:px-6 md:pt-24 md:pb-24">
         <SectionEyebrow icon={<PuzzleIcon className="h-3.5 w-3.5" />}>
           {ARCHITECTURE.eyebrow}
         </SectionEyebrow>
 
         <div className="mt-6 grid grid-cols-1 gap-x-12 gap-y-2 lg:grid-cols-[minmax(0,1.1fr)_minmax(0,1fr)]">
-          <h2 className="font-sans text-[40px] font-medium leading-[1.0] tracking-[-0.025em] text-ink md:text-[56px]">
+          <h2 className="font-sans text-[34px] font-medium leading-[1.0] text-ink md:text-[56px] md:tracking-[-0.025em]">
             {ARCHITECTURE.heading}
           </h2>
           <p className="self-end font-mono text-[16px] leading-[24px] text-muted-ink">
@@ -51,10 +51,7 @@ export function ArchitectureSection() {
               const isLast = i === ARCHITECTURE.nodes.length - 1;
               const isBoundary = i === 3;
               return (
-                <div
-                  key={node.title}
-                  className="relative flex flex-col gap-3 bg-surface p-6"
-                >
+                <div key={node.title} className="relative flex flex-col gap-3 bg-surface p-6">
                   {/* Arrow between nodes on desktop. */}
                   {!isLast ? (
                     <ChevronRight
@@ -64,10 +61,8 @@ export function ArchitectureSection() {
                   ) : null}
                   <div
                     className={
-                      "flex h-9 w-9 items-center justify-center rounded-lg border " +
-                      (isBoundary
-                        ? "border-ink bg-ink text-white"
-                        : "border-line bg-page text-ink")
+                      'flex h-9 w-9 items-center justify-center rounded-lg border ' +
+                      (isBoundary ? 'border-ink bg-ink text-white' : 'border-line bg-page text-ink')
                     }
                   >
                     <Icon className="h-4 w-4" />
@@ -85,8 +80,8 @@ export function ArchitectureSection() {
 
           {/* Footnote. */}
           <div className="border-t border-line bg-page/60 px-6 py-3 font-mono text-[12px] text-muted-ink">
-            Your API keys never reach the workspace brain. All Anthropic and
-            OpenAI traffic flows through a per-workspace proxy.
+            Your API keys never reach the workspace brain. All Anthropic and OpenAI traffic flows
+            through a per-workspace proxy.
           </div>
         </div>
 
@@ -109,22 +104,19 @@ function GbrainCallout() {
           We didn&apos;t reinvent the brain. We made it run for teams.
         </h3>
         <p className="mt-3 max-w-[520px] font-mono text-[13px] leading-[21px] text-muted-ink">
-          gbrain is the open-source agent brain Garry Tan built to run his own
-          daily work. Open42 pins it at a verified version, runs one isolated
-          instance per workspace, and wraps it in the team layer it doesn&apos;t
-          ship — auth, billing, connectors, UI.
+          gbrain is the open-source agent brain Garry Tan built to run his own daily work. Open42
+          pins it at a verified version, runs one isolated instance per workspace, and wraps it in
+          the team layer it doesn&apos;t ship — auth, billing, connectors, UI.
         </p>
       </div>
 
       <div className="flex flex-col gap-2.5 font-mono text-[12px] leading-[18px] text-muted-ink md:items-end md:text-right">
         <span>
-          <span className="text-ink">{GBRAIN.card.facts[2]?.value.split(" · ")[0]}</span>
-          {" "}pages indexed in Garry&apos;s personal brain
+          <span className="text-ink">{GBRAIN.card.facts[2]?.value.split(' · ')[0]}</span> pages
+          indexed in Garry&apos;s personal brain
         </span>
         <span>
-          BrainBench{" "}
-          <span className="text-ink">P@5 49.1</span> — beats vector-only RAG by
-          +31
+          BrainBench <span className="text-ink">P@5 49.1</span> — beats vector-only RAG by +31
         </span>
         <span>gbrain MIT · 34 skills · MCP with OAuth 2.1</span>
         <Link

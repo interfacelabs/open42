@@ -5,7 +5,7 @@ import { Wordmark } from '@/components/Wordmark';
 export function SiteNav() {
   return (
     <nav className="relative z-30 bg-page">
-      <div className="page-frame mx-auto w-full max-w-[1320px] px-6">
+      <div className="page-frame mx-auto w-full max-w-[1320px] px-4 sm:px-6">
         <div className="flex h-[77px] items-center justify-between">
           <Wordmark />
 

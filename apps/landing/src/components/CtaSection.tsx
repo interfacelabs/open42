@@ -5,8 +5,8 @@ import { DemoSignupCta } from '@/components/DemoSignupCta';
 export function CtaSection() {
   return (
     <section className="relative bg-page">
-      <div className="page-frame mx-auto w-full max-w-[1320px] px-6 py-16">
-        <div className="relative overflow-hidden rounded-3xl bg-[#0a0a0a] px-8 py-24 text-center md:py-32">
+      <div className="page-frame mx-auto w-full max-w-[1320px] px-4 py-12 sm:px-6 md:py-16">
+        <div className="relative overflow-hidden rounded-[22px] bg-[#0a0a0a] px-5 py-16 text-center md:rounded-3xl md:px-8 md:py-32">
           {/* Subtle gradient sheen. */}
           <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_50%_30%,rgba(255,255,255,0.06),transparent_60%)]" />
 
@@ -17,7 +17,7 @@ export function CtaSection() {
           <ReceiptTokens />
 
           <div className="relative z-10 mx-auto max-w-[800px]">
-            <h2 className="font-sans text-[40px] font-medium leading-[1.0] tracking-[-0.03em] text-white md:text-[64px] md:leading-[0.98]">
+            <h2 className="font-sans text-[34px] font-medium leading-[1.0] text-white md:text-[64px] md:leading-[0.98] md:tracking-[-0.03em]">
               {CTA.heading}
             </h2>
             <p className="mx-auto mt-6 max-w-[640px] font-mono text-[15px] leading-[24px] text-white/70">
@@ -56,7 +56,7 @@ function ReceiptTokens() {
     { label: 'version 14', left: '78%', top: '72%' },
   ];
   return (
-    <div className="pointer-events-none absolute inset-0">
+    <div className="pointer-events-none absolute inset-0 hidden sm:block">
       {tokens.map((t) => (
         <span
           key={t.label}

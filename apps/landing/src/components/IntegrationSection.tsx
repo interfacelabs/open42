@@ -1,6 +1,6 @@
-import { INTEGRATION } from "@/lib/content";
-import { SectionEyebrow } from "@/components/SectionEyebrow";
-import { OcularLogoMark, LinkChain } from "@/components/icons";
+import { INTEGRATION } from '@/lib/content';
+import { SectionEyebrow } from '@/components/SectionEyebrow';
+import { OcularLogoMark, LinkChain } from '@/components/icons';
 
 export function IntegrationSection() {
   const connectors = INTEGRATION.connectors;
@@ -8,7 +8,7 @@ export function IntegrationSection() {
 
   return (
     <section className="relative bg-page">
-      <div className="page-frame mx-auto w-full max-w-[1320px] px-6 pt-16 pb-16">
+      <div className="page-frame mx-auto w-full max-w-[1320px] px-4 pt-14 pb-14 sm:px-6 md:pt-16 md:pb-16">
         <div className="flex flex-col items-center text-center">
           <SectionEyebrow icon={<LinkChain className="h-3.5 w-3.5" />}>
             {INTEGRATION.eyebrow}

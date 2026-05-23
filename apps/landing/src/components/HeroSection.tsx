@@ -10,7 +10,7 @@ export function HeroSection() {
     <section className="relative overflow-hidden bg-page">
       <HeroBackground />
 
-      <div className="relative page-frame mx-auto w-full max-w-[1320px] px-6 pt-[80px] pb-20">
+      <div className="relative page-frame mx-auto w-full max-w-[1320px] px-4 pt-16 pb-14 sm:px-6 md:pt-[80px] md:pb-20">
         <div className="inline-flex items-center gap-2 rounded-md border border-line bg-surface/80 px-2.5 py-1.5 backdrop-blur-sm">
           <OcularLogoMark className="h-3.5 w-3.5 text-muted-ink" />
           <span className="font-mono text-[14px] leading-none text-muted-ink">{HERO.eyebrow}</span>
@@ -38,11 +38,11 @@ export function HeroSection() {
           </Link>
         </div>
 
-        <div className="relative mt-16 md:mt-20">
+        <div className="relative mt-10 md:mt-20">
           <MarkdownAnswerCard />
         </div>
 
-        <ul className="relative mt-20 grid grid-cols-1 gap-6 md:grid-cols-3">
+        <ul className="relative mt-12 grid grid-cols-1 gap-5 md:mt-20 md:grid-cols-3 md:gap-6">
           {PROOF.map((item) => (
             <li key={item.label} className="flex flex-col gap-1 border-t border-line pt-4">
               <span className="font-mono text-[12px] uppercase tracking-wider text-muted-ink">
@@ -64,7 +64,7 @@ function HeroBackground() {
   return (
     <div
       aria-hidden="true"
-      className="pointer-events-none absolute left-1/2 bottom-[180px] z-0 h-[44%] w-[min(1320px,calc(100%-48px))] -translate-x-1/2 overflow-hidden rounded-[40px]"
+      className="pointer-events-none absolute left-1/2 bottom-[330px] z-0 h-[520px] w-[calc(100%-32px)] -translate-x-1/2 overflow-hidden rounded-[28px] md:bottom-[180px] md:h-[44%] md:w-[min(1320px,calc(100%-48px))] md:rounded-[40px]"
     >
       <Image
         src="/hero/hero-bg.png"

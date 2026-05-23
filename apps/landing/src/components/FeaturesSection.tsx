@@ -1,11 +1,6 @@
-import { FEATURES } from "@/lib/content";
-import { SectionEyebrow } from "@/components/SectionEyebrow";
-import {
-  LinkChain,
-  CheckIcon,
-  AlertTriangle,
-  RocketIcon,
-} from "@/components/icons";
+import { FEATURES } from '@/lib/content';
+import { SectionEyebrow } from '@/components/SectionEyebrow';
+import { LinkChain, CheckIcon, AlertTriangle, RocketIcon } from '@/components/icons';
 
 // Each bento card carries its own inline mock — no screenshots. The mock
 // shows the actual UI metaphor for that capability so the page is self-
@@ -24,13 +19,13 @@ export function FeaturesSection() {
 
   return (
     <section id="features" className="relative bg-page">
-      <div className="page-frame mx-auto w-full max-w-[1320px] px-6 pt-24 pb-24">
+      <div className="page-frame mx-auto w-full max-w-[1320px] px-4 pt-16 pb-16 sm:px-6 md:pt-24 md:pb-24">
         <SectionEyebrow icon={<LinkChain className="h-3.5 w-3.5" />}>
           {FEATURES.eyebrow}
         </SectionEyebrow>
 
         <div className="mt-6 grid grid-cols-1 gap-x-12 gap-y-2 lg:grid-cols-[minmax(0,1.1fr)_minmax(0,1fr)]">
-          <h2 className="font-sans text-[40px] font-medium leading-[1.0] tracking-[-0.025em] text-ink md:text-[56px]">
+          <h2 className="font-sans text-[34px] font-medium leading-[1.0] text-ink md:text-[56px] md:tracking-[-0.025em]">
             {FEATURES.heading}
           </h2>
           <p className="self-end font-mono text-[16px] leading-[24px] text-muted-ink">
@@ -38,11 +33,14 @@ export function FeaturesSection() {
           </p>
         </div>
 
-        <div className="mt-12 grid grid-cols-1 gap-6 lg:grid-cols-[minmax(0,1.45fr)_minmax(0,1fr)]">
+        <div className="mt-10 grid grid-cols-1 gap-5 md:mt-12 md:gap-6 lg:grid-cols-[minmax(0,1.45fr)_minmax(0,1fr)]">
           <BentoCard card={c1} />
           <BentoCard card={c2} />
         </div>
-        <div id="skills" className="mt-6 grid grid-cols-1 gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.45fr)]">
+        <div
+          id="skills"
+          className="mt-5 grid grid-cols-1 gap-5 md:mt-6 md:gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.45fr)]"
+        >
           <BentoCard card={c3} />
           <BentoCard card={c4} />
         </div>
@@ -55,7 +53,7 @@ function BentoCard({ card }: { card: (typeof FEATURES.cards)[number] }) {
   const Mock = MOCKS[card.id] ?? ReceiptsMock;
   return (
     <article className="relative overflow-hidden rounded-2xl border border-line bg-surface">
-      <div className="px-7 pt-7">
+      <div className="px-5 pt-5 md:px-7 md:pt-7">
         <h3 className="font-sans text-[22px] font-medium tracking-[-0.01em] text-ink">
           {card.title}
         </h3>
@@ -63,7 +61,7 @@ function BentoCard({ card }: { card: (typeof FEATURES.cards)[number] }) {
           {card.description}
         </p>
       </div>
-      <div className="relative mt-6 flex items-end px-6 pb-6">
+      <div className="relative mt-5 flex items-end px-4 pb-4 md:mt-6 md:px-6 md:pb-6">
         <Mock />
       </div>
     </article>
@@ -106,15 +104,7 @@ function SourceTag({ n }: { n: number }) {
   );
 }
 
-function ReceiptRow({
-  n,
-  src,
-  meta,
-}: {
-  n: number;
-  src: string;
-  meta: string;
-}) {
+function ReceiptRow({ n, src, meta }: { n: number; src: string; meta: string }) {
   return (
     <div className="flex items-center justify-between">
       <span className="font-mono">
@@ -127,9 +117,9 @@ function ReceiptRow({
 
 function SkillsMock() {
   const items = [
-    { name: "Weekly customer digest", runs: "ran 12×" },
-    { name: "Draft investor update", runs: "ran 4×" },
-    { name: "Find stale Notion docs", runs: "ran 28×" },
+    { name: 'Weekly customer digest', runs: 'ran 12×' },
+    { name: 'Draft investor update', runs: 'ran 4×' },
+    { name: 'Find stale Notion docs', runs: 'ran 28×' },
   ];
   return (
     <div className="w-full overflow-hidden rounded-xl border border-line bg-page">
@@ -163,15 +153,14 @@ function HonestMock() {
       </div>
       <div className="space-y-3 px-4 py-4 font-mono text-[12px] leading-[20px]">
         <p className="text-muted-ink">
-          <span className="opacity-60">user ›</span> what&apos;s our refund
-          policy for trial users?
+          <span className="opacity-60">user ›</span> what&apos;s our refund policy for trial users?
         </p>
         <div className="rounded-lg border border-amber-200 bg-amber-50/60 p-3 text-ink">
           <div className="flex items-start gap-2">
             <AlertTriangle className="mt-[2px] h-3.5 w-3.5 text-amber-600" />
             <p>
-              I don&apos;t have anything about trial-user refunds in your
-              brain. Add a source, or rephrase.
+              I don&apos;t have anything about trial-user refunds in your brain. Add a source, or
+              rephrase.
             </p>
           </div>
         </div>
@@ -182,9 +171,9 @@ function HonestMock() {
 
 function IsolatedMock() {
   const tenants = [
-    { name: "acme", color: "bg-blue-500" },
-    { name: "globex", color: "bg-emerald-500" },
-    { name: "soylent", color: "bg-amber-500" },
+    { name: 'acme', color: 'bg-blue-500' },
+    { name: 'globex', color: 'bg-emerald-500' },
+    { name: 'soylent', color: 'bg-amber-500' },
   ];
   return (
     <div className="w-full overflow-hidden rounded-xl border border-line bg-page">

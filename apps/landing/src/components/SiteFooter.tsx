@@ -6,7 +6,7 @@ import { XSocial, LinkedInIcon } from '@/components/icons';
 export function SiteFooter() {
   return (
     <footer className="bg-page">
-      <div className="page-frame mx-auto w-full max-w-[1320px] px-6 pt-16 pb-10">
+      <div className="page-frame mx-auto w-full max-w-[1320px] px-4 pt-14 pb-10 sm:px-6 md:pt-16">
         <div className="grid grid-cols-1 gap-12 md:grid-cols-[1.2fr_1fr_1fr_1fr]">
           <div>
             <Wordmark size="lg" />
