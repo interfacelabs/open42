@@ -12,7 +12,9 @@
   },
   "scripts": {
     "dev": "npm-run-all -p dev:web dev:api",
+    "dev:cloud": "OPEN42_EDITION=cloud NEXT_PUBLIC_OPEN42_EDITION=cloud OPEN42_ALLOW_MULTI_WORKSPACE=true OPEN42_ALLOW_SHARED_KEYS=true OPEN42_BILLING_UPGRADES_ENABLED=true NEXT_PUBLIC_OPEN42_BILLING_UPGRADES_ENABLED=true npm-run-all -p dev:web dev:api",
     "dev:landing": "node scripts/dev-landing.mjs",
+    "dev:stripe": "node scripts/dev-stripe.mjs",
     "dev:web": "node scripts/dev-web.mjs",
     "dev:api": "npm run dev -w @open42/api",
     "db:up": "docker compose --env-file .env.local up -d postgres redis",
